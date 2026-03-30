@@ -1,0 +1,1 @@
+"""Staked Media MVP package."""
