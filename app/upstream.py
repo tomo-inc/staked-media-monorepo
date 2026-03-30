@@ -7,6 +7,7 @@ import requests
 
 from app.config import Settings
 from app.logging_utils import get_logger, log_event, redact_for_log
+from app.schemas import MAX_INGEST_TWEETS
 
 
 logger = get_logger(__name__)
@@ -53,7 +54,7 @@ class UpstreamClient:
     def fetch_user_tweets(
         self,
         user_id: str,
-        max_tweets: int = 500,
+        max_tweets: int = MAX_INGEST_TWEETS,
         *,
         request_id: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -69,12 +70,15 @@ class UpstreamClient:
         cursor: Optional[str] = None
         seen_tweet_ids: set[str] = set()
         seen_cursors: set[str] = set()
+        page_count = 0
+        stop_reason = "max_tweets_reached"
 
         while len(items) < max_tweets:
             params = {"cursor": cursor} if cursor else None
             payload = self._get_json(f"/api/v1/tweets/{user_id}", params=params, request_id=request_id)
             data = payload.get("data") or {}
             page_items = data.get("data") or []
+            page_count += 1
             log_event(
                 logger,
                 logging.INFO,
@@ -96,7 +100,17 @@ class UpstreamClient:
                     break
 
             next_cursor = data.get("next_cursor")
-            if not next_cursor or next_cursor in seen_cursors or len(page_items) == 0:
+            if len(items) >= max_tweets:
+                stop_reason = "max_tweets_reached"
+                break
+            if len(page_items) == 0:
+                stop_reason = "empty_page"
+                break
+            if not next_cursor:
+                stop_reason = "missing_next_cursor"
+                break
+            if next_cursor in seen_cursors:
+                stop_reason = "repeated_cursor"
                 break
             seen_cursors.add(next_cursor)
             cursor = next_cursor
@@ -107,7 +121,10 @@ class UpstreamClient:
             "upstream_fetch_tweets_completed",
             request_id=request_id,
             user_id=user_id,
+            max_tweets=max_tweets,
+            page_count=page_count,
             total_count=len(items[:max_tweets]),
+            stop_reason=stop_reason,
         )
         return items[:max_tweets]
 

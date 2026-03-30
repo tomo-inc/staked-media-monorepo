@@ -17,6 +17,7 @@ from app.schemas import (
     DraftGenerateRequest,
     DraftGenerateResponse,
     IngestResponse,
+    MAX_INGEST_TWEETS,
     ProfileIngestRequest,
     ProfileResponse,
     ProfileSummary,
@@ -232,7 +233,7 @@ def create_app(
             )
             raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
 
-        tweet_rows = database.get_user_tweets(stored_user["id"])
+        tweet_rows = database.get_user_tweets(stored_user["id"], limit=MAX_INGEST_TWEETS)
         source_texts = [row["text"] for row in tweet_rows if row["text"]]
         log_event(
             logger,

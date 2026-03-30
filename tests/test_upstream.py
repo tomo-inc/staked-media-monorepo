@@ -62,6 +62,61 @@ class DummySession:
         )
 
 
+class MultiPageSession:
+    def __init__(self) -> None:
+        self.calls = []
+        self.cookies = requests.cookies.RequestsCookieJar()
+
+    def get(self, url, params=None, proxies=None, timeout=None):
+        self.calls.append(
+            {
+                "url": url,
+                "params": params,
+                "proxies": proxies,
+                "timeout": timeout,
+            }
+        )
+        cursor = (params or {}).get("cursor")
+        if cursor == "cursor-1":
+            return DummyResponse(
+                {
+                    "code": 200,
+                    "data": {
+                        "data": [
+                            {"data": {"id": "3", "text": "third", "created_at": "2026-03-03T00:00:00Z"}},
+                            {"data": {"id": "4", "text": "fourth", "created_at": "2026-03-04T00:00:00Z"}},
+                        ],
+                        "next_cursor": "cursor-2",
+                    },
+                }
+            )
+        if cursor == "cursor-2":
+            return DummyResponse(
+                {
+                    "code": 200,
+                    "data": {
+                        "data": [
+                            {"data": {"id": "5", "text": "fifth", "created_at": "2026-03-05T00:00:00Z"}},
+                            {"data": {"id": "6", "text": "sixth", "created_at": "2026-03-06T00:00:00Z"}},
+                        ],
+                        "next_cursor": None,
+                    },
+                }
+            )
+        return DummyResponse(
+            {
+                "code": 200,
+                "data": {
+                    "data": [
+                        {"data": {"id": "1", "text": "first", "created_at": "2026-03-01T00:00:00Z"}},
+                        {"data": {"id": "2", "text": "second", "created_at": "2026-03-02T00:00:00Z"}},
+                    ],
+                    "next_cursor": "cursor-1",
+                },
+            }
+        )
+
+
 class RetrySession:
     def __init__(self) -> None:
         self.calls = []
@@ -181,6 +236,34 @@ class UpstreamClientTestCase(unittest.TestCase):
 
         self.assertEqual(payload["code"], 200)
         self.assertEqual(len(session.calls), 2)
+
+    def test_fetch_user_tweets_continues_until_requested_count(self) -> None:
+        session = MultiPageSession()
+        settings = Settings(
+            upstream_base_url="http://52.76.50.165:8081",
+            upstream_http_proxy="http://192.168.1.199:9000",
+        )
+        client = UpstreamClient(settings, session=session)
+
+        items = client.fetch_user_tweets("user-1", max_tweets=5)
+
+        self.assertEqual(len(items), 5)
+        self.assertEqual(session.calls[0]["params"], None)
+        self.assertEqual(session.calls[1]["params"], {"cursor": "cursor-1"})
+        self.assertEqual(session.calls[2]["params"], {"cursor": "cursor-2"})
+
+    def test_fetch_user_tweets_stops_when_upstream_exhausts_before_requested_count(self) -> None:
+        session = MultiPageSession()
+        settings = Settings(
+            upstream_base_url="http://52.76.50.165:8081",
+            upstream_http_proxy="http://192.168.1.199:9000",
+        )
+        client = UpstreamClient(settings, session=session)
+
+        items = client.fetch_user_tweets("user-1", max_tweets=10)
+
+        self.assertEqual(len(items), 6)
+        self.assertEqual(len(session.calls), 3)
 
     def test_fetch_user_tweets_stops_when_cursor_repeats(self) -> None:
         session = RepeatingCursorSession()
