@@ -7,11 +7,15 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.main import create_app
 from app.llm import GeminiClient
+from app.main import create_app
+from app.schemas import MAX_INGEST_TWEETS
 
 
 class FakeUpstreamClient:
+    def __init__(self) -> None:
+        self.last_max_tweets: int | None = None
+
     def fetch_user_by_username(self, username: str, *, request_id: str | None = None) -> dict:
         return {
             "id": "u-1",
@@ -31,12 +35,13 @@ class FakeUpstreamClient:
     def fetch_user_tweets(
         self,
         user_id: str,
-        max_tweets: int = 500,
+        max_tweets: int = MAX_INGEST_TWEETS,
         *,
         request_id: str | None = None,
     ) -> list[dict]:
+        self.last_max_tweets = max_tweets
         items = []
-        for index in range(min(max_tweets, 8)):
+        for index in range(min(max_tweets, 1200)):
             items.append(
                 {
                     "data": {
@@ -59,6 +64,10 @@ class FakeUpstreamClient:
 
 
 class FakeLLMClient:
+    def __init__(self) -> None:
+        self.last_source_text_count: int | None = None
+        self.last_tweet_row_count: int | None = None
+
     def generate_persona(
         self,
         *,
@@ -90,6 +99,8 @@ class FakeLLMClient:
         draft_count: int,
         request_id: str | None = None,
     ) -> dict:
+        self.last_source_text_count = len(source_texts)
+        self.last_tweet_row_count = len(tweet_rows)
         drafts = [
             {
                 "text": f"Shipping faster means saying no to distractions. {prompt} #{index}",
@@ -145,6 +156,8 @@ class FakeLLMClient:
 class ApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
+        self.upstream_client = FakeUpstreamClient()
+        self.llm_client = FakeLLMClient()
         settings = Settings(
             app_env="test",
             database_url=f"sqlite:///{self.temp_dir.name}/mvp.db",
@@ -154,8 +167,8 @@ class ApiTestCase(unittest.TestCase):
         self.client = TestClient(
             create_app(
                 settings,
-                upstream_client=FakeUpstreamClient(),
-                llm_client=FakeLLMClient(),
+                upstream_client=self.upstream_client,
+                llm_client=self.llm_client,
             )
         )
 
@@ -171,6 +184,7 @@ class ApiTestCase(unittest.TestCase):
         ingest_payload = ingest_response.json()
         self.assertEqual(ingest_payload["fetched_tweet_count"], 8)
         self.assertEqual(ingest_payload["profile"]["username"], "demo-user")
+        self.assertEqual(self.upstream_client.last_max_tweets, 8)
 
         profile_response = self.client.get("/api/v1/profiles/demo-user")
         self.assertEqual(profile_response.status_code, 200)
@@ -197,6 +211,50 @@ class ApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertIn("max_tweets", response.text)
+
+    def test_ingest_accepts_large_max_tweets_and_passes_it_through(self) -> None:
+        response = self.client.post(
+            "/api/v1/profiles/ingest",
+            json={"username": "demo-user", "max_tweets": 800},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.upstream_client.last_max_tweets, 800)
+        self.assertEqual(response.json()["fetched_tweet_count"], 800)
+
+    def test_ingest_accepts_maximum_allowed_tweets(self) -> None:
+        response = self.client.post(
+            "/api/v1/profiles/ingest",
+            json={"username": "demo-user", "max_tweets": MAX_INGEST_TWEETS},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.upstream_client.last_max_tweets, MAX_INGEST_TWEETS)
+
+    def test_ingest_rejects_tweet_count_above_limit(self) -> None:
+        response = self.client.post(
+            "/api/v1/profiles/ingest",
+            json={"username": "demo-user", "max_tweets": MAX_INGEST_TWEETS + 1},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn(f"less than or equal to {MAX_INGEST_TWEETS}", response.text)
+
+    def test_generate_drafts_uses_bounded_history_window(self) -> None:
+        ingest_response = self.client.post(
+            "/api/v1/profiles/ingest",
+            json={"username": "demo-user", "max_tweets": MAX_INGEST_TWEETS},
+        )
+        self.assertEqual(ingest_response.status_code, 200)
+
+        response = self.client.post(
+            "/api/v1/drafts/generate",
+            json={"username": "demo-user", "prompt": "Talk about focus", "draft_count": 2},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.llm_client.last_source_text_count, MAX_INGEST_TWEETS)
+        self.assertEqual(self.llm_client.last_tweet_row_count, MAX_INGEST_TWEETS)
 
     def test_generate_drafts_requires_ingest_first(self) -> None:
         response = self.client.post(
@@ -239,6 +297,13 @@ class ApiTestCase(unittest.TestCase):
         self.assertIn('"event":"api_draft_generate_completed"', joined)
         self.assertIn('"request_id":"', joined)
         self.assertIn('"username":"demo-user"', joined)
+
+    def test_openapi_exposes_ingest_max_tweets_limit(self) -> None:
+        response = self.client.get("/openapi.json")
+
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()["components"]["schemas"]["ProfileIngestRequest"]
+        self.assertEqual(schema["properties"]["max_tweets"]["maximum"], float(MAX_INGEST_TWEETS))
 
 
 if __name__ == "__main__":

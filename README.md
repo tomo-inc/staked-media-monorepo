@@ -50,11 +50,11 @@ curl -X POST http://127.0.0.1:8000/api/v1/profiles/ingest \
   -H 'Content-Type: application/json' \
   -d '{
     "username": "ryanfang95",
-    "max_tweets": 500
+    "max_tweets": 300
   }'
 ```
 
-`max_tweets` is required on the ingest API and must be between `1` and `500`.
+`max_tweets` is required on the ingest API and must be between `1` and `1000`.
 The caller only provides the desired count; the service uses the upstream tweets API's `cursor` pagination internally until it reaches that count or runs out of tweets.
 
 ### Get stored profile and latest persona
@@ -83,6 +83,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/drafts/generate \
 - Gemini JSON parsing now safely handles fenced JSON blocks and wrapped JSON text, but still fails on genuinely malformed payloads.
 - The upstream tweet endpoint paginates with `cursor` and returns `next_cursor`; this app handles that pagination internally and does not expose cursor on its own ingest API.
 - The MVP stores raw upstream payloads in SQLite for debugging and reuse.
+- Draft generation reads a bounded recent-history window instead of all stored tweets, so ingesting more history does not linearly expand generation cost.
 - Persona snapshots now include `generation_guardrails` so draft generation can preserve openings, compression habits, anti-patterns, and bilingual texture.
 - Draft generation now extracts theme keywords from the prompt, retrieves matching historical tweets, derives 3-5 high-frequency topic keywords, and uses them to steer generation.
 - Draft generation runs automatic similarity checks plus mixed rule/LLM scoring, retrying up to 5 rounds to target a score of `9.0`.
