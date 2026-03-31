@@ -75,7 +75,7 @@ class LoggingTestCase(unittest.TestCase):
         self.assertIn('"present":"ok"', payload)
         self.assertNotIn("missing", payload)
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_invalid_json_logs_redacted_snippet_without_api_key(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
             json_body={

@@ -76,6 +76,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/drafts/generate \
 ## Notes
 - LLM provider selection is environment-based only via `LLM_PROVIDER`; the HTTP API does not expose a per-request provider override.
 - `UPSTREAM_HTTP_PROXY` is reused for both upstream X-data requests and outbound LLM requests to OpenAI or Gemini.
+- The LLM integration now lives under the `app/llm/` package while keeping supported imports such as `from app.llm import LLMClient, GeminiClient, OpenAIClient, create_llm_client`.
+- `app.llm` does not re-export third-party modules. Tests that mock outbound LLM HTTP calls should patch `app.llm.base_client.requests.post`.
 - The app now emits structured runtime logs to stdout and, by default, to `data/app.log`.
 - Logs are JSON-per-line with an `event` field; API requests include a `request_id` that is propagated into upstream and LLM logs for correlation.
 - Prompts and model responses are not logged in full by default; snippets are truncated via `LOG_MAX_BODY_CHARS`. Set `LOG_ENABLE_FILE=false` to disable file logging.
@@ -97,5 +99,5 @@ curl -X POST http://127.0.0.1:8000/api/v1/drafts/generate \
 
 ## Validation
 ```bash
-python3 -m unittest discover -s tests -v
+python -m pytest -q
 ```
