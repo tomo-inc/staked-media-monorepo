@@ -312,12 +312,6 @@ class LLMClient:
         )
         full_chinese_mode = prompt_requests_full_chinese(prompt)
         theme_keywords = extract_theme_keywords(prompt)
-        if full_chinese_mode:
-            theme_keywords = [
-                keyword
-                for keyword in theme_keywords
-                if "%" in keyword or any("\u4e00" <= char <= "\u9fff" for char in keyword)
-            ]
         matched_theme_tweets = select_theme_tweets(tweet_rows, theme_keywords)
         if not matched_theme_tweets:
             matched_theme_tweets = [
@@ -336,12 +330,6 @@ class LLMClient:
             theme_keywords,
             prompt=prompt,
         )
-        if full_chinese_mode:
-            theme_top_keywords = [
-                keyword
-                for keyword in theme_top_keywords
-                if "%" in keyword or any("\u4e00" <= char <= "\u9fff" for char in keyword)
-            ]
         log_event(
             logger,
             logging.INFO,
@@ -584,7 +572,15 @@ class LLMClient:
             if full_chinese_candidates:
                 ranked_candidates = full_chinese_candidates
             else:
-                raise LLMError("Could not generate full-Chinese drafts without English mixing")
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "draft_generation_full_chinese_fallback",
+                    request_id=request_id,
+                    provider=self.provider_name,
+                    candidate_count=len(ranked_candidates),
+                    reason="no_full_chinese_candidate",
+                )
         selected_candidates = ranked_candidates[:draft_count]
         if not selected_candidates:
             log_event(
@@ -1026,17 +1022,20 @@ class LLMClient:
     ) -> dict[str, Any]:
         guardrails = _normalize_generation_guardrails(persona.get("generation_guardrails"))
         full_chinese_mode = prompt_requests_full_chinese(prompt)
+        allowed_english_tokens_set = self._allowed_english_tokens_for_full_chinese_prompt(
+            prompt=prompt,
+            theme_keywords=theme_keywords,
+        )
         prompt_for_generation = (
-            self._sanitize_prompt_for_full_chinese_mode(prompt)
+            self._sanitize_prompt_for_full_chinese_mode(
+                prompt=prompt,
+                theme_keywords=theme_keywords,
+                allowed_english_tokens=allowed_english_tokens_set,
+            )
             if full_chinese_mode
             else prompt
         )
-        allowed_english_tokens = sorted(
-            self._allowed_english_tokens_for_full_chinese_prompt(
-                prompt=prompt,
-                theme_keywords=theme_keywords,
-            )
-        )
+        allowed_english_tokens = sorted(allowed_english_tokens_set)
         drafting_rules = [
             "Prefer the persona's native opening moves and post formats over generic summary framing.",
             "Prioritize the matched theme tweets and their keyword patterns over unrelated global persona habits.",
@@ -1090,28 +1089,43 @@ class LLMClient:
         prompt: str,
         theme_keywords: list[str],
     ) -> set[str]:
+        allowed_tokens: set[str] = set()
+        for keyword in theme_keywords:
+            for token in extract_english_words(keyword):
+                lowered = token.lower()
+                if len(lowered) >= 2:
+                    allowed_tokens.add(lowered)
+
         lowered_prompt = prompt.lower()
         allow_markers = ("保留英文", "英文术语", "专有名词英文", "可以英文")
-        if not any(marker in lowered_prompt for marker in allow_markers):
-            return set()
-
-        allowed_tokens: set[str] = set()
-        for token in extract_english_words(prompt):
-            lowered = token.lower()
-            if len(lowered) >= 2:
-                allowed_tokens.add(lowered)
-        for keyword in theme_keywords:
-            if any("\u4e00" <= char <= "\u9fff" for char in keyword):
-                continue
-            for token in extract_english_words(keyword):
+        if any(marker in lowered_prompt for marker in allow_markers):
+            for token in extract_english_words(prompt):
                 lowered = token.lower()
                 if len(lowered) >= 2:
                     allowed_tokens.add(lowered)
         return allowed_tokens
 
-    def _sanitize_prompt_for_full_chinese_mode(self, prompt: str) -> str:
-        normalized_prompt = re.sub(r"(?i)claude\s*code", "某编程工具", prompt)
-        normalized_prompt = re.sub(r"[A-Za-z][A-Za-z0-9']*", "某工具", normalized_prompt)
+    def _sanitize_prompt_for_full_chinese_mode(
+        self,
+        *,
+        prompt: str,
+        theme_keywords: list[str],
+        allowed_english_tokens: set[str],
+    ) -> str:
+        preserved_tokens: set[str] = set(allowed_english_tokens)
+        for keyword in theme_keywords:
+            for token in extract_english_words(keyword):
+                lowered = token.lower()
+                if len(lowered) >= 2:
+                    preserved_tokens.add(lowered)
+
+        def replace_english_word(match: re.Match[str]) -> str:
+            token = match.group(0)
+            if token.lower() in preserved_tokens:
+                return token
+            return "某工具"
+
+        normalized_prompt = re.sub(r"[A-Za-z][A-Za-z0-9']*", replace_english_word, prompt)
         normalized_prompt = re.sub(r"(某工具\s*){2,}", "某工具", normalized_prompt)
         return clean_text(normalized_prompt)
 
