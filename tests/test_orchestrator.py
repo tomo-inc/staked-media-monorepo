@@ -192,6 +192,32 @@ class OrchestratorTestCase(unittest.TestCase):
             self.assertIn("used_keywords", variant)
             self.assertIn("source_facts", variant)
 
+    def test_generate_content_raises_lookup_error_when_no_rounds_can_run(self) -> None:
+        orchestrator = ContentOrchestrator(
+            settings=Settings(
+                app_env="test",
+                database_url=f"sqlite:///{self.temp_dir.name}/mvp.db",
+                openai_api_key="test-key",
+                log_enable_file=False,
+                content_rewrite_max_rounds=0,
+            ),
+            database=self.database,
+            llm=self.llm,  # type: ignore[arg-type]
+            web_enricher=self.web,  # type: ignore[arg-type]
+        )
+
+        payload = ContentGenerateRequest(
+            username="demo",
+            mode="A",
+            topic="OpenClaw winners",
+            idea="Share a short take",
+            keywords=["OpenClaw"],
+            draft_count=2,
+        )
+
+        with self.assertRaisesRegex(LookupError, "could not produce any draft candidates"):
+            orchestrator.generate_content(payload, request_id="req-empty")
+
     def test_suggest_ideas_and_exposure_outputs_structured_payload(self) -> None:
         ideas = self.orchestrator.suggest_ideas(direction="crypto", domain="ai", topic_hint="binance", limit=5)
         self.assertIn("ideas", ideas)

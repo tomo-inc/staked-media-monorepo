@@ -286,8 +286,8 @@ class ContentOrchestrator:
                     local_source_facts = local_source_facts + extra_facts
                     local_used_keywords = expand_related_keywords(local_used_keywords, local_web_keywords, personal_phrases, limit=30)
 
-        assert best_result is not None
-        assert best_score is not None
+        if best_result is None or best_score is None:
+            raise LookupError("Content generation could not produce any draft candidates")
         drafts = best_result.get("drafts", [])
         formatted_drafts = [f"{index}. {item.get('text', '').strip()}" for index, item in enumerate(drafts, 1)]
         target_score_met = best_score["final_score"] >= 9.0 and bool(best_result.get("target_score_met", False))

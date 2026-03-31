@@ -356,9 +356,12 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
         database: Database = request.app.state.database
+        latest_persona_snapshot = database.get_latest_persona_snapshot(payload.username)
+        if latest_persona_snapshot is None:
+            raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
         database.save_draft_request(
             username=payload.username,
-            persona_snapshot_id=database.get_latest_persona_snapshot(payload.username)["id"],
+            persona_snapshot_id=latest_persona_snapshot["id"],
             prompt=payload.idea or payload.topic or "content_generate",
             draft_count=payload.draft_count,
             output=result,

@@ -101,6 +101,8 @@ The response also includes quality-gate fields:
 - `quality_gate_met`: whether at least one variant reached target (>=9.0)
 - `quality_gate_reason`: non-empty when all variants are below target
 
+Note that `/api/v1/content/generate` now enforces the presence of a persona snapshot when saving draft requests; if no persona snapshot exists for the user, the endpoint returns `409 Conflict` instead of attempting to persist the draft.
+
 ### Suggest ideas (mode B pre-step)
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/content/ideas \
