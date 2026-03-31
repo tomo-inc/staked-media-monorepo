@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+import app.llm as llm_module
 from app.config import Settings
 from app.llm import GeminiClient, LLMError, OpenAIClient, create_llm_client
 
@@ -220,6 +221,21 @@ class LlmProviderTestCase(unittest.TestCase):
         self.assertIsInstance(client, GeminiClient)
         self.assertEqual(client.provider_name, "gemini")
 
+    def test_public_exports_match_supported_api(self) -> None:
+        self.assertEqual(
+            set(llm_module.__all__),
+            {
+                "GeminiClient",
+                "LLMClient",
+                "LLMError",
+                "LLMTransportError",
+                "OpenAIClient",
+                "OpenAIError",
+                "create_llm_client",
+            },
+        )
+        self.assertFalse(hasattr(llm_module, "requests"))
+
     def test_gemini_requires_api_key(self) -> None:
         client = GeminiClient(Settings(llm_provider="gemini"))
 
@@ -230,7 +246,7 @@ class LlmProviderTestCase(unittest.TestCase):
                 temperature=0.2,
             )
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_gemini_parses_json_response(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
             json_body={
@@ -273,7 +289,7 @@ class LlmProviderTestCase(unittest.TestCase):
             {"http": "http://127.0.0.1:9000", "https": "http://127.0.0.1:9000"},
         )
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_gemini_rejects_empty_candidates(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(json_body={})
         client = GeminiClient(
@@ -290,7 +306,7 @@ class LlmProviderTestCase(unittest.TestCase):
                 temperature=0.3,
             )
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_gemini_http_error_raises_llmerror(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(status_code=429, text="quota exhausted")
         client = GeminiClient(
@@ -307,7 +323,7 @@ class LlmProviderTestCase(unittest.TestCase):
                 temperature=0.3,
             )
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_gemini_rejects_invalid_json_response(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
             json_body={
@@ -338,7 +354,7 @@ class LlmProviderTestCase(unittest.TestCase):
                 temperature=0.3,
             )
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_gemini_parses_fenced_json_response(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
             json_body={
@@ -365,7 +381,7 @@ class LlmProviderTestCase(unittest.TestCase):
 
         self.assertEqual(payload["score"], 8.8)
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_gemini_extracts_json_from_wrapped_text(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
             json_body={
@@ -392,7 +408,7 @@ class LlmProviderTestCase(unittest.TestCase):
 
         self.assertEqual(payload["score"], 8.6)
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_gemini_retries_timeout_then_succeeds(self, mock_post) -> None:
         import requests
 
@@ -432,7 +448,7 @@ class LlmProviderTestCase(unittest.TestCase):
         self.assertEqual(payload["score"], 9.1)
         self.assertEqual(mock_post.call_count, 2)
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_openai_retries_http_5xx_then_succeeds(self, mock_post) -> None:
         mock_post.side_effect = [
             FakeResponse(status_code=503, text="temporary outage"),
@@ -465,7 +481,7 @@ class LlmProviderTestCase(unittest.TestCase):
         self.assertEqual(payload["score"], 9.0)
         self.assertEqual(mock_post.call_count, 2)
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_openai_request_shape_and_parsing(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
             json_body={
@@ -504,7 +520,7 @@ class LlmProviderTestCase(unittest.TestCase):
             {"http": "http://127.0.0.1:9000", "https": "http://127.0.0.1:9000"},
         )
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_openai_http_error_raises_llmerror(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(status_code=400, text="bad request")
         client = OpenAIClient(Settings(openai_api_key="openai-key"))
@@ -517,7 +533,7 @@ class LlmProviderTestCase(unittest.TestCase):
             )
         self.assertEqual(mock_post.call_count, 1)
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_openai_uses_no_proxy_when_unconfigured(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
             json_body={
@@ -541,7 +557,7 @@ class LlmProviderTestCase(unittest.TestCase):
         call_kwargs = mock_post.call_args.kwargs
         self.assertIsNone(call_kwargs["proxies"])
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_gemini_uses_no_proxy_when_unconfigured(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
             json_body={
@@ -569,7 +585,7 @@ class LlmProviderTestCase(unittest.TestCase):
         call_kwargs = mock_post.call_args.kwargs
         self.assertIsNone(call_kwargs["proxies"])
 
-    @patch("app.llm.requests.post")
+    @patch("app.llm.base_client.requests.post")
     def test_generate_drafts_falls_back_when_score_transport_exhausts_retries(self, mock_post) -> None:
         import requests
 

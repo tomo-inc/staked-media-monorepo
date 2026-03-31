@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 data/
+.claude/
+docs.private/
+.pytest_cache/
