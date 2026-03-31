@@ -66,6 +66,11 @@ class Settings:
     request_timeout_seconds: int = 30
     similarity_threshold: float = 0.92
     persona_sample_size: int = 40
+    web_enrichment_enabled: bool = True
+    web_enrichment_timeout_seconds: float = 8.0
+    web_enrichment_max_items: int = 12
+    web_enrichment_recency_hours: int = 24
+    content_rewrite_max_rounds: int = 3
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "llm_provider", _normalize_llm_provider(self.llm_provider))
@@ -111,4 +116,9 @@ def get_settings() -> Settings:
         request_timeout_seconds=int(os.getenv("REQUEST_TIMEOUT_SECONDS", "30")),
         similarity_threshold=float(os.getenv("SIMILARITY_THRESHOLD", "0.92")),
         persona_sample_size=int(os.getenv("PERSONA_SAMPLE_SIZE", "40")),
+        web_enrichment_enabled=os.getenv("WEB_ENRICHMENT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"},
+        web_enrichment_timeout_seconds=float(os.getenv("WEB_ENRICHMENT_TIMEOUT_SECONDS", "8")),
+        web_enrichment_max_items=int(os.getenv("WEB_ENRICHMENT_MAX_ITEMS", "12")),
+        web_enrichment_recency_hours=int(os.getenv("WEB_ENRICHMENT_RECENCY_HOURS", "24")),
+        content_rewrite_max_rounds=int(os.getenv("CONTENT_REWRITE_MAX_ROUNDS", "3")),
     )

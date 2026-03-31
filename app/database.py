@@ -145,6 +145,7 @@ class Database:
                         raw_json, ingested_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
+                        user_id=excluded.user_id,
                         text=excluded.text,
                         created_at=excluded.created_at,
                         lang=excluded.lang,

@@ -7,8 +7,10 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.database import Database
 from app.llm import GeminiClient
 from app.main import create_app
+from app.orchestrator import ContentOrchestrator
 from app.schemas import MAX_INGEST_TWEETS
 
 
@@ -153,6 +155,23 @@ class FakeLLMClient:
         }
 
 
+class FakeWebEnricher:
+    def search_recent_topic_signals(self, topic: str, keywords: list[str]) -> dict:
+        return {
+            "keywords": [topic, "winners", "results", "binance"],
+            "facts": [
+                {
+                    "title": f"{topic} winners announced",
+                    "summary": "Public update with ranked results.",
+                    "source": "test-source",
+                    "url": "https://example.com/news",
+                    "published_at": "2026-03-31T00:00:00+00:00",
+                }
+            ],
+            "items": [],
+        }
+
+
 class ApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -164,11 +183,20 @@ class ApiTestCase(unittest.TestCase):
             openai_api_key="test-key",
             log_enable_file=False,
         )
+        db = Database(settings.database_path)
+        db.init()
+        content_orchestrator = ContentOrchestrator(
+            settings=settings,
+            database=db,
+            llm=self.llm_client,
+            web_enricher=FakeWebEnricher(),
+        )
         self.client = TestClient(
             create_app(
                 settings,
                 upstream_client=self.upstream_client,
                 llm_client=self.llm_client,
+                content_orchestrator=content_orchestrator,
             )
         )
 
@@ -304,6 +332,71 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         schema = response.json()["components"]["schemas"]["ProfileIngestRequest"]
         self.assertEqual(schema["properties"]["max_tweets"]["maximum"], float(MAX_INGEST_TWEETS))
+
+    def test_content_ideas_generate_exposure_and_debug_endpoints(self) -> None:
+        ingest = self.client.post(
+            "/api/v1/profiles/ingest",
+            json={"username": "demo-user", "max_tweets": 12},
+        )
+        self.assertEqual(ingest.status_code, 200)
+
+        ideas = self.client.post(
+            "/api/v1/content/ideas",
+            json={"direction": "crypto", "domain": "ai", "topic_hint": "binance", "limit": 3},
+        )
+        self.assertEqual(ideas.status_code, 200)
+        self.assertIn("ideas", ideas.json())
+
+        generated = self.client.post(
+            "/api/v1/content/generate",
+            json={
+                "username": "demo-user",
+                "mode": "A",
+                "idea": "Share thoughts about Binance winners list",
+                "topic": "Binance winners",
+                "keywords": ["Binance", "winners"],
+                "draft_count": 2,
+            },
+        )
+        self.assertEqual(generated.status_code, 200)
+        payload = generated.json()
+        self.assertIn("request_id", payload)
+        self.assertIn("score", payload)
+        self.assertIn("quality_gate_met", payload)
+        self.assertIn("quality_gate_reason", payload)
+        self.assertEqual(len(payload["drafts"]), 2)
+        self.assertIn("variants", payload)
+        self.assertEqual(len(payload["variants"]), 3)
+        self.assertEqual(
+            {item["variant"] for item in payload["variants"]},
+            {"normal", "expansion", "open"},
+        )
+        self.assertIn("recommended_variant", payload)
+        self.assertIn(payload["recommended_variant"], {"normal", "expansion", "open"})
+
+        recommended = next(item for item in payload["variants"] if item["variant"] == payload["recommended_variant"])
+        self.assertEqual(payload["drafts"], recommended["drafts"])
+        self.assertEqual(payload["formatted_drafts"], recommended["formatted_drafts"])
+        self.assertEqual(payload["score"], recommended["score"])
+        self.assertIn("quality_gate_reason", recommended)
+        self.assertIn("compensation_used", recommended)
+
+        exposure = self.client.post(
+            "/api/v1/exposure/analyze",
+            json={
+                "username": "demo-user",
+                "text": payload["drafts"][0]["text"],
+                "topic": "Binance winners",
+                "domain": "crypto",
+            },
+        )
+        self.assertEqual(exposure.status_code, 200)
+        self.assertIn("heat_score", exposure.json())
+
+        debug = self.client.get(f"/api/v1/content/debug/{payload['request_id']}")
+        self.assertEqual(debug.status_code, 200)
+        self.assertEqual(debug.json()["request_id"], payload["request_id"])
+        self.assertIn("variants", debug.json())
 
 
 if __name__ == "__main__":

@@ -12,10 +12,18 @@ from app.config import Settings, get_settings
 from app.database import Database
 from app.llm import LLMClient, LLMError, create_llm_client
 from app.logging_utils import configure_logging, format_log_event, get_logger, log_event, redact_for_log
+from app.orchestrator import ContentOrchestrator
 from app.persona import build_corpus_stats
 from app.schemas import (
+    ContentDebugResponse,
+    ContentGenerateRequest,
+    ContentGenerateResponse,
+    ContentIdeasRequest,
+    ContentIdeasResponse,
     DraftGenerateRequest,
     DraftGenerateResponse,
+    ExposureAnalyzeRequest,
+    ExposureAnalyzeResponse,
     IngestResponse,
     MAX_INGEST_TWEETS,
     ProfileIngestRequest,
@@ -37,6 +45,7 @@ def create_app(
     *,
     upstream_client: Optional[UpstreamClient] = None,
     llm_client: Optional[LLMClient] = None,
+    content_orchestrator: Optional[ContentOrchestrator] = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings)
@@ -47,6 +56,11 @@ def create_app(
     app.state.database = database
     app.state.upstream = upstream_client or UpstreamClient(settings)
     app.state.llm = llm_client or create_llm_client(settings)
+    app.state.content_orchestrator = content_orchestrator or ContentOrchestrator(
+        settings=settings,
+        database=database,
+        llm=app.state.llm,
+    )
 
     @app.on_event("startup")
     def on_startup() -> None:
@@ -313,6 +327,75 @@ def create_app(
             evaluation=draft_result.get("evaluation", {}),
             created_at=created_at,
         )
+
+    @app.post("/api/v1/content/ideas", response_model=ContentIdeasResponse)
+    def content_ideas(payload: ContentIdeasRequest, request: Request) -> ContentIdeasResponse:
+        orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
+        result = orchestrator.suggest_ideas(
+            direction=payload.direction,
+            domain=payload.domain,
+            topic_hint=payload.topic_hint,
+            limit=payload.limit,
+        )
+        return ContentIdeasResponse(**result)
+
+    @app.post("/api/v1/content/generate", response_model=ContentGenerateResponse)
+    def content_generate(payload: ContentGenerateRequest, request: Request) -> ContentGenerateResponse:
+        request_id = uuid.uuid4().hex[:12]
+        started_at = time.perf_counter()
+        orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
+        try:
+            result = orchestrator.generate_content(payload, request_id=request_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except LookupError as exc:
+            message = str(exc)
+            status_code = 404 if "Profile not found" in message else 409
+            raise HTTPException(status_code=status_code, detail=message) from exc
+        except LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        database: Database = request.app.state.database
+        database.save_draft_request(
+            username=payload.username,
+            persona_snapshot_id=database.get_latest_persona_snapshot(payload.username)["id"],
+            prompt=payload.idea or payload.topic or "content_generate",
+            draft_count=payload.draft_count,
+            output=result,
+            created_at=utc_now_iso(),
+        )
+        log_event(
+            logger,
+            logging.INFO,
+            "api_content_generate_completed",
+            request_id=request_id,
+            username=payload.username,
+            mode=payload.mode,
+            topic=result.get("topic", ""),
+            final_score=result.get("score", {}).get("final_score", 0.0),
+            target_score_met=result.get("target_score_met", False),
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+        )
+        return ContentGenerateResponse(**result)
+
+    @app.post("/api/v1/exposure/analyze", response_model=ExposureAnalyzeResponse)
+    def exposure_analyze(payload: ExposureAnalyzeRequest, request: Request) -> ExposureAnalyzeResponse:
+        orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
+        result = orchestrator.analyze_exposure(
+            username=payload.username,
+            text=payload.text,
+            topic=payload.topic,
+            domain=payload.domain,
+        )
+        return ExposureAnalyzeResponse(**result)
+
+    @app.get("/api/v1/content/debug/{request_id}", response_model=ContentDebugResponse)
+    def content_debug(request_id: str, request: Request) -> ContentDebugResponse:
+        orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
+        debug_payload = orchestrator.get_debug(request_id)
+        if debug_payload is None:
+            raise HTTPException(status_code=404, detail="Debug record not found")
+        return ContentDebugResponse(**debug_payload)
 
     return app
 
