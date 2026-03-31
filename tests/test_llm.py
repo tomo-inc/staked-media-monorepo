@@ -144,6 +144,28 @@ class LlmNormalizationTestCase(unittest.TestCase):
         self.assertLess(evaluation["score"], 10.0)
         self.assertTrue(any("Low-frequency topic drift phrase" in issue for issue in evaluation["issues"]))
 
+    def test_rule_score_blocks_unrequested_english_in_full_chinese_mode(self) -> None:
+        evaluation = self.client._rule_score_draft(
+            persona={
+                "lexical_markers": [],
+                "banned_phrases": [],
+            },
+            prompt="写一条推文，中文全部，不要一下中文一下英文。",
+            candidate_text="这波结论很直接，meta层面没有秘密。",
+            source_texts=["市场噪音很多，保持耐心更重要。"],
+            matched_theme_tweets=[{"text": "这波更像标题党，不是实质突破。"}],
+            theme_keywords=["源码", "泄露"],
+            theme_top_keywords=["标题党", "逆向"],
+        )
+
+        self.assertLess(evaluation["score"], 6.0)
+        self.assertTrue(
+            any(
+                issue.startswith("Contains English despite full-Chinese prompt")
+                for issue in evaluation["issues"]
+            )
+        )
+
     def test_candidate_result_preserves_failure_reasons(self) -> None:
         candidate = self.client._candidate_result(
             text="Candidate text",
