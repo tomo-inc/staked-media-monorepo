@@ -106,6 +106,53 @@ CHINESE_STOPWORDS = {
     "相关",
 }
 
+FULL_CHINESE_PROMPT_MARKERS = {
+    "全中文",
+    "全部中文",
+    "全是中文",
+    "中文全部",
+    "中文输出",
+    "中文推文",
+    "中文帖子",
+    "中文x帖子",
+    "全中文输出",
+    "纯中文",
+    "只用中文",
+    "只要中文",
+    "都用中文",
+    "统一中文",
+    "不要英文",
+    "不要英语",
+    "不夹英文",
+    "不要夹英文",
+    "不要中英夹带",
+    "不要中英夹杂",
+    "不要中英混合",
+    "不要中英混搭",
+    "不能中英混用",
+    "不能中英混着来",
+    "不能一下中文一下英文",
+    "不要一会中文一会英文",
+}
+
+BILINGUAL_OR_ENGLISH_REQUEST_MARKERS = {
+    "中英双语",
+    "双语",
+    "中英都要",
+    "中英都可以",
+    "中英混写",
+    "中英混着来",
+    "夹带英文",
+    "英文版",
+    "英语版",
+    "english",
+    "in english",
+    "english only",
+    "bilingual",
+    "code-switch",
+    "codeswitch",
+}
+
 SUMMARY_DRIFT_PHRASES = {
     "有趣之处在于",
     "更像是",
@@ -116,15 +163,25 @@ SUMMARY_DRIFT_PHRASES = {
 
 
 def clean_text(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").strip())
+    sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text or "")
+    return re.sub(r"\s+", " ", sanitized.strip())
 
 
 def prompt_requests_full_chinese(prompt: str) -> bool:
-    prompt = clean_text(prompt)
-    return any(
-        marker in prompt
-        for marker in ("全中文", "不要中英夹带", "纯中文", "只用中文", "不要英文", "中文X帖子", "中文帖子")
-    )
+    normalized_prompt = clean_text(prompt)
+    if not normalized_prompt:
+        return False
+
+    lowered_prompt = normalized_prompt.lower()
+    compact_prompt = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", lowered_prompt)
+    if any(marker in lowered_prompt or marker in compact_prompt for marker in FULL_CHINESE_PROMPT_MARKERS):
+        return True
+    if any(marker in lowered_prompt for marker in BILINGUAL_OR_ENGLISH_REQUEST_MARKERS):
+        return False
+
+    chinese_char_count = len(re.findall(r"[\u4e00-\u9fff]", normalized_prompt))
+    latin_char_count = len(re.findall(r"[A-Za-z]", normalized_prompt))
+    return chinese_char_count >= max(6, latin_char_count * 2)
 
 
 def normalize_for_similarity(text: str) -> str:

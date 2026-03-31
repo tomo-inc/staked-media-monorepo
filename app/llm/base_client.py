@@ -310,6 +310,7 @@ class LLMClient:
             source_text_count=len(source_texts),
             tweet_row_count=len(tweet_rows),
         )
+        full_chinese_mode = prompt_requests_full_chinese(prompt)
         theme_keywords = extract_theme_keywords(prompt)
         matched_theme_tweets = select_theme_tweets(tweet_rows, theme_keywords)
         if not matched_theme_tweets:
@@ -559,6 +560,27 @@ class LLMClient:
             key=lambda item: item["evaluation"]["final_score"],
             reverse=True,
         )
+        if full_chinese_mode:
+            full_chinese_candidates = [
+                item
+                for item in ranked_candidates
+                if not any(
+                    issue.startswith("Contains English despite full-Chinese prompt")
+                    for issue in item["evaluation"]["rule_issues"]
+                )
+            ]
+            if full_chinese_candidates:
+                ranked_candidates = full_chinese_candidates
+            else:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "draft_generation_full_chinese_fallback",
+                    request_id=request_id,
+                    provider=self.provider_name,
+                    candidate_count=len(ranked_candidates),
+                    reason="no_full_chinese_candidate",
+                )
         selected_candidates = ranked_candidates[:draft_count]
         if not selected_candidates:
             log_event(
@@ -809,12 +831,12 @@ class LLMClient:
             score -= 1.5
             issues.append("Misses the top keywords from matched historical tweets")
 
-        if prompt_requests_full_chinese(prompt):
-            allowed_english = {
-                keyword.lower()
-                for keyword in theme_keywords
-                if not any("\u4e00" <= char <= "\u9fff" for char in keyword)
-            }
+        full_chinese_mode = prompt_requests_full_chinese(prompt)
+        if full_chinese_mode:
+            allowed_english = self._allowed_english_tokens_for_full_chinese_prompt(
+                prompt=prompt,
+                theme_keywords=theme_keywords,
+            )
             disallowed_english = [
                 word
                 for word in extract_english_words(candidate_text)
@@ -823,8 +845,9 @@ class LLMClient:
         else:
             disallowed_english = []
         if disallowed_english:
-            score -= 2.0
-            issues.append("Contains English despite full-Chinese prompt")
+            score -= 6.0
+            sample = ", ".join(sorted(set(word.lower() for word in disallowed_english))[:4])
+            issues.append(f"Contains English despite full-Chinese prompt: {sample}")
 
         for phrase in SUMMARY_DRIFT_PHRASES:
             if phrase in candidate_text:
@@ -998,6 +1021,34 @@ class LLMClient:
         draft_count: int,
     ) -> dict[str, Any]:
         guardrails = _normalize_generation_guardrails(persona.get("generation_guardrails"))
+        full_chinese_mode = prompt_requests_full_chinese(prompt)
+        allowed_english_tokens_set = self._allowed_english_tokens_for_full_chinese_prompt(
+            prompt=prompt,
+            theme_keywords=theme_keywords,
+        )
+        prompt_for_generation = (
+            self._sanitize_prompt_for_full_chinese_mode(
+                prompt=prompt,
+                theme_keywords=theme_keywords,
+                allowed_english_tokens=allowed_english_tokens_set,
+            )
+            if full_chinese_mode
+            else prompt
+        )
+        allowed_english_tokens = sorted(allowed_english_tokens_set)
+        drafting_rules = [
+            "Prefer the persona's native opening moves and post formats over generic summary framing.",
+            "Prioritize the matched theme tweets and their keyword patterns over unrelated global persona habits.",
+            "If compression_rules are present, follow them closely: one sharp observation is better than a fully explained argument.",
+            "Do not use anti_patterns even if they make the writing sound more polished.",
+            "Keep the draft timeline-native. Fragments, incompleteness, or media-friendly endings are allowed when they fit the persona.",
+            "Match the language requested by the user prompt. If the persona is bilingual, code-switch only when it feels native rather than decorative.",
+        ]
+        if full_chinese_mode:
+            drafting_rules.append(
+                "Full-Chinese mode is required: keep the draft in Chinese. "
+                "Use English only for exact tokens that already exist in user_prompt/theme_keywords."
+            )
         return {
             "persona": persona,
             "style_brief": {
@@ -1007,31 +1058,76 @@ class LLMClient:
                 "do_not_sound_like": _as_string_list(persona.get("do_not_sound_like")),
                 "generation_guardrails": guardrails,
             },
-            "user_prompt": prompt,
+            "user_prompt": prompt_for_generation,
             "representative_tweets": representative_tweets[:12],
             "matched_theme_tweets": matched_theme_tweets[:8],
             "theme_keywords": theme_keywords,
             "theme_top_keywords": theme_top_keywords,
             "avoid_texts": rejected_texts,
             "attempt_feedback": attempt_feedback,
-            "drafting_rules": [
-                "Prefer the persona's native opening moves and post formats over generic summary framing.",
-                "Prioritize the matched theme tweets and their keyword patterns over unrelated global persona habits.",
-                "If compression_rules are present, follow them closely: one sharp observation is better than a fully explained argument.",
-                "Do not use anti_patterns even if they make the writing sound more polished.",
-                "Keep the draft timeline-native. Fragments, incompleteness, or media-friendly endings are allowed when they fit the persona.",
-                "Match the language requested by the user prompt. If the persona is bilingual, code-switch only when it feels native rather than decorative.",
-            ],
+            "drafting_rules": drafting_rules,
             "constraints": {
                 "draft_count": draft_count,
                 "max_chars": 280,
-                "language_mode": "Match the user's requested language and the persona's natural language texture.",
+                "language_mode": (
+                    "Full-Chinese only (unless exact user-provided English tokens are necessary)."
+                    if full_chinese_mode
+                    else "Match the user's requested language and the persona's natural language texture."
+                ),
+                "full_chinese_only": full_chinese_mode,
+                "allowed_english_tokens": allowed_english_tokens,
                 "no_threads": True,
                 "no_hashtags_unless_natural": True,
                 "must_feel_like_same_author": True,
                 "target_score": TARGET_DRAFT_SCORE,
             },
         }
+
+    def _allowed_english_tokens_for_full_chinese_prompt(
+        self,
+        *,
+        prompt: str,
+        theme_keywords: list[str],
+    ) -> set[str]:
+        allowed_tokens: set[str] = set()
+        for keyword in theme_keywords:
+            for token in extract_english_words(keyword):
+                lowered = token.lower()
+                if len(lowered) >= 2:
+                    allowed_tokens.add(lowered)
+
+        lowered_prompt = prompt.lower()
+        allow_markers = ("保留英文", "英文术语", "专有名词英文", "可以英文")
+        if any(marker in lowered_prompt for marker in allow_markers):
+            for token in extract_english_words(prompt):
+                lowered = token.lower()
+                if len(lowered) >= 2:
+                    allowed_tokens.add(lowered)
+        return allowed_tokens
+
+    def _sanitize_prompt_for_full_chinese_mode(
+        self,
+        *,
+        prompt: str,
+        theme_keywords: list[str],
+        allowed_english_tokens: set[str],
+    ) -> str:
+        preserved_tokens: set[str] = set(allowed_english_tokens)
+        for keyword in theme_keywords:
+            for token in extract_english_words(keyword):
+                lowered = token.lower()
+                if len(lowered) >= 2:
+                    preserved_tokens.add(lowered)
+
+        def replace_english_word(match: re.Match[str]) -> str:
+            token = match.group(0)
+            if token.lower() in preserved_tokens:
+                return token
+            return "某工具"
+
+        normalized_prompt = re.sub(r"[A-Za-z][A-Za-z0-9']*", replace_english_word, prompt)
+        normalized_prompt = re.sub(r"(某工具\s*){2,}", "某工具", normalized_prompt)
+        return clean_text(normalized_prompt)
 
     def _normalize_drafts_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload, list):

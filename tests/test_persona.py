@@ -9,6 +9,7 @@ from app.persona import (
     extract_theme_keywords,
     extract_top_theme_keywords,
     is_too_similar,
+    prompt_requests_full_chinese,
     select_theme_tweets,
 )
 
@@ -162,7 +163,19 @@ class PersonaHelpersTestCase(unittest.TestCase):
         self.assertTrue(any("shipping weekly updates" in phrase for phrase in lowered))
         self.assertIn("community", lowered)
 
+    def test_prompt_requests_full_chinese_detects_common_user_wording(self) -> None:
+        self.assertTrue(
+            prompt_requests_full_chinese("写一条推文，中文全部，不要一下中文一下英文。")
+        )
+        self.assertTrue(
+            prompt_requests_full_chinese(
+                "写一条X推文，主题是：Claude Code 泄露了全部源码。观点：这是标题党，风格直接。"
+            )
+        )
+        self.assertFalse(
+            prompt_requests_full_chinese("写一条中英双语推文，保持轻松语气。")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

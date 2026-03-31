@@ -127,6 +127,28 @@ class LlmNormalizationTestCase(unittest.TestCase):
             )
         )
 
+    def test_sanitize_prompt_for_full_chinese_mode_preserves_theme_english_tokens(self) -> None:
+        sanitized = self.client._sanitize_prompt_for_full_chinese_mode(
+            prompt="写一条关于BTC突破10万和DeFi复苏的推文，全中文，bullish 语气像Claude Code。",
+            theme_keywords=["BTC", "DeFi", "Claude Code"],
+            allowed_english_tokens=set(),
+        )
+
+        self.assertIn("BTC", sanitized)
+        self.assertIn("DeFi", sanitized)
+        self.assertIn("Claude", sanitized)
+        self.assertIn("Code", sanitized)
+        self.assertNotIn("bullish", sanitized.lower())
+        self.assertIn("某工具", sanitized)
+
+    def test_allowed_english_tokens_defaults_to_theme_keywords(self) -> None:
+        allowed_tokens = self.client._allowed_english_tokens_for_full_chinese_prompt(
+            prompt="写一条关于BTC和DeFi的全中文帖子。",
+            theme_keywords=["BTC", "ETH"],
+        )
+
+        self.assertEqual(allowed_tokens, {"btc", "eth"})
+
     def test_rule_score_penalizes_low_frequency_lexical_markers(self) -> None:
         evaluation = self.client._rule_score_draft(
             persona={
@@ -143,6 +165,89 @@ class LlmNormalizationTestCase(unittest.TestCase):
 
         self.assertLess(evaluation["score"], 10.0)
         self.assertTrue(any("Low-frequency topic drift phrase" in issue for issue in evaluation["issues"]))
+
+    def test_rule_score_blocks_unrequested_english_in_full_chinese_mode(self) -> None:
+        evaluation = self.client._rule_score_draft(
+            persona={
+                "lexical_markers": [],
+                "banned_phrases": [],
+            },
+            prompt="写一条推文，中文全部，不要一下中文一下英文。",
+            candidate_text="这波结论很直接，meta层面没有秘密。",
+            source_texts=["市场噪音很多，保持耐心更重要。"],
+            matched_theme_tweets=[{"text": "这波更像标题党，不是实质突破。"}],
+            theme_keywords=["源码", "泄露"],
+            theme_top_keywords=["标题党", "逆向"],
+        )
+
+        self.assertLess(evaluation["score"], 6.0)
+        self.assertTrue(
+            any(
+                issue.startswith("Contains English despite full-Chinese prompt")
+                for issue in evaluation["issues"]
+            )
+        )
+
+    def test_generate_drafts_full_chinese_falls_back_to_best_available_candidate(self) -> None:
+        with patch.object(
+            self.client,
+            "_chat_completion_json",
+            return_value={"drafts": [{"text": "BTC这波继续观察", "tone_tags": ["direct"], "rationale": "ok"}]},
+        ):
+            with patch.object(
+                self.client,
+                "_evaluate_candidate",
+                return_value={
+                    "rule_score": 4.0,
+                    "llm_score": 4.0,
+                    "final_score": 4.0,
+                    "passed": False,
+                    "rule_issues": ["Contains English despite full-Chinese prompt: btc"],
+                    "rule_strengths": ["Theme keyword hits: BTC"],
+                    "llm_verdict": "weak_fit",
+                    "llm_issues": ["Language mismatch"],
+                    "llm_strengths": [],
+                    "must_fix": ["Use Chinese-only wording"],
+                    "failure_reasons": ["Contains English despite full-Chinese prompt: btc"],
+                },
+            ):
+                result = self.client.generate_drafts(
+                    persona={"generation_guardrails": {}, "lexical_markers": [], "do_not_sound_like": []},
+                    prompt="写一条关于BTC的推文，中文全部，不要一下中文一下英文。",
+                    representative_tweets=[
+                        {
+                            "id": "rep-1",
+                            "text": "BTC今天又新高了",
+                            "created_at": "2026-03-30T00:00:00Z",
+                            "engagement_score": 5,
+                        }
+                    ],
+                    source_texts=["市场有波动，保持耐心。"],
+                    tweet_rows=[
+                        {
+                            "id": "tweet-1",
+                            "text": "BTC今天这波确实猛",
+                            "created_at": "2026-03-30T00:00:00Z",
+                            "is_retweet": False,
+                            "is_reply": False,
+                            "is_quote": False,
+                            "retweet_count": 1,
+                            "reply_count": 1,
+                            "like_count": 1,
+                            "quote_count": 0,
+                        }
+                    ],
+                    draft_count=1,
+                )
+
+        self.assertEqual(len(result["drafts"]), 1)
+        self.assertEqual(result["drafts"][0]["text"], "BTC这波继续观察")
+        self.assertTrue(
+            any(
+                issue.startswith("Contains English despite full-Chinese prompt")
+                for issue in result["evaluation"]["best_candidate"]["rule_issues"]
+            )
+        )
 
     def test_candidate_result_preserves_failure_reasons(self) -> None:
         candidate = self.client._candidate_result(
