@@ -410,6 +410,66 @@ def phrase_frequency(items: list[dict[str, Any]], phrase: str) -> int:
     return sum(_count_occurrences(item.get("text", ""), phrase) for item in items)
 
 
+def extract_personal_phrases_unbounded(matched_tweets: list[dict[str, Any]]) -> list[str]:
+    phrases: list[str] = []
+    seen: set[str] = set()
+
+    for item in matched_tweets:
+        text = clean_text(item.get("text", ""))
+        if not text:
+            continue
+
+        for chunk in re.split(r"[。！？!?；;，,.\n]+", text):
+            phrase = clean_text(chunk)
+            if len(phrase) < 2 or len(phrase) > 40:
+                continue
+            normalized = phrase.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            phrases.append(phrase)
+
+        for token in _extract_keyword_candidates(text):
+            normalized = _normalize_keyword(token)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            phrases.append(token)
+
+    return phrases
+
+
+def expand_related_keywords(
+    seed_keywords: list[str],
+    web_keywords: list[str],
+    history_tokens: list[str],
+    *,
+    limit: int = 20,
+) -> list[str]:
+    expanded: list[str] = []
+    seen: set[str] = set()
+
+    def _append(items: list[str]) -> None:
+        for item in items:
+            token = clean_text(item)
+            if not token:
+                continue
+            normalized = _normalize_keyword(token)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            expanded.append(token)
+            if len(expanded) >= limit:
+                return
+
+    _append(seed_keywords)
+    if len(expanded) < limit:
+        _append(web_keywords)
+    if len(expanded) < limit:
+        _append(history_tokens)
+    return expanded
+
+
 def extract_english_words(text: str) -> list[str]:
     return WORD_RE.findall(text or "")
 

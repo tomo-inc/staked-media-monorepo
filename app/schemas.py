@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, conint, constr
 
@@ -112,3 +112,128 @@ class PersonaOutput(BaseModel):
 
 class DraftsOutput(BaseModel):
     drafts: list[DraftItem]
+
+
+class ContentGenerateRequest(BaseModel):
+    username: constr(strip_whitespace=True, min_length=1)
+    mode: Literal["A", "B"] = "A"
+    idea: str = ""
+    direction: str = ""
+    domain: str = ""
+    topic: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    tone: str = ""
+    draft_count: conint(gt=0, le=10) = 3
+
+
+class ContentScoreBreakdown(BaseModel):
+    theme_relevance: float = 0.0
+    style_similarity: float = 0.0
+    publishability: float = 0.0
+    final_score: float = 0.0
+
+
+ContentVariantType = Literal["normal", "expansion", "open"]
+
+
+class ContentVariantOutput(BaseModel):
+    variant: ContentVariantType
+    label: str
+    drafts: list[DraftItem]
+    formatted_drafts: list[str] = Field(default_factory=list)
+    score: ContentScoreBreakdown = Field(default_factory=ContentScoreBreakdown)
+    target_score_met: bool = False
+    retry_count: int = 0
+    quality_gate_reason: str = ""
+    compensation_used: bool = False
+    used_keywords: list[str] = Field(default_factory=list)
+    source_facts: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ContentGenerateResponse(BaseModel):
+    request_id: str
+    mode: Literal["A", "B"]
+    topic: str
+    variants: list[ContentVariantOutput] = Field(default_factory=list)
+    recommended_variant: ContentVariantType = "normal"
+    drafts: list[DraftItem]
+    formatted_drafts: list[str] = Field(default_factory=list)
+    score: ContentScoreBreakdown = Field(default_factory=ContentScoreBreakdown)
+    target_score_met: bool = False
+    quality_gate_met: bool = False
+    quality_gate_reason: str = ""
+    retry_count: int = 0
+    history_match_count: int = 0
+    web_enrichment_used: bool = False
+    used_keywords: list[str] = Field(default_factory=list)
+    web_keywords: list[str] = Field(default_factory=list)
+    personal_phrases: list[str] = Field(default_factory=list)
+    source_facts: list[dict[str, Any]] = Field(default_factory=list)
+    debug_summary: str = ""
+
+
+class ContentIdeasRequest(BaseModel):
+    direction: str = ""
+    domain: str = ""
+    topic_hint: str = ""
+    limit: conint(gt=0, le=20) = 8
+
+
+class IdeaItem(BaseModel):
+    topic: str
+    summary: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    source: str = ""
+    published_at: str = ""
+    url: str = ""
+
+
+class ContentIdeasResponse(BaseModel):
+    ideas: list[IdeaItem] = Field(default_factory=list)
+    query: str = ""
+    suggested_keywords: list[str] = Field(default_factory=list)
+
+
+class ExposureAnalyzeRequest(BaseModel):
+    username: str = ""
+    text: constr(strip_whitespace=True, min_length=3)
+    topic: str = ""
+    domain: str = ""
+
+
+class ExposureAnalyzeResponse(BaseModel):
+    hashtags: list[str] = Field(default_factory=list)
+    best_posting_windows: list[str] = Field(default_factory=list)
+    heat_score: float = 0.0
+    heat_label: str = "low"
+    reasons: list[str] = Field(default_factory=list)
+
+
+class ContentDebugRound(BaseModel):
+    round_index: int
+    final_score: float
+    web_enrichment_used: bool
+    used_keywords: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
+class ContentDebugVariant(BaseModel):
+    variant: ContentVariantType
+    rounds: list[ContentDebugRound] = Field(default_factory=list)
+    score: ContentScoreBreakdown = Field(default_factory=ContentScoreBreakdown)
+    target_score_met: bool = False
+
+
+class ContentDebugResponse(BaseModel):
+    request_id: str
+    mode: Literal["A", "B"]
+    topic: str
+    history_match_count: int
+    web_enrichment_used: bool
+    rounds: list[ContentDebugRound] = Field(default_factory=list)
+    variants: list[ContentDebugVariant] = Field(default_factory=list)
+    recommended_variant: ContentVariantType = "normal"
+    score: ContentScoreBreakdown = Field(default_factory=ContentScoreBreakdown)
+    used_keywords: list[str] = Field(default_factory=list)
+    web_keywords: list[str] = Field(default_factory=list)
+    source_facts: list[dict[str, Any]] = Field(default_factory=list)

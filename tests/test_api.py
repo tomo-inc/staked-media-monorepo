@@ -7,8 +7,10 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.database import Database
 from app.llm import GeminiClient
 from app.main import create_app
+from app.orchestrator import ContentOrchestrator
 from app.schemas import MAX_INGEST_TWEETS
 
 
@@ -153,6 +155,99 @@ class FakeLLMClient:
         }
 
 
+class FakeWebEnricher:
+    def search_recent_topic_signals(self, topic: str, keywords: list[str]) -> dict:
+        return {
+            "keywords": [topic, "winners", "results", "binance"],
+            "facts": [
+                {
+                    "title": f"{topic} winners announced",
+                    "summary": "Public update with ranked results.",
+                    "source": "test-source",
+                    "url": "https://example.com/news",
+                    "published_at": "2026-03-31T00:00:00+00:00",
+                }
+            ],
+            "items": [],
+        }
+
+
+class FakeContentOrchestrator:
+    def generate_content(self, payload, request_id: str) -> dict:
+        return {
+            "request_id": request_id,
+            "mode": payload.mode,
+            "topic": payload.topic or payload.idea or "content_generate",
+            "variants": [
+                {
+                    "variant": "normal",
+                    "label": "Normal",
+                    "drafts": [
+                        {
+                            "text": "Draft one",
+                            "tone_tags": ["direct"],
+                            "rationale": "fit",
+                        }
+                    ],
+                    "formatted_drafts": ["1. Draft one"],
+                    "score": {
+                        "theme_relevance": 9.0,
+                        "style_similarity": 9.0,
+                        "publishability": 9.0,
+                        "final_score": 9.0,
+                    },
+                    "target_score_met": True,
+                    "retry_count": 0,
+                    "quality_gate_reason": "",
+                    "compensation_used": False,
+                    "used_keywords": ["btc"],
+                    "source_facts": [],
+                }
+            ],
+            "recommended_variant": "normal",
+            "drafts": [
+                {
+                    "text": "Draft one",
+                    "tone_tags": ["direct"],
+                    "rationale": "fit",
+                }
+            ],
+            "formatted_drafts": ["1. Draft one"],
+            "score": {
+                "theme_relevance": 9.0,
+                "style_similarity": 9.0,
+                "publishability": 9.0,
+                "final_score": 9.0,
+            },
+            "target_score_met": True,
+            "quality_gate_met": True,
+            "quality_gate_reason": "",
+            "retry_count": 0,
+            "history_match_count": 0,
+            "web_enrichment_used": False,
+            "used_keywords": ["btc"],
+            "web_keywords": [],
+            "personal_phrases": [],
+            "source_facts": [],
+            "debug_summary": "ok",
+        }
+
+    def get_debug(self, request_id: str) -> dict | None:
+        return None
+
+    def suggest_ideas(self, *, direction: str, domain: str, topic_hint: str, limit: int) -> dict:
+        return {"ideas": [], "query": "", "suggested_keywords": []}
+
+    def analyze_exposure(self, *, username: str, text: str, topic: str, domain: str) -> dict:
+        return {
+            "hashtags": [],
+            "best_posting_windows": [],
+            "heat_score": 0.0,
+            "heat_label": "low",
+            "reasons": [],
+        }
+
+
 class ApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -164,11 +259,20 @@ class ApiTestCase(unittest.TestCase):
             openai_api_key="test-key",
             log_enable_file=False,
         )
+        db = Database(settings.database_path)
+        db.init()
+        content_orchestrator = ContentOrchestrator(
+            settings=settings,
+            database=db,
+            llm=self.llm_client,
+            web_enricher=FakeWebEnricher(),
+        )
         self.client = TestClient(
             create_app(
                 settings,
                 upstream_client=self.upstream_client,
                 llm_client=self.llm_client,
+                content_orchestrator=content_orchestrator,
             )
         )
 
@@ -304,6 +408,121 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         schema = response.json()["components"]["schemas"]["ProfileIngestRequest"]
         self.assertEqual(schema["properties"]["max_tweets"]["maximum"], float(MAX_INGEST_TWEETS))
+
+    def test_content_ideas_generate_exposure_and_debug_endpoints(self) -> None:
+        ingest = self.client.post(
+            "/api/v1/profiles/ingest",
+            json={"username": "demo-user", "max_tweets": 12},
+        )
+        self.assertEqual(ingest.status_code, 200)
+
+        ideas = self.client.post(
+            "/api/v1/content/ideas",
+            json={"direction": "crypto", "domain": "ai", "topic_hint": "binance", "limit": 3},
+        )
+        self.assertEqual(ideas.status_code, 200)
+        self.assertIn("ideas", ideas.json())
+
+        generated = self.client.post(
+            "/api/v1/content/generate",
+            json={
+                "username": "demo-user",
+                "mode": "A",
+                "idea": "Share thoughts about Binance winners list",
+                "topic": "Binance winners",
+                "keywords": ["Binance", "winners"],
+                "draft_count": 2,
+            },
+        )
+        self.assertEqual(generated.status_code, 200)
+        payload = generated.json()
+        self.assertIn("request_id", payload)
+        self.assertIn("score", payload)
+        self.assertIn("quality_gate_met", payload)
+        self.assertIn("quality_gate_reason", payload)
+        self.assertEqual(len(payload["drafts"]), 2)
+        self.assertIn("variants", payload)
+        self.assertEqual(len(payload["variants"]), 3)
+        self.assertEqual(
+            {item["variant"] for item in payload["variants"]},
+            {"normal", "expansion", "open"},
+        )
+        self.assertIn("recommended_variant", payload)
+        self.assertIn(payload["recommended_variant"], {"normal", "expansion", "open"})
+
+        recommended = next(item for item in payload["variants"] if item["variant"] == payload["recommended_variant"])
+        self.assertEqual(payload["drafts"], recommended["drafts"])
+        self.assertEqual(payload["formatted_drafts"], recommended["formatted_drafts"])
+        self.assertEqual(payload["score"], recommended["score"])
+        self.assertIn("quality_gate_reason", recommended)
+        self.assertIn("compensation_used", recommended)
+
+        exposure = self.client.post(
+            "/api/v1/exposure/analyze",
+            json={
+                "username": "demo-user",
+                "text": payload["drafts"][0]["text"],
+                "topic": "Binance winners",
+                "domain": "crypto",
+            },
+        )
+        self.assertEqual(exposure.status_code, 200)
+        self.assertIn("heat_score", exposure.json())
+
+        debug = self.client.get(f"/api/v1/content/debug/{payload['request_id']}")
+        self.assertEqual(debug.status_code, 200)
+        self.assertEqual(debug.json()["request_id"], payload["request_id"])
+        self.assertIn("variants", debug.json())
+
+    def test_content_generate_returns_409_when_persona_snapshot_is_missing_before_save(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        try:
+            settings = Settings(
+                app_env="test",
+                database_url=f"sqlite:///{temp_dir.name}/mvp.db",
+                openai_api_key="test-key",
+                log_enable_file=False,
+            )
+            database = Database(settings.database_path)
+            database.init()
+            database.upsert_user(
+                {
+                    "id": "u-1",
+                    "username": "demo-user",
+                    "name": "Test User",
+                    "description": "",
+                    "location": "",
+                    "url": "",
+                    "verified": False,
+                    "public_metrics": {"followers_count": 1, "following_count": 1, "tweet_count": 1},
+                },
+                "2026-03-31T00:00:00+00:00",
+            )
+            client = TestClient(
+                create_app(
+                    settings,
+                    upstream_client=FakeUpstreamClient(),
+                    llm_client=self.llm_client,
+                    content_orchestrator=FakeContentOrchestrator(),  # type: ignore[arg-type]
+                )
+            )
+
+            response = client.post(
+                "/api/v1/content/generate",
+                json={
+                    "username": "demo-user",
+                    "mode": "A",
+                    "idea": "Share thoughts about BTC momentum",
+                    "topic": "BTC momentum",
+                    "keywords": ["BTC"],
+                    "draft_count": 1,
+                },
+            )
+
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json()["detail"], "Persona not found. Run /api/v1/profiles/ingest first")
+        finally:
+            temp_dir.cleanup()
 
 
 if __name__ == "__main__":

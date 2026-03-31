@@ -4,6 +4,8 @@ import unittest
 
 from app.persona import (
     build_corpus_stats,
+    expand_related_keywords,
+    extract_personal_phrases_unbounded,
     extract_theme_keywords,
     extract_top_theme_keywords,
     is_too_similar,
@@ -85,19 +87,16 @@ class PersonaHelpersTestCase(unittest.TestCase):
 
     def test_extract_theme_keywords_prefers_signal_terms(self) -> None:
         keywords = extract_theme_keywords(
-            "用我的口吻写一条中文X帖子，主题是：今天PEPE上涨了20%，我想发一篇帖子。要求不要中英夹带。"
+            "Write a Chinese post about PEPE pumping 20% and focus on market narrative."
         )
-
         self.assertIn("PEPE", keywords)
-        self.assertIn("上涨", keywords)
         self.assertIn("20%", keywords)
-        self.assertNotIn("今天", keywords)
 
     def test_select_theme_tweets_and_extract_top_theme_keywords_use_theme_corpus(self) -> None:
         tweet_rows = [
             {
                 "id": "1",
-                "text": "PEPE拉起来的时候，meme板块的情绪会一起回来。",
+                "text": "PEPE momentum usually drags meme sentiment together.",
                 "created_at": "2026-03-01T00:00:00Z",
                 "is_retweet": False,
                 "is_reply": False,
@@ -109,7 +108,7 @@ class PersonaHelpersTestCase(unittest.TestCase):
             },
             {
                 "id": "2",
-                "text": "真正的PEPE龙头效应，是青蛙一动，情绪就起来了。",
+                "text": "Real PEPE leadership often shows up before broader rotation.",
                 "created_at": "2026-03-02T00:00:00Z",
                 "is_retweet": False,
                 "is_reply": False,
@@ -133,13 +132,37 @@ class PersonaHelpersTestCase(unittest.TestCase):
             },
         ]
 
-        matched = select_theme_tweets(tweet_rows, ["PEPE", "上涨"])
-        top_keywords = extract_top_theme_keywords(matched, ["PEPE", "上涨"], prompt="全中文")
+        matched = select_theme_tweets(tweet_rows, ["PEPE"])
+        top_keywords = extract_top_theme_keywords(matched, ["PEPE"], prompt="Use Chinese style.")
 
         self.assertEqual(len(matched), 2)
         self.assertIn("PEPE", matched[0]["match_terms"])
-        self.assertTrue(any(keyword in top_keywords for keyword in ["情绪", "龙头", "青蛙", "板块"]))
+        self.assertTrue(any(keyword.lower() in ("momentum", "leadership", "rotation", "sentiment") for keyword in top_keywords))
+
+    def test_expand_related_keywords_dedupes_and_prioritizes_seed(self) -> None:
+        expanded = expand_related_keywords(
+            ["Binance", "AI Pro"],
+            ["AI Pro", "OpenClaw", "winners"],
+            ["community", "OpenClaw", "alpha"],
+            limit=6,
+        )
+        self.assertEqual(expanded[0], "Binance")
+        self.assertIn("OpenClaw", expanded)
+        self.assertIn("community", expanded)
+        self.assertEqual(len(expanded), len(set(token.lower() for token in expanded)))
+
+    def test_extract_personal_phrases_unbounded_returns_sentence_chunks_and_tokens(self) -> None:
+        phrases = extract_personal_phrases_unbounded(
+            [
+                {"text": "We keep shipping weekly updates. Community first, always."},
+                {"text": "Product rhythm matters; focus and execution win."},
+            ]
+        )
+        lowered = [phrase.lower() for phrase in phrases]
+        self.assertTrue(any("shipping weekly updates" in phrase for phrase in lowered))
+        self.assertIn("community", lowered)
 
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -23,6 +23,7 @@ The service routes upstream profile and tweet calls through the configured proxy
 2. Choose `LLM_PROVIDER=openai` or `LLM_PROVIDER=gemini`
 3. Fill in the matching API key: `OPENAI_API_KEY` for OpenAI or `GEMINI_API_KEY` for Gemini
    Optional overrides: `OPENAI_MODEL`, `OPENAI_BASE_URL`, `GEMINI_MODEL`, `GEMINI_BASE_URL`
+   Content orchestration overrides: `WEB_ENRICHMENT_ENABLED`, `WEB_ENRICHMENT_TIMEOUT_SECONDS`, `WEB_ENRICHMENT_MAX_ITEMS`, `WEB_ENRICHMENT_RECENCY_HOURS`, `CONTENT_REWRITE_MAX_ROUNDS`
    If Gemini returns `User location is not supported for the API use.`, set `UPSTREAM_HTTP_PROXY` so outbound LLM requests route through a supported region.
    Logging overrides: `LOG_LEVEL`, `LOG_FILE_PATH`, `LOG_MAX_BODY_CHARS`, `LOG_ENABLE_FILE`
    LLM stability overrides: `LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_SECONDS`, `LLM_SCORE_TIMEOUT_SECONDS`, `REQUEST_TIMEOUT_SECONDS`
@@ -70,6 +71,59 @@ curl -X POST http://127.0.0.1:8000/api/v1/drafts/generate \
     "username": "ryanfang95",
     "prompt": "Announce a new strategic partnership",
     "draft_count": 5
+  }'
+```
+
+### Generate personalized content (mode A/B, auto web enrichment)
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/content/generate \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "username": "ryanfang95",
+    "mode": "A",
+    "idea": "Share thoughts on Binance winners list",
+    "direction": "crypto growth",
+    "domain": "ai",
+    "topic": "Binance AI contest winners",
+    "keywords": ["Binance", "winners", "AI"],
+    "draft_count": 3
+  }'
+```
+
+When historical topic matches are sparse (`<3`) or score is below target (`<9.0`), the service automatically fetches public topic signals from the web and retries generation.
+`/api/v1/content/generate` now returns three parallel variants in `variants`:
+- `normal` (normal writing)
+- `expansion` (expansion thinking)
+- `open` (open thinking)
+
+For backward compatibility, `drafts` / `formatted_drafts` / `score` still exist and map to `recommended_variant`.
+The response also includes quality-gate fields:
+- `quality_gate_met`: whether at least one variant reached target (>=9.0)
+- `quality_gate_reason`: non-empty when all variants are below target
+
+Note that `/api/v1/content/generate` now enforces the presence of a persona snapshot when saving draft requests; if no persona snapshot exists for the user, the endpoint returns `409 Conflict` instead of attempting to persist the draft.
+
+### Suggest ideas (mode B pre-step)
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/content/ideas \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "direction": "crypto",
+    "domain": "ai",
+    "topic_hint": "Binance",
+    "limit": 8
+  }'
+```
+
+### Exposure helper
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/exposure/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "username": "ryanfang95",
+    "text": "Your candidate tweet text here",
+    "topic": "Binance",
+    "domain": "crypto"
   }'
 ```
 
