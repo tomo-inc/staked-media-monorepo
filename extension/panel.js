@@ -6,7 +6,7 @@
     extractDrafts,
     sendRuntimeMessage
   } = window.StakedMediaExtensionShared;
-  const { deriveConnectionIndicator } = window.StakedMediaPanelHelpers;
+  const { buildPanelShell, deriveConnectionIndicator, isWhitelistDeniedError } = window.StakedMediaPanelHelpers;
   const params = new URLSearchParams(window.location.search);
   const HOST_MODE = params.get("host") === "popup" ? "popup" : "sidepanel";
   const systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -29,11 +29,12 @@
     settingsPage: "home",
     activeTab: "profile",
     profile: null,
-    profileLoading: false
+    profileLoading: false,
+    usernameError: ""
   };
 
   const root = document.getElementById("app");
-  root.innerHTML = buildShell();
+  root.innerHTML = buildPanelShell();
   root.firstElementChild?.setAttribute("data-host", HOST_MODE);
 
   const ui = {
@@ -46,7 +47,9 @@
     closeSettingsButton: root.querySelector('[data-action="close-settings"]'),
     openApiSettingsButton: root.querySelector('[data-action="open-api-settings"]'),
     toggleOpenModeButton: root.querySelector('[data-action="toggle-open-mode"]'),
+    statusSection: root.querySelector('[data-slot="status-section"]'),
     status: root.querySelector('[data-slot="status"]'),
+    usernameError: root.querySelector('[data-slot="username-error"]'),
     results: root.querySelector('[data-slot="results"]'),
     composer: root.querySelector('[data-slot="composer"]'),
     dot: root.querySelector('[data-slot="connection"]'),
@@ -112,6 +115,13 @@
     }
     event.preventDefault();
     ui.sBackendBaseUrl.blur();
+  });
+
+  ui.username.addEventListener("input", () => {
+    if (!STATE.usernameError) {
+      return;
+    }
+    renderUsernameError("");
   });
 
   root.querySelector('[data-action="generate"]').addEventListener("click", async () => {
@@ -358,16 +368,24 @@
       renderStatus("Username is required.", "error");
       return;
     }
+    renderUsernameError("");
+    renderStatus("", "");
     STATE.profileLoading = true;
     renderProfileInfo();
     try {
       const response = await sendRuntimeMessage({ type: "check_profile", payload: { username } });
       STATE.profile = response.profile;
+      renderUsernameError("");
+      renderStatus("", "");
       renderProfileInfo();
     } catch (error) {
       STATE.profile = null;
       renderProfileInfo();
-      renderStatus(formatRuntimeError(error), "error");
+      if (isWhitelistDeniedError(error)) {
+        renderUsernameError(formatRuntimeError(error));
+      } else {
+        renderStatus(formatRuntimeError(error), "error");
+      }
     } finally {
       STATE.profileLoading = false;
       renderProfileInfo();
@@ -380,6 +398,8 @@
       renderStatus("Username is required.", "error");
       return;
     }
+    renderUsernameError("");
+    renderStatus("", "");
     STATE.profileLoading = true;
     renderProfileInfo();
     try {
@@ -394,11 +414,16 @@
           persona: response.result.persona
         }
       };
+      renderUsernameError("");
       renderProfileInfo();
       renderStatus(`Ingested ${response.result.fetched_tweet_count} tweets. Persona ready.`, "success");
     } catch (error) {
       renderProfileInfo();
-      renderStatus(formatRuntimeError(error), "error");
+      if (isWhitelistDeniedError(error)) {
+        renderUsernameError(formatRuntimeError(error));
+      } else {
+        renderStatus(formatRuntimeError(error), "error");
+      }
     } finally {
       STATE.profileLoading = false;
       renderProfileInfo();
@@ -421,6 +446,8 @@
       idea,
       draft_count: ui.draftCount.value
     };
+    renderUsernameError("");
+    renderStatus("", "");
     await runGeneration(payload);
   }
 
@@ -440,6 +467,9 @@
       render();
     } catch (error) {
       STATE.lastGenerateDurationMs = Math.round(performance.now() - startedAt);
+      if (isWhitelistDeniedError(error)) {
+        renderUsernameError(formatRuntimeError(error));
+      }
       renderStatus(formatApiError(error), "error");
       render();
     } finally {
@@ -476,6 +506,7 @@
     renderView();
     renderGenerateButton();
     renderConnectionDot();
+    renderUsernameError(STATE.usernameError);
     renderProfileInfo();
     renderResults();
     renderComposerState();
@@ -549,6 +580,15 @@
     dot.className = indicator.className;
     dot.title = indicator.title;
     if (latencyEl) latencyEl.textContent = indicator.latencyText;
+  }
+
+  function renderUsernameError(text) {
+    STATE.usernameError = String(text || "");
+    if (!ui.usernameError) {
+      return;
+    }
+    ui.usernameError.textContent = STATE.usernameError;
+    ui.usernameError.hidden = !STATE.usernameError;
   }
 
   function renderProfileInfo() {
@@ -716,9 +756,15 @@
   function renderStatus(text, level) {
     if (!text) {
       ui.status.innerHTML = "";
+      if (ui.statusSection) {
+        ui.statusSection.hidden = true;
+      }
       return;
     }
     ui.status.innerHTML = `<div class="smc-banner smc-banner-${level || "info"}">${escapeHtml(text)}</div>`;
+    if (ui.statusSection) {
+      ui.statusSection.hidden = false;
+    }
   }
 
   function formatApiError(error) {
@@ -776,169 +822,5 @@
     if (!closed) {
       window.close();
     }
-  }
-
-  function buildShell() {
-    return `
-      <div class="smc-shell">
-        <aside class="smc-panel">
-          <header class="smc-header">
-            <div class="smc-header-left">
-              <button class="smc-icon-button smc-back-button" data-action="close-settings" type="button" aria-label="Back to main view" hidden>
-                <span aria-hidden="true">&lt;</span>
-              </button>
-              <h1 class="smc-title" data-slot="header-title">X Copilot</h1>
-            </div>
-            <div class="smc-header-right">
-              <span class="smc-latency-text" data-slot="latency-text">--</span>
-              <span class="smc-status-dot smc-dot-warn" data-slot="connection" title="Checking..."></span>
-              <button class="smc-icon-button smc-menu-button" data-action="open-settings" type="button" aria-label="Open settings">
-                <span class="smc-menu-icon" aria-hidden="true">
-                  <span></span>
-                  <span></span>
-                  <span></span>
-                </span>
-              </button>
-            </div>
-          </header>
-
-          <div class="smc-view smc-view-active" data-view="main">
-            <nav class="smc-tab-bar">
-              <button class="smc-tab smc-tab-active" data-tab-target="profile" type="button">Profile</button>
-              <button class="smc-tab" data-tab-target="draft" type="button">Draft</button>
-            </nav>
-
-            <div class="smc-tab-panel smc-tab-panel-active" data-tab-panel="profile">
-              <section class="smc-section">
-                <div class="smc-username-row">
-                  <input class="smc-input" data-field="username" placeholder="@Username" type="text">
-                  <button class="smc-button smc-button-secondary" data-action="load-profile" type="button">Load</button>
-                  <button class="smc-button smc-button-secondary" data-action="ingest-profile" type="button">Ingest</button>
-                </div>
-                <div data-slot="profile-info"></div>
-              </section>
-            </div>
-
-            <div class="smc-tab-panel" data-tab-panel="draft">
-              <section class="smc-section">
-                <label class="smc-label">
-                  Topic / Idea
-                  <textarea class="smc-textarea" data-field="idea" placeholder="Can Bitcoin be cracked in 9 minutes?&#10;Google warns ECC timeline may arrive earlier&#10;Attack threshold could be 20x lower"></textarea>
-                </label>
-                <label class="smc-label">
-                  Draft Count
-                  <input class="smc-input smc-input-short" data-field="draftCount" min="1" max="10" step="1" type="number" value="3">
-                </label>
-                <div class="smc-button-row">
-                  <button class="smc-button smc-button-primary" data-action="generate" type="button">Generate</button>
-                </div>
-              </section>
-
-              <section class="smc-section">
-                <div data-slot="status"></div>
-              </section>
-
-              <section class="smc-section">
-                <div class="smc-section-head">
-                  <h2>Result</h2>
-                  <div class="smc-section-head-right">
-                    <div data-slot="composer"></div>
-                    <button class="smc-link-button" data-action="clear-results" type="button">Clear</button>
-                  </div>
-                </div>
-                <div data-slot="results"></div>
-              </section>
-            </div>
-          </div>
-
-          <div class="smc-view" data-view="settings">
-            <div class="smc-settings-page smc-settings-page-active" data-settings-view="home">
-              <section class="smc-section smc-settings-home-section">
-                <div class="smc-settings-list">
-                  <button class="smc-settings-item" data-action="open-api-settings" type="button">
-                    <span class="smc-settings-item-main">
-                      <span class="smc-settings-item-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none">
-                          <circle cx="6" cy="12" r="1.75" stroke="currentColor"></circle>
-                          <circle cx="18" cy="6" r="1.75" stroke="currentColor"></circle>
-                          <circle cx="18" cy="18" r="1.75" stroke="currentColor"></circle>
-                          <path d="M7.6 11.2L16.3 6.8M7.6 12.8l8.7 4.4" stroke="currentColor" stroke-linecap="round"></path>
-                        </svg>
-                      </span>
-                      <span class="smc-settings-item-copy">
-                        <span class="smc-settings-item-title">API &amp; Generation</span>
-                      </span>
-                    </span>
-                    <span class="smc-settings-item-chevron" aria-hidden="true">›</span>
-                  </button>
-
-                  <button class="smc-settings-item" data-action="toggle-open-mode" type="button">
-                    <span class="smc-settings-item-main">
-                      <span class="smc-settings-item-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none">
-                          <rect x="4" y="5" width="16" height="14" rx="2" stroke="currentColor"></rect>
-                          <path d="M10 5v14" stroke="currentColor" stroke-linecap="round"></path>
-                        </svg>
-                      </span>
-                      <span class="smc-settings-item-copy">
-                        <span class="smc-settings-item-title" data-slot="s-host-mode-title">Switch to Popup</span>
-                      </span>
-                    </span>
-                  </button>
-
-                  <label class="smc-settings-item smc-settings-item-select" for="smc-theme-select">
-                    <span class="smc-settings-item-main">
-                      <span class="smc-settings-item-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none">
-                          <path d="M12 3v2.2M12 18.8V21M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M3 12h2.2M18.8 12H21M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6" stroke="currentColor" stroke-linecap="round"></path>
-                          <circle cx="12" cy="12" r="4" stroke="currentColor"></circle>
-                        </svg>
-                      </span>
-                      <span class="smc-settings-item-copy">
-                        <span class="smc-settings-item-title">Theme</span>
-                      </span>
-                    </span>
-                    <select class="smc-settings-select" id="smc-theme-select" data-field="s-theme">
-                      <option value="light">Light</option>
-                      <option value="dark">Dark</option>
-                      <option value="system">System</option>
-                    </select>
-                  </label>
-                </div>
-              </section>
-            </div>
-
-            <div class="smc-settings-page" data-settings-view="api">
-              <section class="smc-section">
-                <label class="smc-label">
-                  API Base URL
-                  <input class="smc-input" data-field="s-backendBaseUrl" type="text" placeholder="http://127.0.0.1:8000">
-                </label>
-                <div class="smc-settings-helper">Press Enter or click outside to save the URL.</div>
-
-                <label class="smc-label">
-                  Generation API Mode
-                </label>
-                <div class="smc-radio-group">
-                  <label class="smc-radio-option">
-                    <input type="radio" name="s-apiMode" data-field="s-apiModeDrafts" value="drafts">
-                    Drafts API (/api/v1/drafts/generate)
-                  </label>
-                  <label class="smc-radio-option">
-                    <input type="radio" name="s-apiMode" data-field="s-apiModeContent" value="content" checked>
-                    Content API (/api/v1/content/generate)
-                  </label>
-                </div>
-              </section>
-            </div>
-
-            <section class="smc-section smc-settings-status-section" hidden>
-              <div class="smc-settings-status" data-slot="settings-status"></div>
-            </section>
-          </div>
-
-        </aside>
-      </div>
-    `;
   }
 })();

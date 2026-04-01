@@ -571,6 +571,17 @@ body {
   min-width: 80px;
 }
 
+.smc-field-message {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.smc-field-message-error {
+  color: var(--smc-error);
+}
+
 .smc-label {
   display: block;
   font-size: 12px;

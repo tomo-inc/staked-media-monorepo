@@ -100,7 +100,8 @@ async function checkProfile({ username }) {
   try {
     const payload = await requestJson({
       path: API.profile(normalizedUsername),
-      method: "GET"
+      method: "GET",
+      deniedUsername: normalizedUsername
     });
     return {
       exists: true,
@@ -132,7 +133,8 @@ async function ingestProfile(payload) {
   const result = await requestJson({
     path: API.ingest,
     method: "POST",
-    body
+    body,
+    deniedUsername: body.username
   });
   await saveConfig({ defaultUsername: body.username });
   return result;
@@ -155,7 +157,8 @@ async function generateDrafts(payload) {
   const result = await requestJson({
     path: API.draftsGenerate,
     method: "POST",
-    body
+    body,
+    deniedUsername: body.username
   });
   await saveConfig({ defaultUsername: body.username });
   return result;
@@ -172,7 +175,8 @@ async function generateContent(payload) {
   const result = await requestJson({
     path: API.contentGenerate,
     method: "POST",
-    body
+    body,
+    deniedUsername: body.username
   });
   await saveConfig({ defaultUsername: body.username });
   return result;
@@ -202,7 +206,8 @@ async function analyzeExposure(payload) {
   return requestJson({
     path: API.exposureAnalyze,
     method: "POST",
-    body
+    body,
+    deniedUsername: body.username
   });
 }
 
@@ -276,7 +281,7 @@ async function insertTextIntoComposer(payload) {
   };
 }
 
-async function requestJson({ path, method, body }) {
+async function requestJson({ path, method, body, deniedUsername }) {
   const baseUrl = await getBackendBaseUrl();
   let response;
   try {
@@ -302,6 +307,12 @@ async function requestJson({ path, method, body }) {
   }
 
   if (!response.ok) {
+    if (response.status === 403 && path.startsWith("/api/v1/")) {
+      const error = new Error(formatForbiddenMessage(deniedUsername));
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
     const detail =
       payload && typeof payload === "object" && !Array.isArray(payload)
         ? payload.detail || JSON.stringify(payload)
@@ -313,6 +324,15 @@ async function requestJson({ path, method, body }) {
   }
 
   return payload;
+}
+
+function formatForbiddenMessage(username) {
+  const normalizedUsername = String(username || "").trim();
+  if (normalizedUsername) {
+    const handle = normalizedUsername.startsWith("@") ? normalizedUsername : `@${normalizedUsername}`;
+    return `User ${handle} is not allowed. Please contact the administrator.`;
+  }
+  return "This user is not allowed. Please contact the administrator.";
 }
 
 function clampInt(value, min, max) {

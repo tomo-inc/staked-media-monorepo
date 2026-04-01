@@ -35,8 +35,9 @@ node --test extension/tests/*.test.js
 
 ## MVP Constraints
 
-- The backend URL must use `localhost` or `127.0.0.1`
-- The local backend at `http://127.0.0.1:8000` must already be reachable from the browser extension
+- The backend URL must use a valid `http(s)://` origin without embedded credentials
+- The configured backend must already be reachable from the browser extension
 - The current backend has no extension-specific authentication model
 - The extension does not auto-publish; it only inserts selected text into the X composer
 - Persona generation still requires `POST /api/v1/profiles/ingest` before draft generation
+- API whitelist denials surface below the username field and remain visible in the draft banner during generation failures

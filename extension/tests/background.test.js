@@ -124,6 +124,16 @@ function dispatchRuntimeMessage(listener, message) {
   });
 }
 
+function createJsonResponse(status, payload) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async text() {
+      return JSON.stringify(payload);
+    }
+  };
+}
+
 test("background save_config updates host mode and popup behavior", async () => {
   const harness = createBackgroundHarness();
   await flushTasks();
@@ -178,4 +188,100 @@ test("background save_config rejects backend credentials", async () => {
 
   assert.equal(response.ok, false);
   assert.match(response.error.message, /Backend URL must be a valid http\(s\) URL without embedded credentials\./);
+});
+
+test("background check_profile converts api 403 into username-specific whitelist message", async () => {
+  const harness = createBackgroundHarness({
+    fetch: async () => createJsonResponse(403, { detail: "forbidden" })
+  });
+  await flushTasks();
+
+  const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+    type: "check_profile",
+    payload: { username: "alice" }
+  });
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error.status, 403);
+  assert.equal(response.error.message, "User @alice is not allowed. Please contact the administrator.");
+});
+
+test("background ingest_profile converts api 403 into username-specific whitelist message", async () => {
+  const harness = createBackgroundHarness({
+    fetch: async () => createJsonResponse(403, { detail: "forbidden" })
+  });
+  await flushTasks();
+
+  const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+    type: "ingest_profile",
+    payload: { username: "bob" }
+  });
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error.status, 403);
+  assert.equal(response.error.message, "User @bob is not allowed. Please contact the administrator.");
+});
+
+test("background generate_content converts api 403 into username-specific whitelist message", async () => {
+  const harness = createBackgroundHarness({
+    fetch: async () => createJsonResponse(403, { detail: "forbidden" })
+  });
+  await flushTasks();
+
+  const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+    type: "generate_content",
+    payload: { username: "carol", idea: "btc", draft_count: 2 }
+  });
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error.status, 403);
+  assert.equal(response.error.message, "User @carol is not allowed. Please contact the administrator.");
+});
+
+test("background analyze_exposure converts api 403 into username-specific whitelist message", async () => {
+  const harness = createBackgroundHarness({
+    fetch: async () => createJsonResponse(403, { detail: "forbidden" })
+  });
+  await flushTasks();
+
+  const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+    type: "analyze_exposure",
+    payload: { username: "dave", text: "hello" }
+  });
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error.status, 403);
+  assert.equal(response.error.message, "User @dave is not allowed. Please contact the administrator.");
+});
+
+test("background suggest_ideas falls back to generic whitelist message on api 403", async () => {
+  const harness = createBackgroundHarness({
+    fetch: async () => createJsonResponse(403, { detail: "forbidden" })
+  });
+  await flushTasks();
+
+  const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+    type: "suggest_ideas",
+    payload: { domain: "crypto" }
+  });
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error.status, 403);
+  assert.equal(response.error.message, "This user is not allowed. Please contact the administrator.");
+});
+
+test("background whitelist message does not duplicate the @ prefix", async () => {
+  const harness = createBackgroundHarness({
+    fetch: async () => createJsonResponse(403, { detail: "forbidden" })
+  });
+  await flushTasks();
+
+  const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+    type: "check_profile",
+    payload: { username: "@erin" }
+  });
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error.status, 403);
+  assert.equal(response.error.message, "User @erin is not allowed. Please contact the administrator.");
 });
