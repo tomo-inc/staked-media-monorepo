@@ -19,24 +19,29 @@ Minimal Python MVP for:
 The service routes upstream profile and tweet calls through the configured proxy.
 
 ## Local Setup
-1. Copy `.env.example` to `.env`
-2. Choose `LLM_PROVIDER=openai` or `LLM_PROVIDER=gemini`
-3. Fill in the matching API key: `OPENAI_API_KEY` for OpenAI or `GEMINI_API_KEY` for Gemini
-   Optional overrides: `OPENAI_MODEL`, `OPENAI_BASE_URL`, `GEMINI_MODEL`, `GEMINI_BASE_URL`
-   Content orchestration overrides: `WEB_ENRICHMENT_ENABLED`, `WEB_ENRICHMENT_TIMEOUT_SECONDS`, `WEB_ENRICHMENT_MAX_ITEMS`, `WEB_ENRICHMENT_RECENCY_HOURS`, `CONTENT_REWRITE_MAX_ROUNDS`
-   If Gemini returns `User location is not supported for the API use.`, set `LLM_HTTP_PROXY` so outbound LLM requests route through a supported region.
-   Logging overrides: `LOG_LEVEL`, `LOG_FILE_PATH`, `LOG_MAX_BODY_CHARS`, `LOG_ENABLE_FILE`
-   LLM stability overrides: `LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_SECONDS`, `LLM_SCORE_TIMEOUT_SECONDS`, `REQUEST_TIMEOUT_SECONDS`
-4. Install Python packages if you are not using system packages:
+1. Copy `config.example.json` to `config.json`
+2. Edit `config.json`
+   - Set `app.llm_provider` to `openai` or `gemini`
+   - Fill in the matching API key: `app.openai_api_key` for OpenAI or `app.gemini_api_key` for Gemini
+   - Optional overrides live in the same `app` section, including models, proxies, logging, retries, timeouts, and web enrichment
+   - If Gemini returns `User location is not supported for the API use.`, set `app.llm_http_proxy` so outbound LLM requests route through a supported region
+   - `server.host`, `server.port`, and `server.reload` control the HTTP server startup defaults
+3. Install Python packages if you are not using system packages:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-5. Start the server:
+4. Start the server:
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m app.run -c config.json
+```
+
+For local development with hot reload:
+
+```bash
+python -m app.run -c config.json --reload
 ```
 
 ## API
@@ -126,14 +131,15 @@ curl -X POST http://127.0.0.1:8000/api/v1/exposure/analyze \
 ```
 
 ## Notes
-- LLM provider selection is environment-based only via `LLM_PROVIDER`; the HTTP API does not expose a per-request provider override.
-- `LLM_HTTP_PROXY` configures the proxy for outbound LLM requests (OpenAI/Gemini). `TWITTER_DATA_PROXY` configures the proxy for Twitter data API requests. Either can be left empty to disable proxying.
+- The app reads configuration only from the JSON file passed to `python -m app.run -c ...`; `.env` and environment-variable overrides are no longer used.
+- LLM provider selection is config-file based via `app.llm_provider`; the HTTP API does not expose a per-request provider override.
+- `app.llm_http_proxy` configures the proxy for outbound LLM requests (OpenAI/Gemini). `app.twitter_data_proxy` configures the proxy for Twitter data API requests. Either can be left empty to disable proxying.
 - The LLM integration now lives under the `app/llm/` package while keeping supported imports such as `from app.llm import LLMClient, GeminiClient, OpenAIClient, create_llm_client`.
 - `app.llm` does not re-export third-party modules. Tests that mock outbound LLM HTTP calls should patch `app.llm.base_client.requests.post`.
 - The app now emits structured runtime logs to stdout and, by default, to `data/app.log`.
 - Logs are JSON-per-line with an `event` field; API requests include a `request_id` that is propagated into upstream and LLM logs for correlation.
-- Prompts and model responses are not logged in full by default; snippets are truncated via `LOG_MAX_BODY_CHARS`. Set `LOG_ENABLE_FILE=false` to disable file logging.
-- LLM provider calls now retry transient failures only (timeouts, connection errors, and 5xx). Score requests use `LLM_SCORE_TIMEOUT_SECONDS`, which is shorter than the main generation timeout by default.
+- Prompts and model responses are not logged in full by default; snippets are truncated via `app.log_max_body_chars`. Set `app.log_enable_file=false` to disable file logging.
+- LLM provider calls now retry transient failures only (timeouts, connection errors, and 5xx). Score requests use `app.llm_score_timeout_seconds`, which is shorter than the main generation timeout by default.
 - Gemini JSON parsing now safely handles fenced JSON blocks and wrapped JSON text, but still fails on genuinely malformed payloads.
 - The upstream tweet endpoint paginates with `cursor` and returns `next_cursor`; this app handles that pagination internally and does not expose cursor on its own ingest API.
 - The MVP stores raw upstream payloads in SQLite for debugging and reuse.
@@ -166,7 +172,7 @@ What it does:
 - inserts a selected draft into the active X composer without auto-posting.
 
 Load it locally:
-1. Start the backend with `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
+1. Start the backend with `python -m app.run -c config.json --reload`
 2. Open `chrome://extensions`
 3. Enable `Developer mode`
 4. Click `Load unpacked`
