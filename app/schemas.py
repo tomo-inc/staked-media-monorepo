@@ -191,7 +191,7 @@ class ContentIdeasResponse(BaseModel):
 
 
 class ExposureAnalyzeRequest(BaseModel):
-    username: str = ""
+    username: constr(strip_whitespace=True, min_length=1)
     text: constr(strip_whitespace=True, min_length=3)
     topic: str = ""
     domain: str = ""
@@ -203,6 +203,14 @@ class ExposureAnalyzeResponse(BaseModel):
     heat_score: float = 0.0
     heat_label: str = "low"
     reasons: list[str] = Field(default_factory=list)
+
+
+class WhitelistUsernameRequest(BaseModel):
+    username: constr(strip_whitespace=True, min_length=1)
+
+
+class WhitelistUsernamesResponse(BaseModel):
+    usernames: list[str] = Field(default_factory=list)
 
 
 class ContentDebugRound(BaseModel):

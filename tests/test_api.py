@@ -261,6 +261,8 @@ class ApiTestCase(unittest.TestCase):
         self.settings = settings
         db = Database(settings.database_path)
         db.init()
+        db.add_allowed_username("demo-user")
+        db.add_allowed_username("missing-user")
         content_orchestrator = ContentOrchestrator(
             settings=settings,
             database=db,
@@ -339,6 +341,62 @@ class ApiTestCase(unittest.TestCase):
             json={"username": "missing-user", "prompt": "Talk about focus", "draft_count": 3},
         )
         self.assertEqual(response.status_code, 404)
+
+    def test_persona_routes_reject_non_whitelisted_username(self) -> None:
+        ingest_response = self.client.post(
+            "/api/v1/profiles/ingest",
+            json={"username": "elonmusk"},
+        )
+        self.assertEqual(ingest_response.status_code, 403)
+        self.assertEqual(ingest_response.json()["detail"], "Target username is not in the trial whitelist")
+
+        profile_response = self.client.get("/api/v1/profiles/elonmusk")
+        self.assertEqual(profile_response.status_code, 403)
+
+        drafts_response = self.client.post(
+            "/api/v1/drafts/generate",
+            json={"username": "elonmusk", "prompt": "Talk about focus", "draft_count": 2},
+        )
+        self.assertEqual(drafts_response.status_code, 403)
+
+        content_response = self.client.post(
+            "/api/v1/content/generate",
+            json={
+                "username": "elonmusk",
+                "mode": "A",
+                "idea": "Talk about rockets",
+                "topic": "rockets",
+                "draft_count": 1,
+            },
+        )
+        self.assertEqual(content_response.status_code, 403)
+
+        exposure_response = self.client.post(
+            "/api/v1/exposure/analyze",
+            json={
+                "username": "elonmusk",
+                "text": "Rockets are hard",
+                "topic": "rockets",
+                "domain": "space",
+            },
+        )
+        self.assertEqual(exposure_response.status_code, 403)
+
+    def test_admin_whitelist_endpoints_manage_allowed_usernames(self) -> None:
+        initial = self.client.get("/admin/api/v1/whitelist/usernames")
+        self.assertEqual(initial.status_code, 200)
+        self.assertEqual(initial.json()["usernames"], ["demo-user", "missing-user"])
+
+        added = self.client.post(
+            "/admin/api/v1/whitelist/usernames",
+            json={"username": "  ElonMusk  "},
+        )
+        self.assertEqual(added.status_code, 200)
+        self.assertEqual(added.json()["usernames"], ["demo-user", "elonmusk", "missing-user"])
+
+        removed = self.client.delete("/admin/api/v1/whitelist/usernames/ELONMUSK")
+        self.assertEqual(removed.status_code, 200)
+        self.assertEqual(removed.json()["usernames"], ["demo-user", "missing-user"])
 
     def test_create_app_uses_gemini_provider_factory(self) -> None:
         temp_dir = tempfile.TemporaryDirectory()
@@ -459,6 +517,7 @@ class ApiTestCase(unittest.TestCase):
             )
             database = Database(settings.database_path)
             database.init()
+            database.add_allowed_username("demo-user")
             database.upsert_user(
                 {
                     "id": "u-1",
