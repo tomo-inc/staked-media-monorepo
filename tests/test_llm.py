@@ -415,7 +415,7 @@ class ComputeFinalScoreTestCase(unittest.TestCase):
 
 class LlmProviderTestCase(unittest.TestCase):
     def test_settings_rejects_unknown_provider(self) -> None:
-        with self.assertRaisesRegex(ValueError, "LLM_PROVIDER must be one of"):
+        with self.assertRaisesRegex(ValueError, "`llm_provider` must be one of"):
             Settings(llm_provider="not-a-provider")
 
     def test_settings_normalizes_provider(self) -> None:
@@ -458,7 +458,7 @@ class LlmProviderTestCase(unittest.TestCase):
     def test_gemini_requires_api_key(self) -> None:
         client = GeminiClient(Settings(llm_provider="gemini"))
 
-        with self.assertRaisesRegex(LLMError, "GEMINI_API_KEY is not configured"):
+        with self.assertRaisesRegex(LLMError, "Gemini API key is not configured"):
             client._chat_completion_json(
                 system_prompt="Return JSON",
                 user_prompt='{"test": true}',

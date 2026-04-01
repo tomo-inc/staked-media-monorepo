@@ -403,6 +403,10 @@ def create_app(
     return app
 
 
+def create_app_from_runtime_config() -> FastAPI:
+    return create_app(settings=get_settings())
+
+
 def _profile_summary_from_row(row: dict[str, object]) -> ProfileSummary:
     return ProfileSummary(
         id=str(row["id"]),
@@ -417,6 +421,3 @@ def _profile_summary_from_row(row: dict[str, object]) -> ProfileSummary:
         verified=bool(row.get("verified")),
         last_ingested_at=str(row.get("last_ingested_at") or ""),
     )
-
-
-app = create_app()

@@ -29,7 +29,7 @@ class GeminiClient(LLMClient):
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         if not self.settings.gemini_api_key:
-            raise LLMError("GEMINI_API_KEY is not configured")
+            raise LLMError("Gemini API key is not configured")
 
         endpoint = (
             f"{self.settings.gemini_base_url.rstrip('/')}/models/"

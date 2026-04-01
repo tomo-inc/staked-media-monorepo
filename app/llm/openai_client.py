@@ -29,7 +29,7 @@ class OpenAIClient(LLMClient):
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         if not self.settings.openai_api_key:
-            raise LLMError("OPENAI_API_KEY is not configured")
+            raise LLMError("OpenAI API key is not configured")
 
         endpoint = f"{self.settings.openai_base_url.rstrip('/')}/chat/completions"
         body = self._post_json_with_retries(
