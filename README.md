@@ -50,6 +50,21 @@ python -m app.run -c config.json --reload
 curl http://127.0.0.1:8000/healthz
 ```
 
+### Trial whitelist
+Persona-related public APIs are guarded by a username allowlist. If the target username is not in the whitelist, the API returns `403 Forbidden`.
+
+Internal whitelist management endpoints:
+
+```bash
+curl http://127.0.0.1:8000/admin/api/v1/whitelist/usernames
+
+curl -X POST http://127.0.0.1:8000/admin/api/v1/whitelist/usernames \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"ryanfang95"}'
+
+curl -X DELETE http://127.0.0.1:8000/admin/api/v1/whitelist/usernames/ryanfang95
+```
+
 ### Ingest profile and tweets
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/profiles/ingest \
@@ -134,6 +149,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/exposure/analyze \
 - The app reads configuration only from the JSON file passed to `python -m app.run -c ...`; `.env` and environment-variable overrides are no longer used.
 - LLM provider selection is config-file based via `app.llm_provider`; the HTTP API does not expose a per-request provider override.
 - `app.llm_http_proxy` configures the proxy for outbound LLM requests (OpenAI/Gemini). `app.twitter_data_proxy` configures the proxy for Twitter data API requests. Either can be left empty to disable proxying.
+- Persona-related public APIs now require the target username to exist in the database-backed trial whitelist. Internal whitelist management lives under `/admin/api/v1/...`.
 - The LLM integration now lives under the `app/llm/` package while keeping supported imports such as `from app.llm import LLMClient, GeminiClient, OpenAIClient, create_llm_client`.
 - `app.llm` does not re-export third-party modules. Tests that mock outbound LLM HTTP calls should patch `app.llm.base_client.requests.post`.
 - The app now emits structured runtime logs to stdout and, by default, to `data/app.log`.
