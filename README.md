@@ -24,7 +24,7 @@ The service routes upstream profile and tweet calls through the configured proxy
 3. Fill in the matching API key: `OPENAI_API_KEY` for OpenAI or `GEMINI_API_KEY` for Gemini
    Optional overrides: `OPENAI_MODEL`, `OPENAI_BASE_URL`, `GEMINI_MODEL`, `GEMINI_BASE_URL`
    Content orchestration overrides: `WEB_ENRICHMENT_ENABLED`, `WEB_ENRICHMENT_TIMEOUT_SECONDS`, `WEB_ENRICHMENT_MAX_ITEMS`, `WEB_ENRICHMENT_RECENCY_HOURS`, `CONTENT_REWRITE_MAX_ROUNDS`
-   If Gemini returns `User location is not supported for the API use.`, set `UPSTREAM_HTTP_PROXY` so outbound LLM requests route through a supported region.
+   If Gemini returns `User location is not supported for the API use.`, set `LLM_HTTP_PROXY` so outbound LLM requests route through a supported region.
    Logging overrides: `LOG_LEVEL`, `LOG_FILE_PATH`, `LOG_MAX_BODY_CHARS`, `LOG_ENABLE_FILE`
    LLM stability overrides: `LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_SECONDS`, `LLM_SCORE_TIMEOUT_SECONDS`, `REQUEST_TIMEOUT_SECONDS`
 4. Install Python packages if you are not using system packages:
@@ -50,13 +50,11 @@ curl http://127.0.0.1:8000/healthz
 curl -X POST http://127.0.0.1:8000/api/v1/profiles/ingest \
   -H 'Content-Type: application/json' \
   -d '{
-    "username": "ryanfang95",
-    "max_tweets": 300
+    "username": "ryanfang95"
   }'
 ```
 
-`max_tweets` is required on the ingest API and must be between `1` and `1000`.
-The caller only provides the desired count; the service uses the upstream tweets API's `cursor` pagination internally until it reaches that count or runs out of tweets.
+The service chooses its own ingest tweet count internally and uses the upstream tweets API's `cursor` pagination until it reaches that count or runs out of tweets.
 
 ### Get stored profile and latest persona
 ```bash
@@ -129,7 +127,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/exposure/analyze \
 
 ## Notes
 - LLM provider selection is environment-based only via `LLM_PROVIDER`; the HTTP API does not expose a per-request provider override.
-- `UPSTREAM_HTTP_PROXY` is reused for both upstream X-data requests and outbound LLM requests to OpenAI or Gemini.
+- `LLM_HTTP_PROXY` configures the proxy for outbound LLM requests (OpenAI/Gemini). `TWITTER_DATA_PROXY` configures the proxy for Twitter data API requests. Either can be left empty to disable proxying.
 - The LLM integration now lives under the `app/llm/` package while keeping supported imports such as `from app.llm import LLMClient, GeminiClient, OpenAIClient, create_llm_client`.
 - `app.llm` does not re-export third-party modules. Tests that mock outbound LLM HTTP calls should patch `app.llm.base_client.requests.post`.
 - The app now emits structured runtime logs to stdout and, by default, to `data/app.log`.
@@ -148,10 +146,34 @@ curl -X POST http://127.0.0.1:8000/api/v1/exposure/analyze \
 - Draft responses now include theme keywords, matched historical tweet snippets, top theme keywords, score, retry count, and evaluation metadata.
 - Draft responses also include each attempt's full candidate list with per-candidate scores and failure reasons when a candidate does not meet the target score.
 - The upstream client retries transient 5xx responses and clears cookies between requests to avoid timeline pagination issues.
-- `POST /api/v1/profiles/ingest` requires an explicit `max_tweets` value from the caller.
+- `POST /api/v1/profiles/ingest` uses a server-side ingest count; callers only provide the username.
 - If a user has fewer tweets than requested, the service uses all available tweets.
 
 ## Validation
 ```bash
 python -m pytest -q
 ```
+
+## Browser Extension MVP
+
+This repository now includes a Chrome/Edge Manifest V3 extension under [extension/README.md](/workspace/staked-media-monorepo/extension/README.md).
+
+What it does:
+- checks whether a profile/persona already exists,
+- calls `POST /api/v1/profiles/ingest`,
+- calls `POST /api/v1/content/ideas` and `POST /api/v1/content/generate`,
+- opens from the Chrome toolbar into a side panel or detached window,
+- inserts a selected draft into the active X composer without auto-posting.
+
+Load it locally:
+1. Start the backend with `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
+2. Open `chrome://extensions`
+3. Enable `Developer mode`
+4. Click `Load unpacked`
+5. Select the [extension](/workspace/staked-media-monorepo/extension) directory
+6. Open `https://x.com` and click the extension icon to launch the side panel
+
+Notes:
+- The extension is intentionally no-build and uses plain `HTML/CSS/JS`.
+- It assumes the local Python backend is running at `http://127.0.0.1:8000`; there is still no plugin-specific auth layer.
+- Ingest is still mandatory before generation.
