@@ -6,8 +6,10 @@
     extractDrafts,
     sendRuntimeMessage
   } = window.StakedMediaExtensionShared;
+  const { deriveConnectionIndicator } = window.StakedMediaPanelHelpers;
   const params = new URLSearchParams(window.location.search);
   const HOST_MODE = params.get("host") === "popup" ? "popup" : "sidepanel";
+  const systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
   const SETTINGS_DEFAULTS = { ...DEFAULT_CONFIG };
 
@@ -15,6 +17,7 @@
     config: null,
     health: null,
     latencyMs: null,
+    healthState: "loading",
     generated: null,
     lastGenerateDurationMs: null,
     loading: false,
@@ -22,6 +25,8 @@
     composerMessage: "Open the X composer to insert drafts.",
     currentWindowId: null,
     targetWindowId: null,
+    currentView: "main",
+    settingsPage: "home",
     activeTab: "profile",
     profile: null,
     profileLoading: false
@@ -32,23 +37,30 @@
   root.firstElementChild?.setAttribute("data-host", HOST_MODE);
 
   const ui = {
+    headerTitle: root.querySelector('[data-slot="header-title"]'),
     username: root.querySelector('[data-field="username"]'),
     idea: root.querySelector('[data-field="idea"]'),
     draftCount: root.querySelector('[data-field="draftCount"]'),
     generateButton: root.querySelector('[data-action="generate"]'),
+    openSettingsButton: root.querySelector('[data-action="open-settings"]'),
+    closeSettingsButton: root.querySelector('[data-action="close-settings"]'),
+    openApiSettingsButton: root.querySelector('[data-action="open-api-settings"]'),
+    toggleOpenModeButton: root.querySelector('[data-action="toggle-open-mode"]'),
     status: root.querySelector('[data-slot="status"]'),
     results: root.querySelector('[data-slot="results"]'),
     composer: root.querySelector('[data-slot="composer"]'),
     dot: root.querySelector('[data-slot="connection"]'),
     latencyText: root.querySelector('[data-slot="latency-text"]'),
+    settingsStatusSection: root.querySelector(".smc-settings-status-section"),
     settingsStatus: root.querySelector('[data-slot="settings-status"]'),
     sBackendBaseUrl: root.querySelector('[data-field="s-backendBaseUrl"]'),
     sApiModeDrafts: root.querySelector('[data-field="s-apiModeDrafts"]'),
     sApiModeContent: root.querySelector('[data-field="s-apiModeContent"]'),
-    sDebugLogs: root.querySelector('[data-field="s-debugLogs"]'),
     sTheme: root.querySelector('[data-field="s-theme"]'),
-    sHostModeText: root.querySelector('[data-slot="s-host-mode-text"]'),
-    profileInfo: root.querySelector('[data-slot="profile-info"]')
+    sHostModeTitle: root.querySelector('[data-slot="s-host-mode-title"]'),
+    profileInfo: root.querySelector('[data-slot="profile-info"]'),
+    views: root.querySelectorAll("[data-view]"),
+    settingsPages: root.querySelectorAll("[data-settings-view]")
   };
 
   // Tab navigation
@@ -58,20 +70,48 @@
     });
   });
 
-  root.querySelector('[data-action="save-settings"]').addEventListener("click", async () => {
-    await saveSettings();
+  ui.openSettingsButton.addEventListener("click", () => {
+    openSettingsView();
   });
 
-  root.querySelector('[data-action="reset-settings"]').addEventListener("click", async () => {
-    await resetSettings();
+  ui.closeSettingsButton.addEventListener("click", async () => {
+    await closeSettingsView();
   });
 
-  root.querySelector('[data-action="switch-sidepanel"]').addEventListener("click", async () => {
-    await switchHostMode("sidepanel");
+  ui.openApiSettingsButton.addEventListener("click", () => {
+    openApiSettingsPage();
   });
 
-  root.querySelector('[data-action="switch-popup"]').addEventListener("click", async () => {
-    await switchHostMode("popup");
+  ui.toggleOpenModeButton.addEventListener("click", async () => {
+    await switchHostMode(getNextHostMode());
+  });
+
+  ui.sTheme.addEventListener("change", async () => {
+    await saveTheme(ui.sTheme.value);
+  });
+
+  ui.sApiModeDrafts.addEventListener("change", async () => {
+    if (ui.sApiModeDrafts.checked) {
+      await saveApiMode("drafts");
+    }
+  });
+
+  ui.sApiModeContent.addEventListener("change", async () => {
+    if (ui.sApiModeContent.checked) {
+      await saveApiMode("content");
+    }
+  });
+
+  ui.sBackendBaseUrl.addEventListener("blur", async () => {
+    await saveBackendBaseUrl();
+  });
+
+  ui.sBackendBaseUrl.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    ui.sBackendBaseUrl.blur();
   });
 
   root.querySelector('[data-action="generate"]').addEventListener("click", async () => {
@@ -106,6 +146,14 @@
     refreshHealth();
   }, 10000);
 
+  if (typeof systemThemeQuery.addEventListener === "function") {
+    systemThemeQuery.addEventListener("change", () => {
+      if ((STATE.config?.theme || SETTINGS_DEFAULTS.theme) === "system") {
+        applyTheme("system");
+      }
+    });
+  }
+
   function switchTab(tabName) {
     STATE.activeTab = tabName;
     root.querySelectorAll("[data-tab-target]").forEach((btn) => {
@@ -114,9 +162,37 @@
     root.querySelectorAll("[data-tab-panel]").forEach((panel) => {
       panel.classList.toggle("smc-tab-panel-active", panel.getAttribute("data-tab-panel") === tabName);
     });
-    if (tabName === "settings") {
-      loadSettingsUI();
+  }
+
+  function openSettingsView() {
+    STATE.currentView = "settings";
+    STATE.settingsPage = "home";
+    loadSettingsUI({ syncApiForm: true });
+    renderView();
+  }
+
+  function openApiSettingsPage() {
+    STATE.currentView = "settings";
+    STATE.settingsPage = "api";
+    loadSettingsUI({ syncApiForm: true });
+    renderView();
+  }
+
+  async function closeSettingsView() {
+    if (STATE.currentView !== "settings") {
+      return;
     }
+    if (STATE.settingsPage === "api") {
+      const saved = await saveBackendBaseUrl();
+      if (!saved) {
+        return;
+      }
+      STATE.settingsPage = "home";
+      renderView();
+      return;
+    }
+    STATE.currentView = "main";
+    renderView();
   }
 
   async function bootstrap() {
@@ -128,6 +204,7 @@
 
     const configResponse = await sendRuntimeMessage({ type: "get_config" });
     STATE.config = configResponse.config;
+    applyTheme(STATE.config?.theme);
     hydrateInputs();
     await refreshHealth();
     await refreshComposerState();
@@ -139,79 +216,140 @@
       const response = await sendRuntimeMessage({ type: "health_check" });
       STATE.health = response.health;
       STATE.latencyMs = response.health?.latencyMs ?? null;
+      STATE.healthState = "ready";
     } catch (_error) {
       STATE.health = null;
       STATE.latencyMs = null;
+      STATE.healthState = "error";
     }
     renderConnectionDot();
   }
 
-  function loadSettingsUI() {
+  function loadSettingsUI(options = {}) {
+    const syncApiForm = options.syncApiForm !== false;
     const config = STATE.config || {};
     const merged = { ...SETTINGS_DEFAULTS, ...config };
-    ui.sBackendBaseUrl.value = merged.backendBaseUrl;
-    ui.sDebugLogs.checked = Boolean(merged.debugLogs);
+    if (syncApiForm) {
+      ui.sBackendBaseUrl.value = merged.backendBaseUrl;
+      if (merged.apiMode === "drafts") {
+        ui.sApiModeDrafts.checked = true;
+      } else {
+        ui.sApiModeContent.checked = true;
+      }
+    }
     ui.sTheme.value = merged.theme || "light";
-    if (ui.sHostModeText) {
-      ui.sHostModeText.textContent = merged.hostMode === "popup" ? "Popup" : "Side Panel";
-    }
-    if (merged.apiMode === "drafts") {
-      ui.sApiModeDrafts.checked = true;
-    } else {
-      ui.sApiModeContent.checked = true;
+    if (ui.sHostModeTitle) {
+      ui.sHostModeTitle.textContent = getOpenModeToggleLabel(merged.hostMode);
     }
   }
 
-  async function saveSettings() {
+  async function saveTheme(theme) {
     try {
-      const payload = {
-        backendBaseUrl: ui.sBackendBaseUrl.value.trim(),
-        apiMode: ui.sApiModeDrafts.checked ? "drafts" : "content",
-        debugLogs: ui.sDebugLogs.checked,
-        theme: ui.sTheme.value
-      };
-      const response = await sendRuntimeMessage({ type: "save_config", payload });
+      const response = await sendRuntimeMessage({ type: "save_config", payload: { theme } });
       STATE.config = response.config;
-      await refreshHealth();
-      renderSettingsStatus("Settings saved.", "good");
+      applyTheme(STATE.config.theme);
+      loadSettingsUI({ syncApiForm: false });
+      renderSettingsStatus("", "");
     } catch (error) {
+      loadSettingsUI({ syncApiForm: false });
       renderSettingsStatus(formatRuntimeError(error), "warn");
     }
   }
 
-  async function resetSettings() {
+  async function saveApiMode(apiMode) {
     try {
-      const response = await sendRuntimeMessage({ type: "save_config", payload: { ...SETTINGS_DEFAULTS } });
+      const response = await sendRuntimeMessage({ type: "save_config", payload: { apiMode } });
       STATE.config = response.config;
-      loadSettingsUI();
+      loadSettingsUI({ syncApiForm: false });
+      renderSettingsStatus("", "");
+    } catch (error) {
+      loadSettingsUI({ syncApiForm: false });
+      renderSettingsStatus(formatRuntimeError(error), "warn");
+    }
+  }
+
+  async function saveBackendBaseUrl() {
+    const nextValue = ui.sBackendBaseUrl.value.trim();
+    const currentValue = String(STATE.config?.backendBaseUrl || SETTINGS_DEFAULTS.backendBaseUrl);
+    if (nextValue === currentValue) {
+      return true;
+    }
+    try {
+      const response = await sendRuntimeMessage({ type: "save_config", payload: { backendBaseUrl: nextValue } });
+      STATE.config = response.config;
+      loadSettingsUI({ syncApiForm: true });
       await refreshHealth();
-      renderSettingsStatus("Settings reset to defaults. Side Panel is now the default open mode.", "good");
+      renderSettingsStatus("", "");
+      return true;
     } catch (error) {
       renderSettingsStatus(formatRuntimeError(error), "warn");
+      return false;
     }
   }
 
   async function switchHostMode(hostMode) {
     const nextHostMode = hostMode === "popup" ? "popup" : "sidepanel";
     try {
-      const response = await sendRuntimeMessage({ type: "save_config", payload: { hostMode: nextHostMode } });
-      STATE.config = response.config;
-      loadSettingsUI();
-      const targetLabel = nextHostMode === "popup" ? "Popup" : "Side Panel";
-      if (HOST_MODE === nextHostMode) {
-        renderSettingsStatus(`${targetLabel} is already the active shell and remains the default.`, "good");
+      if (HOST_MODE === "sidepanel" && nextHostMode === "popup") {
+        await switchSidePanelToPopup();
         return;
       }
-      renderSettingsStatus(`${targetLabel} is now the default open mode. Close and reopen the extension from the toolbar to use it.`, "good");
+      if (HOST_MODE === "popup" && nextHostMode === "sidepanel") {
+        await switchPopupToSidePanel();
+        return;
+      }
+      await persistHostMode(nextHostMode);
     } catch (error) {
       renderSettingsStatus(formatRuntimeError(error), "warn");
     }
   }
 
+  async function persistHostMode(hostMode) {
+    const response = await sendRuntimeMessage({ type: "save_config", payload: { hostMode } });
+    STATE.config = response.config;
+    loadSettingsUI({ syncApiForm: false });
+    renderSettingsStatus("", "");
+    return response.config;
+  }
+
+  async function switchSidePanelToPopup() {
+    await persistHostMode("popup");
+    await closeCurrentSidePanelShell();
+  }
+
+  async function switchPopupToSidePanel() {
+    const targetWindowId = coerceWindowId(STATE.targetWindowId);
+    if (!targetWindowId) {
+      renderSettingsStatus("Could not find a browser window for Side Panel. Try again.", "warn");
+      return;
+    }
+
+    try {
+      await openSidePanelInWindow(targetWindowId);
+    } catch (error) {
+      renderSettingsStatus(formatRuntimeError(error), "warn");
+      return;
+    }
+
+    try {
+      await persistHostMode("sidepanel");
+    } catch (error) {
+      await closeSidePanelInWindow(targetWindowId);
+      renderSettingsStatus(formatRuntimeError(error), "warn");
+      return;
+    }
+
+    window.close();
+  }
+
   function renderSettingsStatus(text, kind) {
     if (!ui.settingsStatus) return;
-    ui.settingsStatus.textContent = text;
+    const message = String(text || "");
+    ui.settingsStatus.textContent = message;
     ui.settingsStatus.className = `smc-settings-status${kind ? ` smc-settings-status-${kind}` : ""}`;
+    if (ui.settingsStatusSection) {
+      ui.settingsStatusSection.hidden = !message;
+    }
   }
 
   async function handleLoadProfile() {
@@ -335,11 +473,57 @@
   }
 
   function render() {
+    renderView();
     renderGenerateButton();
     renderConnectionDot();
     renderProfileInfo();
     renderResults();
     renderComposerState();
+  }
+
+  function renderView() {
+    const isSettingsView = STATE.currentView === "settings";
+    ui.views.forEach((view) => {
+      view.classList.toggle("smc-view-active", view.getAttribute("data-view") === STATE.currentView);
+    });
+    ui.settingsPages.forEach((page) => {
+      page.classList.toggle("smc-settings-page-active", page.getAttribute("data-settings-view") === STATE.settingsPage);
+    });
+    if (ui.headerTitle) {
+      if (!isSettingsView) {
+        ui.headerTitle.textContent = "X Copilot";
+      } else if (STATE.settingsPage === "api") {
+        ui.headerTitle.textContent = "API & Generation";
+      } else {
+        ui.headerTitle.textContent = "Settings";
+      }
+    }
+    if (ui.openSettingsButton) {
+      ui.openSettingsButton.hidden = isSettingsView;
+    }
+    if (ui.closeSettingsButton) {
+      ui.closeSettingsButton.hidden = !isSettingsView;
+      ui.closeSettingsButton.setAttribute(
+        "aria-label",
+        STATE.settingsPage === "api" ? "Back to settings" : "Back to main view"
+      );
+    }
+  }
+
+  function applyTheme(theme) {
+    const requestedTheme = theme || STATE.config?.theme || SETTINGS_DEFAULTS.theme;
+    const resolvedTheme = requestedTheme === "system"
+      ? (systemThemeQuery.matches ? "dark" : "light")
+      : requestedTheme;
+    document.documentElement.setAttribute("data-smc-theme", resolvedTheme);
+  }
+
+  function getOpenModeToggleLabel(hostMode) {
+    return hostMode === "popup" ? "Switch to Side Panel" : "Switch to Popup";
+  }
+
+  function getNextHostMode() {
+    return STATE.config?.hostMode === "popup" ? "sidepanel" : "popup";
   }
 
   function renderGenerateButton() {
@@ -357,19 +541,14 @@
     const dot = ui.dot;
     const latencyEl = ui.latencyText;
     if (!dot) return;
-    if (STATE.health === null && STATE.latencyMs === null) {
-      dot.className = "smc-status-dot smc-dot-warn";
-      dot.title = "Checking...";
-      if (latencyEl) latencyEl.textContent = "--";
-    } else if (STATE.health?.status === "ok") {
-      dot.className = "smc-status-dot smc-dot-ok";
-      dot.title = STATE.latencyMs != null ? `Connected ${STATE.latencyMs}ms` : "Connected";
-      if (latencyEl) latencyEl.textContent = STATE.latencyMs != null ? `${STATE.latencyMs}ms` : "";
-    } else {
-      dot.className = "smc-status-dot smc-dot-err";
-      dot.title = "Disconnected";
-      if (latencyEl) latencyEl.textContent = "";
-    }
+    const indicator = deriveConnectionIndicator({
+      health: STATE.health,
+      latencyMs: STATE.latencyMs,
+      healthState: STATE.healthState
+    });
+    dot.className = indicator.className;
+    dot.title = indicator.title;
+    if (latencyEl) latencyEl.textContent = indicator.latencyText;
   }
 
   function renderProfileInfo() {
@@ -571,120 +750,189 @@
     }
   }
 
+  async function openSidePanelInWindow(windowId) {
+    if (typeof chrome.sidePanel?.open !== "function") {
+      throw new Error("Side Panel is unavailable in this browser.");
+    }
+    await chrome.sidePanel.open({ windowId });
+  }
+
+  async function closeSidePanelInWindow(windowId) {
+    const normalizedWindowId = coerceWindowId(windowId);
+    if (!normalizedWindowId || typeof chrome.sidePanel?.close !== "function") {
+      return false;
+    }
+    try {
+      await chrome.sidePanel.close({ windowId: normalizedWindowId });
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  async function closeCurrentSidePanelShell() {
+    const currentHostWindowId = coerceWindowId(STATE.currentWindowId) || coerceWindowId(STATE.targetWindowId);
+    const closed = await closeSidePanelInWindow(currentHostWindowId);
+    if (!closed) {
+      window.close();
+    }
+  }
+
   function buildShell() {
-    const hostLabel = HOST_MODE === "popup" ? "Popup" : "Side Panel";
     return `
       <div class="smc-shell">
         <aside class="smc-panel">
           <header class="smc-header">
             <div class="smc-header-left">
-              <h1 class="smc-title">X Copilot</h1>
-              <span class="smc-pill">${escapeHtml(hostLabel)}</span>
+              <button class="smc-icon-button smc-back-button" data-action="close-settings" type="button" aria-label="Back to main view" hidden>
+                <span aria-hidden="true">&lt;</span>
+              </button>
+              <h1 class="smc-title" data-slot="header-title">X Copilot</h1>
             </div>
             <div class="smc-header-right">
               <span class="smc-latency-text" data-slot="latency-text">--</span>
               <span class="smc-status-dot smc-dot-warn" data-slot="connection" title="Checking..."></span>
+              <button class="smc-icon-button smc-menu-button" data-action="open-settings" type="button" aria-label="Open settings">
+                <span class="smc-menu-icon" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </span>
+              </button>
             </div>
           </header>
 
-          <nav class="smc-tab-bar">
-            <button class="smc-tab smc-tab-active" data-tab-target="profile" type="button">Profile</button>
-            <button class="smc-tab" data-tab-target="draft" type="button">Draft</button>
-            <button class="smc-tab" data-tab-target="settings" type="button">Settings</button>
-          </nav>
+          <div class="smc-view smc-view-active" data-view="main">
+            <nav class="smc-tab-bar">
+              <button class="smc-tab smc-tab-active" data-tab-target="profile" type="button">Profile</button>
+              <button class="smc-tab" data-tab-target="draft" type="button">Draft</button>
+            </nav>
 
-          <div class="smc-tab-panel smc-tab-panel-active" data-tab-panel="profile">
-            <section class="smc-section">
-              <div class="smc-username-row">
-                <input class="smc-input" data-field="username" placeholder="@Username" type="text">
-                <button class="smc-button smc-button-secondary" data-action="load-profile" type="button">Load</button>
-                <button class="smc-button smc-button-secondary" data-action="ingest-profile" type="button">Ingest</button>
-              </div>
-              <div data-slot="profile-info"></div>
-            </section>
+            <div class="smc-tab-panel smc-tab-panel-active" data-tab-panel="profile">
+              <section class="smc-section">
+                <div class="smc-username-row">
+                  <input class="smc-input" data-field="username" placeholder="@Username" type="text">
+                  <button class="smc-button smc-button-secondary" data-action="load-profile" type="button">Load</button>
+                  <button class="smc-button smc-button-secondary" data-action="ingest-profile" type="button">Ingest</button>
+                </div>
+                <div data-slot="profile-info"></div>
+              </section>
+            </div>
+
+            <div class="smc-tab-panel" data-tab-panel="draft">
+              <section class="smc-section">
+                <label class="smc-label">
+                  Topic / Idea
+                  <textarea class="smc-textarea" data-field="idea" placeholder="Can Bitcoin be cracked in 9 minutes?&#10;Google warns ECC timeline may arrive earlier&#10;Attack threshold could be 20x lower"></textarea>
+                </label>
+                <label class="smc-label">
+                  Draft Count
+                  <input class="smc-input smc-input-short" data-field="draftCount" min="1" max="10" step="1" type="number" value="3">
+                </label>
+                <div class="smc-button-row">
+                  <button class="smc-button smc-button-primary" data-action="generate" type="button">Generate</button>
+                </div>
+              </section>
+
+              <section class="smc-section">
+                <div data-slot="status"></div>
+              </section>
+
+              <section class="smc-section">
+                <div class="smc-section-head">
+                  <h2>Result</h2>
+                  <div class="smc-section-head-right">
+                    <div data-slot="composer"></div>
+                    <button class="smc-link-button" data-action="clear-results" type="button">Clear</button>
+                  </div>
+                </div>
+                <div data-slot="results"></div>
+              </section>
+            </div>
           </div>
 
-          <div class="smc-tab-panel" data-tab-panel="draft">
-            <section class="smc-section">
-              <label class="smc-label">
-                Topic / Idea
-                <textarea class="smc-textarea" data-field="idea" placeholder="Can Bitcoin be cracked in 9 minutes?&#10;Google warns ECC timeline may arrive earlier&#10;Attack threshold could be 20x lower"></textarea>
-              </label>
-              <label class="smc-label">
-                Draft Count
-                <input class="smc-input smc-input-short" data-field="draftCount" min="1" max="10" step="1" type="number" value="3">
-              </label>
-              <div class="smc-button-row">
-                <button class="smc-button smc-button-primary" data-action="generate" type="button">Generate</button>
-              </div>
-            </section>
+          <div class="smc-view" data-view="settings">
+            <div class="smc-settings-page smc-settings-page-active" data-settings-view="home">
+              <section class="smc-section smc-settings-home-section">
+                <div class="smc-settings-list">
+                  <button class="smc-settings-item" data-action="open-api-settings" type="button">
+                    <span class="smc-settings-item-main">
+                      <span class="smc-settings-item-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none">
+                          <circle cx="6" cy="12" r="1.75" stroke="currentColor"></circle>
+                          <circle cx="18" cy="6" r="1.75" stroke="currentColor"></circle>
+                          <circle cx="18" cy="18" r="1.75" stroke="currentColor"></circle>
+                          <path d="M7.6 11.2L16.3 6.8M7.6 12.8l8.7 4.4" stroke="currentColor" stroke-linecap="round"></path>
+                        </svg>
+                      </span>
+                      <span class="smc-settings-item-copy">
+                        <span class="smc-settings-item-title">API &amp; Generation</span>
+                      </span>
+                    </span>
+                    <span class="smc-settings-item-chevron" aria-hidden="true">›</span>
+                  </button>
 
-            <section class="smc-section">
-              <div data-slot="status"></div>
-            </section>
+                  <button class="smc-settings-item" data-action="toggle-open-mode" type="button">
+                    <span class="smc-settings-item-main">
+                      <span class="smc-settings-item-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none">
+                          <rect x="4" y="5" width="16" height="14" rx="2" stroke="currentColor"></rect>
+                          <path d="M10 5v14" stroke="currentColor" stroke-linecap="round"></path>
+                        </svg>
+                      </span>
+                      <span class="smc-settings-item-copy">
+                        <span class="smc-settings-item-title" data-slot="s-host-mode-title">Switch to Popup</span>
+                      </span>
+                    </span>
+                  </button>
 
-            <section class="smc-section">
-              <div class="smc-section-head">
-                <h2>Result</h2>
-                <div class="smc-section-head-right">
-                  <div data-slot="composer"></div>
-                  <button class="smc-link-button" data-action="clear-results" type="button">Clear</button>
+                  <label class="smc-settings-item smc-settings-item-select" for="smc-theme-select">
+                    <span class="smc-settings-item-main">
+                      <span class="smc-settings-item-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none">
+                          <path d="M12 3v2.2M12 18.8V21M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M3 12h2.2M18.8 12H21M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6" stroke="currentColor" stroke-linecap="round"></path>
+                          <circle cx="12" cy="12" r="4" stroke="currentColor"></circle>
+                        </svg>
+                      </span>
+                      <span class="smc-settings-item-copy">
+                        <span class="smc-settings-item-title">Theme</span>
+                      </span>
+                    </span>
+                    <select class="smc-settings-select" id="smc-theme-select" data-field="s-theme">
+                      <option value="light">Light</option>
+                      <option value="dark">Dark</option>
+                      <option value="system">System</option>
+                    </select>
+                  </label>
                 </div>
-              </div>
-              <div data-slot="results"></div>
-            </section>
-          </div>
+              </section>
+            </div>
 
-          <div class="smc-tab-panel" data-tab-panel="settings">
-            <section class="smc-section">
-              <label class="smc-label">
-                API Base URL
-                <input class="smc-input" data-field="s-backendBaseUrl" type="text" placeholder="http://127.0.0.1:8000">
-              </label>
-              <label class="smc-label">
-                Generation API Mode
-              </label>
-              <div class="smc-radio-group">
-                <label class="smc-radio-option">
-                  <input type="radio" name="s-apiMode" data-field="s-apiModeDrafts" value="drafts">
-                  Drafts API (/api/v1/drafts/generate)
+            <div class="smc-settings-page" data-settings-view="api">
+              <section class="smc-section">
+                <label class="smc-label">
+                  API Base URL
+                  <input class="smc-input" data-field="s-backendBaseUrl" type="text" placeholder="http://127.0.0.1:8000">
                 </label>
-                <label class="smc-radio-option">
-                  <input type="radio" name="s-apiMode" data-field="s-apiModeContent" value="content" checked>
-                  Content API (/api/v1/content/generate)
+                <div class="smc-settings-helper">Press Enter or click outside to save the URL.</div>
+
+                <label class="smc-label">
+                  Generation API Mode
                 </label>
-              </div>
-              <div class="smc-toggle-row">
-                <span class="smc-toggle-label">Enable Debug Logs</span>
-                <label class="smc-toggle">
-                  <input type="checkbox" data-field="s-debugLogs">
-                  <span class="smc-toggle-track"></span>
-                  <span class="smc-toggle-thumb"></span>
-                </label>
-              </div>
-              <label class="smc-label">
-                Theme
-                <select class="smc-input" data-field="s-theme">
-                  <option value="light">Light</option>
-                </select>
-              </label>
-              <label class="smc-label">
-                Default Open Mode
-              </label>
-              <div class="smc-mode-card">
-                <div class="smc-mode-copy">
-                  <div class="smc-mode-title">Current default</div>
-                  <div class="smc-mode-value" data-slot="s-host-mode-text">Side Panel</div>
+                <div class="smc-radio-group">
+                  <label class="smc-radio-option">
+                    <input type="radio" name="s-apiMode" data-field="s-apiModeDrafts" value="drafts">
+                    Drafts API (/api/v1/drafts/generate)
+                  </label>
+                  <label class="smc-radio-option">
+                    <input type="radio" name="s-apiMode" data-field="s-apiModeContent" value="content" checked>
+                    Content API (/api/v1/content/generate)
+                  </label>
                 </div>
-                <div class="smc-button-row smc-button-row-tight">
-                  <button class="smc-button smc-button-secondary" data-action="switch-sidepanel" type="button">Switch to Side Panel</button>
-                  <button class="smc-button smc-button-secondary" data-action="switch-popup" type="button">Switch to Popup</button>
-                </div>
-              </div>
-              <div class="smc-button-row">
-                <button class="smc-button smc-button-primary" data-action="save-settings" type="button">Save</button>
-                <button class="smc-button smc-button-secondary" data-action="reset-settings" type="button">Reset</button>
-              </div>
+              </section>
+            </div>
+
+            <section class="smc-section smc-settings-status-section" hidden>
               <div class="smc-settings-status" data-slot="settings-status"></div>
             </section>
           </div>

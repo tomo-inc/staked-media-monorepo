@@ -32,8 +32,7 @@ test("sanitizeConfig normalizes and trims persisted settings", () => {
     defaultUsername: "  satoshi  ",
     backendBaseUrl: "http://localhost:9000/",
     apiMode: "drafts",
-    debugLogs: 1,
-    theme: "light",
+    theme: "dark",
     hostMode: "popup"
   });
 
@@ -42,7 +41,7 @@ test("sanitizeConfig normalizes and trims persisted settings", () => {
     defaultUsername: "satoshi",
     backendBaseUrl: "http://localhost:9000",
     apiMode: "drafts",
-    debugLogs: true,
+    theme: "dark",
     hostMode: "popup"
   });
 });
@@ -66,6 +65,11 @@ test("sanitizeConfig rejects non-local backend URLs in strict mode", () => {
       ),
     /Backend URL must use http\(s\):\/\/localhost or http\(s\):\/\/127\.0\.0\.1\./
   );
+});
+
+test("sanitizeConfig keeps system theme and ignores unknown themes", () => {
+  assert.equal(sanitizeConfig({ theme: "system" }).theme, "system");
+  assert.equal(sanitizeConfig({ theme: "neon" }).theme, DEFAULT_CONFIG.theme);
 });
 
 test("extractDrafts prefers direct drafts and variant drafts", () => {

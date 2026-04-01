@@ -10,7 +10,6 @@
     defaultUsername: "",
     backendBaseUrl: FALLBACK_BACKEND_BASE_URL,
     apiMode: "content",
-    debugLogs: false,
     theme: "light",
     hostMode: "sidepanel"
   });
@@ -30,7 +29,10 @@
 
   function normalizeTheme(value) {
     const normalized = String(value || "").trim();
-    return normalized || DEFAULT_CONFIG.theme;
+    if (normalized === "dark" || normalized === "system") {
+      return normalized;
+    }
+    return DEFAULT_CONFIG.theme;
   }
 
   function normalizeBackendBaseUrl(value, options) {
@@ -64,7 +66,6 @@
       defaultUsername: typeof merged.defaultUsername === "string" ? merged.defaultUsername.trim() : "",
       backendBaseUrl: normalizeBackendBaseUrl(merged.backendBaseUrl, options),
       apiMode: normalizeApiMode(merged.apiMode),
-      debugLogs: Boolean(merged.debugLogs),
       theme: normalizeTheme(merged.theme),
       hostMode: normalizeHostMode(merged.hostMode)
     };

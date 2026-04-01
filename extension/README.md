@@ -15,7 +15,7 @@ This directory contains a no-build Chrome/Edge Manifest V3 extension that talks 
 1. Start the Python backend:
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m app.run -c config.json --reload
 ```
 
 2. Open Chrome or Edge and go to `chrome://extensions`
