@@ -209,8 +209,8 @@ class UpstreamClientTestCase(unittest.TestCase):
     def test_fetch_user_tweets_paginates_with_cursor_and_uses_proxy(self) -> None:
         session = DummySession()
         settings = Settings(
-            upstream_base_url="http://52.76.50.165:8081",
-            upstream_http_proxy="http://192.168.1.199:9000",
+            twitter_data_url="http://52.76.50.165:8081",
+            twitter_data_proxy="http://192.168.1.199:9000",
         )
         client = UpstreamClient(settings, session=session)
 
@@ -227,8 +227,8 @@ class UpstreamClientTestCase(unittest.TestCase):
     def test_get_json_retries_on_transient_server_error(self) -> None:
         session = RetrySession()
         settings = Settings(
-            upstream_base_url="http://52.76.50.165:8081",
-            upstream_http_proxy="http://192.168.1.199:9000",
+            twitter_data_url="http://52.76.50.165:8081",
+            twitter_data_proxy="http://192.168.1.199:9000",
         )
         client = UpstreamClient(settings, session=session)
 
@@ -240,8 +240,8 @@ class UpstreamClientTestCase(unittest.TestCase):
     def test_fetch_user_tweets_continues_until_requested_count(self) -> None:
         session = MultiPageSession()
         settings = Settings(
-            upstream_base_url="http://52.76.50.165:8081",
-            upstream_http_proxy="http://192.168.1.199:9000",
+            twitter_data_url="http://52.76.50.165:8081",
+            twitter_data_proxy="http://192.168.1.199:9000",
         )
         client = UpstreamClient(settings, session=session)
 
@@ -255,8 +255,8 @@ class UpstreamClientTestCase(unittest.TestCase):
     def test_fetch_user_tweets_stops_when_upstream_exhausts_before_requested_count(self) -> None:
         session = MultiPageSession()
         settings = Settings(
-            upstream_base_url="http://52.76.50.165:8081",
-            upstream_http_proxy="http://192.168.1.199:9000",
+            twitter_data_url="http://52.76.50.165:8081",
+            twitter_data_proxy="http://192.168.1.199:9000",
         )
         client = UpstreamClient(settings, session=session)
 
@@ -268,8 +268,8 @@ class UpstreamClientTestCase(unittest.TestCase):
     def test_fetch_user_tweets_stops_when_cursor_repeats(self) -> None:
         session = RepeatingCursorSession()
         settings = Settings(
-            upstream_base_url="http://52.76.50.165:8081",
-            upstream_http_proxy="http://192.168.1.199:9000",
+            twitter_data_url="http://52.76.50.165:8081",
+            twitter_data_proxy="http://192.168.1.199:9000",
         )
         client = UpstreamClient(settings, session=session)
 
@@ -283,8 +283,8 @@ class UpstreamClientTestCase(unittest.TestCase):
     def test_fetch_user_tweets_stops_when_page_is_empty_even_with_next_cursor(self) -> None:
         session = EmptyPageSession()
         settings = Settings(
-            upstream_base_url="http://52.76.50.165:8081",
-            upstream_http_proxy="http://192.168.1.199:9000",
+            twitter_data_url="http://52.76.50.165:8081",
+            twitter_data_proxy="http://192.168.1.199:9000",
         )
         client = UpstreamClient(settings, session=session)
 

@@ -5,12 +5,8 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, conint, constr
 
 
-MAX_INGEST_TWEETS = 1000
-
-
 class ProfileIngestRequest(BaseModel):
     username: constr(strip_whitespace=True, min_length=1)
-    max_tweets: conint(gt=0, le=MAX_INGEST_TWEETS)
 
 
 class ProfileSummary(BaseModel):

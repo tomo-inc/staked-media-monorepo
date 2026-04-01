@@ -373,7 +373,7 @@ class LlmProviderTestCase(unittest.TestCase):
                 llm_provider="gemini",
                 gemini_api_key="gemini-key",
                 gemini_model="gemini-2.0-flash",
-                upstream_http_proxy="http://127.0.0.1:9000",
+                llm_http_proxy="http://127.0.0.1:9000",
             )
         )
 
@@ -603,7 +603,7 @@ class LlmProviderTestCase(unittest.TestCase):
             Settings(
                 openai_api_key="openai-key",
                 openai_model="gpt-test",
-                upstream_http_proxy="http://127.0.0.1:9000",
+                llm_http_proxy="http://127.0.0.1:9000",
             )
         )
 
@@ -651,7 +651,7 @@ class LlmProviderTestCase(unittest.TestCase):
                 ]
             }
         )
-        client = OpenAIClient(Settings(openai_api_key="openai-key", upstream_http_proxy=""))
+        client = OpenAIClient(Settings(openai_api_key="openai-key", llm_http_proxy=""))
 
         client._chat_completion_json(
             system_prompt="Return JSON",
@@ -679,7 +679,7 @@ class LlmProviderTestCase(unittest.TestCase):
                 ]
             }
         )
-        client = GeminiClient(Settings(llm_provider="gemini", gemini_api_key="gemini-key", upstream_http_proxy=""))
+        client = GeminiClient(Settings(llm_provider="gemini", gemini_api_key="gemini-key", llm_http_proxy=""))
 
         client._chat_completion_json(
             system_prompt="Return JSON",

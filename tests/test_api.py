@@ -11,7 +11,6 @@ from app.database import Database
 from app.llm import GeminiClient
 from app.main import create_app
 from app.orchestrator import ContentOrchestrator
-from app.schemas import MAX_INGEST_TWEETS
 
 
 class FakeUpstreamClient:
@@ -37,7 +36,7 @@ class FakeUpstreamClient:
     def fetch_user_tweets(
         self,
         user_id: str,
-        max_tweets: int = MAX_INGEST_TWEETS,
+        max_tweets: int = 100,
         *,
         request_id: str | None = None,
     ) -> list[dict]:
@@ -259,6 +258,7 @@ class ApiTestCase(unittest.TestCase):
             openai_api_key="test-key",
             log_enable_file=False,
         )
+        self.settings = settings
         db = Database(settings.database_path)
         db.init()
         content_orchestrator = ContentOrchestrator(
@@ -282,17 +282,17 @@ class ApiTestCase(unittest.TestCase):
     def test_ingest_profile_then_generate_drafts(self) -> None:
         ingest_response = self.client.post(
             "/api/v1/profiles/ingest",
-            json={"username": "demo-user", "max_tweets": 8},
+            json={"username": "demo-user"},
         )
         self.assertEqual(ingest_response.status_code, 200)
         ingest_payload = ingest_response.json()
-        self.assertEqual(ingest_payload["fetched_tweet_count"], 8)
+        self.assertEqual(ingest_payload["fetched_tweet_count"], self.settings.max_ingest_tweets)
         self.assertEqual(ingest_payload["profile"]["username"], "demo-user")
-        self.assertEqual(self.upstream_client.last_max_tweets, 8)
+        self.assertEqual(self.upstream_client.last_max_tweets, self.settings.max_ingest_tweets)
 
         profile_response = self.client.get("/api/v1/profiles/demo-user")
         self.assertEqual(profile_response.status_code, 200)
-        self.assertEqual(profile_response.json()["stored_tweet_count"], 8)
+        self.assertEqual(profile_response.json()["stored_tweet_count"], self.settings.max_ingest_tweets)
 
         drafts_response = self.client.post(
             "/api/v1/drafts/generate",
@@ -307,47 +307,20 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(drafts_payload["attempts"][0]["candidates"][0]["final_score"], 9.2)
         self.assertEqual(drafts_payload["attempts"][0]["candidates"][0]["failure_reasons"], [])
 
-    def test_ingest_requires_explicit_max_tweets(self) -> None:
+    def test_ingest_uses_server_side_max_tweets(self) -> None:
         response = self.client.post(
             "/api/v1/profiles/ingest",
             json={"username": "demo-user"},
         )
 
-        self.assertEqual(response.status_code, 422)
-        self.assertIn("max_tweets", response.text)
-
-    def test_ingest_accepts_large_max_tweets_and_passes_it_through(self) -> None:
-        response = self.client.post(
-            "/api/v1/profiles/ingest",
-            json={"username": "demo-user", "max_tweets": 800},
-        )
-
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.upstream_client.last_max_tweets, 800)
-        self.assertEqual(response.json()["fetched_tweet_count"], 800)
-
-    def test_ingest_accepts_maximum_allowed_tweets(self) -> None:
-        response = self.client.post(
-            "/api/v1/profiles/ingest",
-            json={"username": "demo-user", "max_tweets": MAX_INGEST_TWEETS},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.upstream_client.last_max_tweets, MAX_INGEST_TWEETS)
-
-    def test_ingest_rejects_tweet_count_above_limit(self) -> None:
-        response = self.client.post(
-            "/api/v1/profiles/ingest",
-            json={"username": "demo-user", "max_tweets": MAX_INGEST_TWEETS + 1},
-        )
-
-        self.assertEqual(response.status_code, 422)
-        self.assertIn(f"less than or equal to {MAX_INGEST_TWEETS}", response.text)
+        self.assertEqual(self.upstream_client.last_max_tweets, self.settings.max_ingest_tweets)
+        self.assertEqual(response.json()["fetched_tweet_count"], self.settings.max_ingest_tweets)
 
     def test_generate_drafts_uses_bounded_history_window(self) -> None:
         ingest_response = self.client.post(
             "/api/v1/profiles/ingest",
-            json={"username": "demo-user", "max_tweets": MAX_INGEST_TWEETS},
+            json={"username": "demo-user"},
         )
         self.assertEqual(ingest_response.status_code, 200)
 
@@ -357,8 +330,8 @@ class ApiTestCase(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.llm_client.last_source_text_count, MAX_INGEST_TWEETS)
-        self.assertEqual(self.llm_client.last_tweet_row_count, MAX_INGEST_TWEETS)
+        self.assertEqual(self.llm_client.last_source_text_count, self.settings.max_ingest_tweets)
+        self.assertEqual(self.llm_client.last_tweet_row_count, self.settings.max_ingest_tweets)
 
     def test_generate_drafts_requires_ingest_first(self) -> None:
         response = self.client.post(
@@ -386,7 +359,7 @@ class ApiTestCase(unittest.TestCase):
     def test_generate_route_logs_request_metadata(self) -> None:
         self.client.post(
             "/api/v1/profiles/ingest",
-            json={"username": "demo-user", "max_tweets": 8},
+            json={"username": "demo-user"},
         )
 
         with self.assertLogs("app.main", level="INFO") as captured:
@@ -402,17 +375,18 @@ class ApiTestCase(unittest.TestCase):
         self.assertIn('"request_id":"', joined)
         self.assertIn('"username":"demo-user"', joined)
 
-    def test_openapi_exposes_ingest_max_tweets_limit(self) -> None:
+    def test_openapi_omits_ingest_max_tweets(self) -> None:
         response = self.client.get("/openapi.json")
 
         self.assertEqual(response.status_code, 200)
         schema = response.json()["components"]["schemas"]["ProfileIngestRequest"]
-        self.assertEqual(schema["properties"]["max_tweets"]["maximum"], float(MAX_INGEST_TWEETS))
+        self.assertEqual(set(schema["properties"].keys()), {"username"})
+        self.assertNotIn("max_tweets", schema["properties"])
 
     def test_content_ideas_generate_exposure_and_debug_endpoints(self) -> None:
         ingest = self.client.post(
             "/api/v1/profiles/ingest",
-            json={"username": "demo-user", "max_tweets": 12},
+            json={"username": "demo-user"},
         )
         self.assertEqual(ingest.status_code, 200)
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import re
+import threading
 from collections import defaultdict
 from datetime import datetime
 from typing import Any
@@ -126,24 +128,34 @@ class ContentOrchestrator:
 
         variants: list[dict[str, Any]] = []
         variant_debug: list[dict[str, Any]] = []
-        for variant in self.VARIANTS:
-            variant_result = self._run_variant_generation(
-                variant=variant,
-                payload=payload,
-                topic=topic,
-                snapshot=snapshot,
-                source_texts=source_texts,
-                tweet_rows=tweet_rows,
-                used_keywords=used_keywords,
-                web_keywords=web_keywords,
-                personal_phrases=personal_phrases,
-                source_facts=source_facts,
-                theme_top_keywords=theme_top_keywords,
-                web_enrichment_used=web_enrichment_used,
-                request_id=request_id,
-            )
-            variants.append(variant_result["output"])
-            variant_debug.append(variant_result["debug"])
+        quality_gate_event = threading.Event()
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(self.settings.variant_max_workers, len(self.VARIANTS)),
+        ) as executor:
+            future_to_variant = {
+                executor.submit(
+                    self._run_variant_generation,
+                    variant=variant,
+                    payload=payload,
+                    topic=topic,
+                    snapshot=snapshot,
+                    source_texts=source_texts,
+                    tweet_rows=tweet_rows,
+                    used_keywords=used_keywords,
+                    web_keywords=web_keywords,
+                    personal_phrases=personal_phrases,
+                    source_facts=source_facts,
+                    theme_top_keywords=theme_top_keywords,
+                    web_enrichment_used=web_enrichment_used,
+                    request_id=request_id,
+                    quality_gate_event=quality_gate_event,
+                ): variant
+                for variant in self.VARIANTS
+            }
+            for future in concurrent.futures.as_completed(future_to_variant):
+                variant_result = future.result()
+                variants.append(variant_result["output"])
+                variant_debug.append(variant_result["debug"])
 
         recommended = max(variants, key=lambda item: float(item["score"]["final_score"]))
         quality_gate_met = any(bool(item.get("target_score_met", False)) for item in variants)
@@ -223,6 +235,7 @@ class ContentOrchestrator:
         theme_top_keywords: list[str],
         web_enrichment_used: bool,
         request_id: str,
+        quality_gate_event: threading.Event | None = None,
     ) -> dict[str, Any]:
         rounds: list[dict[str, Any]] = []
         best_result: dict[str, Any] | None = None
@@ -233,6 +246,8 @@ class ContentOrchestrator:
         local_used_keywords = list(used_keywords)
 
         for round_index in range(1, self.settings.content_rewrite_max_rounds + 1):
+            if quality_gate_event is not None and quality_gate_event.is_set() and best_result is not None:
+                break
             prompt = self._build_generation_prompt(
                 payload=payload,
                 topic=topic,
@@ -274,6 +289,8 @@ class ContentOrchestrator:
 
             target_met = score["final_score"] >= 9.0 and bool(draft_result.get("target_score_met", False))
             if target_met:
+                if quality_gate_event is not None:
+                    quality_gate_event.set()
                 break
 
             if self.settings.web_enrichment_enabled:

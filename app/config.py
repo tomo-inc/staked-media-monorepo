@@ -47,8 +47,9 @@ class Settings:
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     database_url: str = "sqlite:///./data/mvp.db"
-    upstream_base_url: str = "http://52.76.50.165:8081"
-    upstream_http_proxy: str = "http://192.168.1.199:9000"
+    twitter_data_url: str = "http://52.76.50.165:8081"
+    twitter_data_proxy: str = ""
+    llm_http_proxy: str = "http://192.168.1.199:9000"
     llm_provider: str = "openai"
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
@@ -70,7 +71,11 @@ class Settings:
     web_enrichment_timeout_seconds: float = 8.0
     web_enrichment_max_items: int = 12
     web_enrichment_recency_hours: int = 24
+    max_ingest_tweets: int = 100
     content_rewrite_max_rounds: int = 3
+    max_generation_attempts: int = 3
+    evaluation_max_workers: int = 4
+    variant_max_workers: int = 3
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "llm_provider", _normalize_llm_provider(self.llm_provider))
@@ -80,10 +85,16 @@ class Settings:
         return _parse_sqlite_path(self.database_url)
 
     @property
-    def upstream_proxies(self) -> Optional[dict[str, str]]:
-        if not self.upstream_http_proxy:
+    def twitter_data_proxies(self) -> Optional[dict[str, str]]:
+        if not self.twitter_data_proxy:
             return None
-        return {"http": self.upstream_http_proxy, "https": self.upstream_http_proxy}
+        return {"http": self.twitter_data_proxy, "https": self.twitter_data_proxy}
+
+    @property
+    def llm_proxies(self) -> Optional[dict[str, str]]:
+        if not self.llm_http_proxy:
+            return None
+        return {"http": self.llm_http_proxy, "https": self.llm_http_proxy}
 
 
 @lru_cache(maxsize=1)
@@ -94,8 +105,9 @@ def get_settings() -> Settings:
         app_host=os.getenv("APP_HOST", "0.0.0.0"),
         app_port=int(os.getenv("APP_PORT", "8000")),
         database_url=os.getenv("DATABASE_URL", "sqlite:///./data/mvp.db"),
-        upstream_base_url=os.getenv("UPSTREAM_BASE_URL", "http://52.76.50.165:8081"),
-        upstream_http_proxy=os.getenv("UPSTREAM_HTTP_PROXY", "http://192.168.1.199:9000"),
+        twitter_data_url=os.getenv("TWITTER_DATA_URL", "http://52.76.50.165:8081"),
+        twitter_data_proxy=os.getenv("TWITTER_DATA_PROXY", ""),
+        llm_http_proxy=os.getenv("LLM_HTTP_PROXY", "http://192.168.1.199:9000"),
         llm_provider=os.getenv("LLM_PROVIDER", "openai"),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
@@ -120,5 +132,9 @@ def get_settings() -> Settings:
         web_enrichment_timeout_seconds=float(os.getenv("WEB_ENRICHMENT_TIMEOUT_SECONDS", "8")),
         web_enrichment_max_items=int(os.getenv("WEB_ENRICHMENT_MAX_ITEMS", "12")),
         web_enrichment_recency_hours=int(os.getenv("WEB_ENRICHMENT_RECENCY_HOURS", "24")),
+        max_ingest_tweets=int(os.getenv("MAX_INGEST_TWEETS", "100")),
         content_rewrite_max_rounds=int(os.getenv("CONTENT_REWRITE_MAX_ROUNDS", "3")),
+        max_generation_attempts=int(os.getenv("MAX_GENERATION_ATTEMPTS", "3")),
+        evaluation_max_workers=int(os.getenv("EVALUATION_MAX_WORKERS", "4")),
+        variant_max_workers=int(os.getenv("VARIANT_MAX_WORKERS", "3")),
     )

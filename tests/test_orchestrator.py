@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 
@@ -12,6 +13,7 @@ from app.schemas import ContentGenerateRequest
 
 class FakeLLM:
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self.calls = 0
 
     def generate_drafts(
@@ -25,8 +27,10 @@ class FakeLLM:
         draft_count: int,
         request_id: str | None = None,
     ) -> dict:
-        self.calls += 1
-        best_score = 8.3 if self.calls == 1 else 9.4
+        with self._lock:
+            self.calls += 1
+            call_number = self.calls
+        best_score = 8.3 if call_number == 1 else 9.4
         return {
             "drafts": [
                 {
@@ -43,10 +47,12 @@ class FakeLLM:
 
 class FakeWebEnricher:
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self.calls = 0
 
     def search_recent_topic_signals(self, topic: str, keywords: list[str]) -> dict:
-        self.calls += 1
+        with self._lock:
+            self.calls += 1
         return {
             "keywords": [topic, "related", "breaking"],
             "facts": [

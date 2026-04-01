@@ -7,7 +7,6 @@ import requests
 
 from app.config import Settings
 from app.logging_utils import get_logger, log_event, redact_for_log
-from app.schemas import MAX_INGEST_TWEETS
 
 
 logger = get_logger(__name__)
@@ -54,10 +53,11 @@ class UpstreamClient:
     def fetch_user_tweets(
         self,
         user_id: str,
-        max_tweets: int = MAX_INGEST_TWEETS,
+        max_tweets: Optional[int] = None,
         *,
         request_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        max_tweets = max_tweets or self.settings.max_ingest_tweets
         log_event(
             logger,
             logging.INFO,
@@ -149,12 +149,12 @@ class UpstreamClient:
                 path=path,
                 attempt=attempt + 1,
                 params=params or {},
-                proxy_enabled=bool(self.settings.upstream_proxies),
+                proxy_enabled=bool(self.settings.twitter_data_proxies),
             )
             response = self.session.get(
-                f"{self.settings.upstream_base_url.rstrip('/')}{path}",
+                f"{self.settings.twitter_data_url.rstrip('/')}{path}",
                 params=params,
-                proxies=self.settings.upstream_proxies,
+                proxies=self.settings.twitter_data_proxies,
                 timeout=self.settings.request_timeout_seconds,
             )
             try:

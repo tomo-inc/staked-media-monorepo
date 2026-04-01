@@ -25,7 +25,6 @@ from app.schemas import (
     ExposureAnalyzeRequest,
     ExposureAnalyzeResponse,
     IngestResponse,
-    MAX_INGEST_TWEETS,
     ProfileIngestRequest,
     ProfileResponse,
     ProfileSummary,
@@ -71,7 +70,8 @@ def create_app(
             "app_startup_completed",
             provider=settings.llm_provider,
             model=settings.gemini_model if settings.llm_provider == "gemini" else settings.openai_model,
-            proxy_enabled=bool(settings.upstream_proxies),
+            twitter_data_proxy_enabled=bool(settings.twitter_data_proxies),
+            llm_proxy_enabled=bool(settings.llm_proxies),
             log_level=settings.log_level,
             log_file_enabled=settings.log_enable_file,
             log_file_path=settings.log_file_path if settings.log_enable_file else None,
@@ -96,12 +96,12 @@ def create_app(
             "api_ingest_started",
             request_id=request_id,
             username=payload.username,
-            max_tweets=payload.max_tweets,
+            max_tweets=settings.max_ingest_tweets,
         )
 
         try:
             user = upstream.fetch_user_by_username(payload.username, request_id=request_id)
-            tweet_items = upstream.fetch_user_tweets(user["id"], max_tweets=payload.max_tweets, request_id=request_id)
+            tweet_items = upstream.fetch_user_tweets(user["id"], max_tweets=settings.max_ingest_tweets, request_id=request_id)
         except UpstreamError as exc:
             log_event(
                 logger,
@@ -115,7 +115,7 @@ def create_app(
 
         database.upsert_user(user, ingested_at)
         fetched_tweet_count = database.upsert_tweets(user["id"], tweet_items, ingested_at)
-        tweet_rows = database.get_user_tweets(user["id"], limit=payload.max_tweets)
+        tweet_rows = database.get_user_tweets(user["id"], limit=settings.max_ingest_tweets)
         corpus_stats = build_corpus_stats(user, tweet_rows, sample_size=settings.persona_sample_size)
         representative_tweets = corpus_stats["representative_tweets"]
 
@@ -247,7 +247,7 @@ def create_app(
             )
             raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
 
-        tweet_rows = database.get_user_tweets(stored_user["id"], limit=MAX_INGEST_TWEETS)
+        tweet_rows = database.get_user_tweets(stored_user["id"], limit=request.app.state.settings.max_ingest_tweets)
         source_texts = [row["text"] for row in tweet_rows if row["text"]]
         log_event(
             logger,
