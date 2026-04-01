@@ -140,7 +140,7 @@ test("background save_config updates host mode and popup behavior", async () => 
   assert.equal(harness.calls.setPanelBehavior.at(-1)?.openPanelOnActionClick, false);
 });
 
-test("background save_config rejects unsupported backend hosts", async () => {
+test("background save_config accepts hosted backend URLs", async () => {
   const harness = createBackgroundHarness();
   await flushTasks();
 
@@ -149,6 +149,33 @@ test("background save_config rejects unsupported backend hosts", async () => {
     payload: { backendBaseUrl: "https://api.example.com" }
   });
 
+  assert.equal(response.ok, true);
+  assert.equal(response.config.backendBaseUrl, "https://api.example.com");
+  assert.equal(harness.storage.backendBaseUrl, "https://api.example.com");
+});
+
+test("background save_config rejects unsupported backend protocols", async () => {
+  const harness = createBackgroundHarness();
+  await flushTasks();
+
+  const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+    type: "save_config",
+    payload: { backendBaseUrl: "ftp://api.example.com" }
+  });
+
   assert.equal(response.ok, false);
-  assert.match(response.error.message, /Backend URL must use http\(s\):\/\/localhost or http\(s\):\/\/127\.0\.0\.1\./);
+  assert.match(response.error.message, /Backend URL must be a valid http\(s\) URL without embedded credentials\./);
+});
+
+test("background save_config rejects backend credentials", async () => {
+  const harness = createBackgroundHarness();
+  await flushTasks();
+
+  const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+    type: "save_config",
+    payload: { backendBaseUrl: "https://user:secret@example.com" }
+  });
+
+  assert.equal(response.ok, false);
+  assert.match(response.error.message, /Backend URL must be a valid http\(s\) URL without embedded credentials\./);
 });

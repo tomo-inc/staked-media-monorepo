@@ -48,22 +48,46 @@ test("sanitizeConfig normalizes and trims persisted settings", () => {
 
 test("sanitizeConfig falls back for invalid stored backend URLs", () => {
   const config = sanitizeConfig({
-    backendBaseUrl: "https://api.example.com"
+    backendBaseUrl: "ftp://api.example.com"
   });
 
   assert.equal(config.backendBaseUrl, DEFAULT_CONFIG.backendBaseUrl);
 });
 
-test("sanitizeConfig rejects non-local backend URLs in strict mode", () => {
+test("sanitizeConfig accepts hosted backend URLs in strict mode", () => {
+  const config = sanitizeConfig(
+    {
+      backendBaseUrl: "https://api.example.com/v1/"
+    },
+    { strictBackendBaseUrl: true }
+  );
+
+  assert.equal(config.backendBaseUrl, "https://api.example.com/v1");
+});
+
+test("sanitizeConfig rejects unsupported backend protocols in strict mode", () => {
   assert.throws(
     () =>
       sanitizeConfig(
         {
-          backendBaseUrl: "https://api.example.com"
+          backendBaseUrl: "ftp://api.example.com"
         },
         { strictBackendBaseUrl: true }
       ),
-    /Backend URL must use http\(s\):\/\/localhost or http\(s\):\/\/127\.0\.0\.1\./
+    /Backend URL must be a valid http\(s\) URL without embedded credentials\./
+  );
+});
+
+test("sanitizeConfig rejects backend URLs with credentials in strict mode", () => {
+  assert.throws(
+    () =>
+      sanitizeConfig(
+        {
+          backendBaseUrl: "https://user:secret@example.com"
+        },
+        { strictBackendBaseUrl: true }
+      ),
+    /Backend URL must be a valid http\(s\) URL without embedded credentials\./
   );
 });
 

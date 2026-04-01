@@ -13,7 +13,6 @@
     theme: "light",
     hostMode: "sidepanel"
   });
-  const ALLOWED_BACKEND_HOSTS = new Set(["127.0.0.1", "localhost"]);
 
   function normalizeBaseUrl(value) {
     return String(value || "").trim().replace(/\/+$/, "");
@@ -44,9 +43,6 @@
       if (!/^https?:$/.test(parsed.protocol)) {
         throw new Error("Unsupported backend protocol");
       }
-      if (!ALLOWED_BACKEND_HOSTS.has(parsed.hostname)) {
-        throw new Error("Unsupported backend host");
-      }
       if (parsed.username || parsed.password) {
         throw new Error("Backend URL credentials are not supported");
       }
@@ -54,7 +50,7 @@
       return `${parsed.protocol}//${parsed.host}${normalizedPath}`;
     } catch (_error) {
       if (strictBackendBaseUrl) {
-        throw new Error("Backend URL must use http(s)://localhost or http(s)://127.0.0.1.");
+        throw new Error("Backend URL must be a valid http(s) URL without embedded credentials.");
       }
       return FALLBACK_BACKEND_BASE_URL;
     }
