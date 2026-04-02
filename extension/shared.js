@@ -5,7 +5,7 @@
     module.exports = api;
   }
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
-  const FALLBACK_BACKEND_BASE_URL = "http://127.0.0.1:8000";
+  const FALLBACK_BACKEND_BASE_URL = "https://api.sayviner.top:8443";
   const DEFAULT_CONFIG = Object.freeze({
     defaultUsername: "",
     backendBaseUrl: FALLBACK_BACKEND_BASE_URL,
