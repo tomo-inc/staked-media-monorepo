@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Request
 
 from app.config import Settings, get_settings
-from app.database import Database
+from app.database import Database, normalize_username
 from app.llm import LLMClient, LLMError, create_llm_client
 from app.logging_utils import configure_logging, format_log_event, get_logger, log_event, redact_for_log
 from app.orchestrator import ContentOrchestrator
@@ -28,11 +28,14 @@ from app.schemas import (
     ProfileIngestRequest,
     ProfileResponse,
     ProfileSummary,
+    WhitelistUsernameRequest,
+    WhitelistUsernamesResponse,
 )
 from app.upstream import UpstreamClient, UpstreamError
 
 
 logger = get_logger(__name__)
+WHITELIST_FORBIDDEN_DETAIL = "Target username is not in the trial whitelist"
 
 
 def utc_now_iso() -> str:
@@ -89,18 +92,19 @@ def create_app(
         database: Database = request.app.state.database
         upstream: UpstreamClient = request.app.state.upstream
         llm: LLMClient = request.app.state.llm
+        username = _require_allowed_username(database, payload.username, request_id=request_id, route="profiles_ingest")
         ingested_at = utc_now_iso()
         log_event(
             logger,
             logging.INFO,
             "api_ingest_started",
             request_id=request_id,
-            username=payload.username,
+            username=username,
             max_tweets=settings.max_ingest_tweets,
         )
 
         try:
-            user = upstream.fetch_user_by_username(payload.username, request_id=request_id)
+            user = upstream.fetch_user_by_username(username, request_id=request_id)
             tweet_items = upstream.fetch_user_tweets(user["id"], max_tweets=settings.max_ingest_tweets, request_id=request_id)
         except UpstreamError as exc:
             log_event(
@@ -108,7 +112,7 @@ def create_app(
                 logging.ERROR,
                 "api_ingest_upstream_failed",
                 request_id=request_id,
-                username=payload.username,
+                username=username,
                 error=str(exc),
             )
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -132,7 +136,7 @@ def create_app(
                 logging.ERROR,
                 "api_ingest_llm_failed",
                 request_id=request_id,
-                username=payload.username,
+                username=username,
                 error=str(exc),
             )
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -141,7 +145,7 @@ def create_app(
                 format_log_event(
                     "api_ingest_unhandled_error",
                     request_id=request_id,
-                    username=payload.username,
+                    username=username,
                 )
             )
             raise
@@ -166,7 +170,7 @@ def create_app(
                 logging.ERROR,
                 "api_ingest_reload_failed",
                 request_id=request_id,
-                username=payload.username,
+                username=username,
             )
             raise HTTPException(status_code=500, detail="Stored user could not be reloaded")
 
@@ -175,7 +179,7 @@ def create_app(
             logging.INFO,
             "api_ingest_completed",
             request_id=request_id,
-            username=payload.username,
+            username=username,
             fetched_tweet_count=fetched_tweet_count,
             source_original_tweet_count=corpus_stats["tweet_counts"]["original"],
             persona_snapshot_id=persona_snapshot_id,
@@ -195,12 +199,13 @@ def create_app(
     @app.get("/api/v1/profiles/{username}", response_model=ProfileResponse)
     def get_profile(username: str, request: Request) -> ProfileResponse:
         database: Database = request.app.state.database
-        stored_user = database.get_user_by_username(username)
+        normalized_username = _require_allowed_username(database, username, route="profiles_get")
+        stored_user = database.get_user_by_username(normalized_username)
         if stored_user is None:
             raise HTTPException(status_code=404, detail="Profile not found")
 
         tweets = database.get_user_tweets(stored_user["id"])
-        latest_persona = database.get_latest_persona_snapshot(username)
+        latest_persona = database.get_latest_persona_snapshot(normalized_username)
         return ProfileResponse(
             profile=_profile_summary_from_row(stored_user),
             stored_tweet_count=len(tweets),
@@ -213,37 +218,38 @@ def create_app(
         started_at = time.perf_counter()
         database: Database = request.app.state.database
         llm: LLMClient = request.app.state.llm
+        username = _require_allowed_username(database, payload.username, request_id=request_id, route="drafts_generate")
         created_at = utc_now_iso()
         log_event(
             logger,
             logging.INFO,
             "api_draft_generate_started",
             request_id=request_id,
-            username=payload.username,
+            username=username,
             draft_count=payload.draft_count,
             prompt_len=len(payload.prompt),
             prompt_snippet=redact_for_log(payload.prompt, request.app.state.settings.log_max_body_chars),
         )
 
-        stored_user = database.get_user_by_username(payload.username)
+        stored_user = database.get_user_by_username(username)
         if stored_user is None:
             log_event(
                 logger,
                 logging.WARNING,
                 "api_draft_generate_profile_missing",
                 request_id=request_id,
-                username=payload.username,
+                username=username,
             )
             raise HTTPException(status_code=404, detail="Profile not found")
 
-        snapshot = database.get_latest_persona_snapshot(payload.username)
+        snapshot = database.get_latest_persona_snapshot(username)
         if snapshot is None:
             log_event(
                 logger,
                 logging.WARNING,
                 "api_draft_generate_persona_missing",
                 request_id=request_id,
-                username=payload.username,
+                username=username,
             )
             raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
 
@@ -254,7 +260,7 @@ def create_app(
             logging.INFO,
             "api_draft_generate_context_ready",
             request_id=request_id,
-            username=payload.username,
+            username=username,
             persona_snapshot_id=snapshot["id"],
             tweet_count=len(tweet_rows),
             source_text_count=len(source_texts),
@@ -276,7 +282,7 @@ def create_app(
                 logging.ERROR,
                 "api_draft_generate_llm_failed",
                 request_id=request_id,
-                username=payload.username,
+                username=username,
                 error=str(exc),
             )
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -285,13 +291,13 @@ def create_app(
                 format_log_event(
                     "api_draft_generate_unhandled_error",
                     request_id=request_id,
-                    username=payload.username,
+                    username=username,
                 )
             )
             raise
 
         database.save_draft_request(
-            username=payload.username,
+            username=username,
             persona_snapshot_id=snapshot["id"],
             prompt=payload.prompt,
             draft_count=payload.draft_count,
@@ -303,7 +309,7 @@ def create_app(
             logging.INFO,
             "api_draft_generate_completed",
             request_id=request_id,
-            username=payload.username,
+            username=username,
             persona_snapshot_id=snapshot["id"],
             best_score=float(draft_result.get("best_score", 0.0)),
             target_score_met=bool(draft_result.get("target_score_met", False)),
@@ -312,7 +318,7 @@ def create_app(
         )
 
         return DraftGenerateResponse(
-            username=payload.username,
+            username=username,
             prompt=payload.prompt,
             persona_snapshot_id=snapshot["id"],
             drafts=draft_result["drafts"],
@@ -343,6 +349,9 @@ def create_app(
     def content_generate(payload: ContentGenerateRequest, request: Request) -> ContentGenerateResponse:
         request_id = uuid.uuid4().hex[:12]
         started_at = time.perf_counter()
+        database: Database = request.app.state.database
+        username = _require_allowed_username(database, payload.username, request_id=request_id, route="content_generate")
+        payload = payload.copy(update={"username": username})
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
         try:
             result = orchestrator.generate_content(payload, request_id=request_id)
@@ -355,12 +364,11 @@ def create_app(
         except LLMError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-        database: Database = request.app.state.database
-        latest_persona_snapshot = database.get_latest_persona_snapshot(payload.username)
+        latest_persona_snapshot = database.get_latest_persona_snapshot(username)
         if latest_persona_snapshot is None:
             raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
         database.save_draft_request(
-            username=payload.username,
+            username=username,
             persona_snapshot_id=latest_persona_snapshot["id"],
             prompt=payload.idea or payload.topic or "content_generate",
             draft_count=payload.draft_count,
@@ -372,7 +380,7 @@ def create_app(
             logging.INFO,
             "api_content_generate_completed",
             request_id=request_id,
-            username=payload.username,
+            username=username,
             mode=payload.mode,
             topic=result.get("topic", ""),
             final_score=result.get("score", {}).get("final_score", 0.0),
@@ -383,6 +391,9 @@ def create_app(
 
     @app.post("/api/v1/exposure/analyze", response_model=ExposureAnalyzeResponse)
     def exposure_analyze(payload: ExposureAnalyzeRequest, request: Request) -> ExposureAnalyzeResponse:
+        database: Database = request.app.state.database
+        username = _require_allowed_username(database, payload.username, route="exposure_analyze")
+        payload = payload.copy(update={"username": username})
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
         result = orchestrator.analyze_exposure(
             username=payload.username,
@@ -391,6 +402,35 @@ def create_app(
             domain=payload.domain,
         )
         return ExposureAnalyzeResponse(**result)
+
+    @app.get("/admin/api/v1/whitelist/usernames", response_model=WhitelistUsernamesResponse)
+    def whitelist_list(request: Request) -> WhitelistUsernamesResponse:
+        database: Database = request.app.state.database
+        return WhitelistUsernamesResponse(usernames=database.list_allowed_usernames())
+
+    @app.post("/admin/api/v1/whitelist/usernames", response_model=WhitelistUsernamesResponse)
+    def whitelist_add(payload: WhitelistUsernameRequest, request: Request) -> WhitelistUsernamesResponse:
+        database: Database = request.app.state.database
+        username = database.add_allowed_username(payload.username)
+        log_event(
+            logger,
+            logging.INFO,
+            "admin_whitelist_username_added",
+            username=username,
+        )
+        return WhitelistUsernamesResponse(usernames=database.list_allowed_usernames())
+
+    @app.delete("/admin/api/v1/whitelist/usernames/{username}", response_model=WhitelistUsernamesResponse)
+    def whitelist_remove(username: str, request: Request) -> WhitelistUsernamesResponse:
+        database: Database = request.app.state.database
+        normalized_username = database.remove_allowed_username(username)
+        log_event(
+            logger,
+            logging.INFO,
+            "admin_whitelist_username_removed",
+            username=normalized_username,
+        )
+        return WhitelistUsernamesResponse(usernames=database.list_allowed_usernames())
 
     @app.get("/api/v1/content/debug/{request_id}", response_model=ContentDebugResponse)
     def content_debug(request_id: str, request: Request) -> ContentDebugResponse:
@@ -401,6 +441,32 @@ def create_app(
         return ContentDebugResponse(**debug_payload)
 
     return app
+
+
+def create_app_from_runtime_config() -> FastAPI:
+    return create_app(settings=get_settings())
+
+
+def _require_allowed_username(
+    database: Database,
+    username: str,
+    *,
+    request_id: str | None = None,
+    route: str,
+) -> str:
+    normalized = normalize_username(username)
+    if database.is_username_allowed(normalized):
+        return normalized
+
+    log_event(
+        logger,
+        logging.WARNING,
+        "api_username_not_whitelisted",
+        request_id=request_id,
+        route=route,
+        username=normalized,
+    )
+    raise HTTPException(status_code=403, detail=WHITELIST_FORBIDDEN_DETAIL)
 
 
 def _profile_summary_from_row(row: dict[str, object]) -> ProfileSummary:
@@ -417,6 +483,3 @@ def _profile_summary_from_row(row: dict[str, object]) -> ProfileSummary:
         verified=bool(row.get("verified")),
         last_ingested_at=str(row.get("last_ingested_at") or ""),
     )
-
-
-app = create_app()

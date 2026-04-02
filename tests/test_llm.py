@@ -189,6 +189,13 @@ class LlmNormalizationTestCase(unittest.TestCase):
         )
 
     def test_generate_drafts_full_chinese_falls_back_to_best_available_candidate(self) -> None:
+        rule_result = {
+            "score": 4.0,
+            "passed": False,
+            "hard_fail": False,
+            "issues": ["Contains English despite full-Chinese prompt: btc"],
+            "strengths": ["Theme keyword hits: BTC"],
+        }
         with patch.object(
             self.client,
             "_chat_completion_json",
@@ -196,20 +203,8 @@ class LlmNormalizationTestCase(unittest.TestCase):
         ):
             with patch.object(
                 self.client,
-                "_evaluate_candidate",
-                return_value={
-                    "rule_score": 4.0,
-                    "llm_score": 4.0,
-                    "final_score": 4.0,
-                    "passed": False,
-                    "rule_issues": ["Contains English despite full-Chinese prompt: btc"],
-                    "rule_strengths": ["Theme keyword hits: BTC"],
-                    "llm_verdict": "weak_fit",
-                    "llm_issues": ["Language mismatch"],
-                    "llm_strengths": [],
-                    "must_fix": ["Use Chinese-only wording"],
-                    "failure_reasons": ["Contains English despite full-Chinese prompt: btc"],
-                },
+                "_rule_score_draft",
+                return_value=rule_result,
             ):
                 result = self.client.generate_drafts(
                     persona={"generation_guardrails": {}, "lexical_markers": [], "do_not_sound_like": []},
@@ -299,9 +294,128 @@ class LlmNormalizationTestCase(unittest.TestCase):
         self.assertEqual(feedback, ["Use more native wording"])
 
 
+class ScoreDraftsBatchTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.settings = Settings(openai_api_key="test-key", llm_http_proxy="")
+        self.client = OpenAIClient(self.settings)
+
+    def test_batch_scores_multiple_candidates(self) -> None:
+        batch_response = {
+            "scores": [
+                {"index": 0, "score": 9.0, "verdict": "good", "strengths": ["natural"], "issues": [], "must_fix": []},
+                {"index": 1, "score": 7.5, "verdict": "weak", "strengths": [], "issues": ["drift"], "must_fix": ["fix"]},
+            ]
+        }
+        with patch.object(self.client, "_chat_completion_json", return_value=batch_response):
+            results = self.client.score_drafts_batch(
+                persona={"author_summary": "", "voice_traits": [], "do_not_sound_like": [], "generation_guardrails": {}},
+                prompt="test",
+                candidate_texts=["候选A", "候选B"],
+                matched_theme_tweets=[],
+                theme_keywords=[],
+                theme_top_keywords=[],
+            )
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["score"], 9.0)
+        self.assertEqual(results[1]["score"], 7.5)
+        self.assertEqual(results[1]["issues"], ["drift"])
+
+    def test_batch_returns_defaults_for_missing_indices(self) -> None:
+        batch_response = {
+            "scores": [
+                {"index": 0, "score": 8.0, "verdict": "ok", "strengths": [], "issues": [], "must_fix": []},
+            ]
+        }
+        with patch.object(self.client, "_chat_completion_json", return_value=batch_response):
+            results = self.client.score_drafts_batch(
+                persona={"author_summary": "", "voice_traits": [], "do_not_sound_like": [], "generation_guardrails": {}},
+                prompt="test",
+                candidate_texts=["候选A", "候选B", "候选C"],
+                matched_theme_tweets=[],
+                theme_keywords=[],
+                theme_top_keywords=[],
+            )
+        self.assertEqual(len(results), 3)
+        self.assertEqual(results[0]["score"], 8.0)
+        self.assertEqual(results[1]["score"], 0.0)
+        self.assertEqual(results[1]["verdict"], "missing")
+        self.assertEqual(results[2]["score"], 0.0)
+
+    def test_batch_handles_empty_candidates(self) -> None:
+        results = self.client.score_drafts_batch(
+            persona={},
+            prompt="test",
+            candidate_texts=[],
+            matched_theme_tweets=[],
+            theme_keywords=[],
+            theme_top_keywords=[],
+        )
+        self.assertEqual(results, [])
+
+    def test_batch_handles_malformed_llm_response(self) -> None:
+        with patch.object(self.client, "_chat_completion_json", return_value={"unexpected": "shape"}):
+            results = self.client.score_drafts_batch(
+                persona={"author_summary": "", "voice_traits": [], "do_not_sound_like": [], "generation_guardrails": {}},
+                prompt="test",
+                candidate_texts=["候选A"],
+                matched_theme_tweets=[],
+                theme_keywords=[],
+                theme_top_keywords=[],
+            )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["score"], 0.0)
+        self.assertEqual(results[0]["verdict"], "missing")
+
+    def test_batch_handles_list_response(self) -> None:
+        list_response = [
+            {"index": 0, "score": 8.5, "verdict": "ok", "strengths": [], "issues": [], "must_fix": []},
+        ]
+        with patch.object(self.client, "_chat_completion_json", return_value=list_response):
+            results = self.client.score_drafts_batch(
+                persona={"author_summary": "", "voice_traits": [], "do_not_sound_like": [], "generation_guardrails": {}},
+                prompt="test",
+                candidate_texts=["候选A"],
+                matched_theme_tweets=[],
+                theme_keywords=[],
+                theme_top_keywords=[],
+            )
+        self.assertEqual(results[0]["score"], 8.5)
+
+    def test_batch_clamps_invalid_scores(self) -> None:
+        batch_response = {
+            "scores": [
+                {"index": 0, "score": 15.0, "verdict": "ok", "strengths": [], "issues": [], "must_fix": []},
+                {"index": 1, "score": -3.0, "verdict": "ok", "strengths": [], "issues": [], "must_fix": []},
+                {"index": 2, "score": "not_a_number", "verdict": "ok", "strengths": [], "issues": [], "must_fix": []},
+            ]
+        }
+        with patch.object(self.client, "_chat_completion_json", return_value=batch_response):
+            results = self.client.score_drafts_batch(
+                persona={"author_summary": "", "voice_traits": [], "do_not_sound_like": [], "generation_guardrails": {}},
+                prompt="test",
+                candidate_texts=["A", "B", "C"],
+                matched_theme_tweets=[],
+                theme_keywords=[],
+                theme_top_keywords=[],
+            )
+        self.assertEqual(results[0]["score"], 10.0)
+        self.assertEqual(results[1]["score"], 0.0)
+        self.assertEqual(results[2]["score"], 0.0)
+
+
+class ComputeFinalScoreTestCase(unittest.TestCase):
+    def test_weighted_blend(self) -> None:
+        from app.llm.base_client import LLMClient
+
+        self.assertEqual(LLMClient._compute_final_score(7.5, 9.0), 8.4)
+        self.assertEqual(LLMClient._compute_final_score(10.0, 10.0), 10.0)
+        self.assertEqual(LLMClient._compute_final_score(0.0, 0.0), 0.0)
+        self.assertEqual(LLMClient._compute_final_score(8.5, 9.0), 8.8)
+
+
 class LlmProviderTestCase(unittest.TestCase):
     def test_settings_rejects_unknown_provider(self) -> None:
-        with self.assertRaisesRegex(ValueError, "LLM_PROVIDER must be one of"):
+        with self.assertRaisesRegex(ValueError, "`llm_provider` must be one of"):
             Settings(llm_provider="not-a-provider")
 
     def test_settings_normalizes_provider(self) -> None:
@@ -344,7 +458,7 @@ class LlmProviderTestCase(unittest.TestCase):
     def test_gemini_requires_api_key(self) -> None:
         client = GeminiClient(Settings(llm_provider="gemini"))
 
-        with self.assertRaisesRegex(LLMError, "GEMINI_API_KEY is not configured"):
+        with self.assertRaisesRegex(LLMError, "Gemini API key is not configured"):
             client._chat_completion_json(
                 system_prompt="Return JSON",
                 user_prompt='{"test": true}',

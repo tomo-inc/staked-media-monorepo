@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import concurrent.futures
 import json
 import logging
 import re
-import threading
 import time
 from typing import Any
 
@@ -342,38 +340,244 @@ class LLMClient:
             theme_top_keywords=theme_top_keywords,
         )
 
+        candidates_per_round = min(draft_count * 2, 5)
+        max_rounds = self.settings.max_generation_attempts
+        all_candidates: list[dict[str, Any]] = []
+        attempts: list[dict[str, Any]] = []
         seen_texts: set[str] = set()
-        seen_texts_lock = threading.Lock()
-        candidates_per_round = max(2, min(draft_count, 5))
+        rejected_texts: list[str] = []
+        attempt_feedback: list[str] = []
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=draft_count) as executor:
-            futures = {
-                executor.submit(
-                    self._generate_single_draft_with_retries,
+        for round_index in range(1, max_rounds + 1):
+            accepted_count = sum(
+                1 for c in all_candidates if c["evaluation"]["final_score"] >= TARGET_DRAFT_SCORE
+            )
+            needed_count = draft_count - accepted_count
+            log_event(
+                logger,
+                logging.INFO,
+                "draft_generation_attempt_started",
+                request_id=request_id,
+                provider=self.provider_name,
+                attempt=round_index,
+                needed_count=needed_count,
+                accepted_count=accepted_count,
+                rejected_count=len(rejected_texts),
+            )
+
+            request_payload = self._build_draft_request_payload(
+                persona=persona,
+                prompt=prompt,
+                representative_tweets=representative_tweets,
+                matched_theme_tweets=matched_theme_tweets,
+                theme_keywords=theme_keywords,
+                theme_top_keywords=theme_top_keywords,
+                rejected_texts=rejected_texts,
+                attempt_feedback=attempt_feedback,
+                draft_count=candidates_per_round,
+            )
+            payload = self._chat_completion_json(
+                system_prompt=(
+                    "You write original X posts that sound like the provided persona. "
+                    "The goal is inspired-by writing, not copying. "
+                    "Treat the persona's generation_guardrails as hard style guidance. "
+                    "Prioritize the theme-matched historical tweets over generic persona habits. "
+                    "Prefer concrete, timeline-native phrasing over polished summary language. "
+                    "Return strict JSON with a top-level 'drafts' array. "
+                    "Each draft object must have keys: text, tone_tags, rationale."
+                ),
+                user_prompt=json.dumps(request_payload, ensure_ascii=True),
+                temperature=0.9,
+                request_id=request_id,
+                purpose="draft_generation",
+            )
+
+            normalized_payload = self._normalize_drafts_payload(payload)
+            log_event(
+                logger,
+                logging.INFO,
+                "draft_generation_payload_received",
+                request_id=request_id,
+                provider=self.provider_name,
+                attempt=round_index,
+                payload_type=type(payload).__name__,
+            )
+            try:
+                generated = DraftsOutput.parse_obj(normalized_payload).drafts
+            except ValidationError as exc:
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "draft_generation_schema_failed",
+                    request_id=request_id,
+                    provider=self.provider_name,
+                    round_index=round_index,
+                    error=str(exc),
+                    payload_snippet=redact_for_log(normalized_payload, self.settings.log_max_body_chars),
+                )
+                raise LLMError(f"Draft schema validation failed: {exc}") from exc
+
+            to_evaluate: list[tuple[str, DraftItem]] = []
+            for item in generated:
+                text = clean_text(item.text)
+                if not text or len(text) > 280:
+                    if text:
+                        rejected_texts.append(text)
+                    continue
+                normalized = text.lower()
+                if normalized in seen_texts:
+                    rejected_texts.append(text)
+                    continue
+                seen_texts.add(normalized)
+                to_evaluate.append((text, item))
+
+            round_candidates: list[dict[str, Any]] = []
+            rule_results: list[dict[str, Any]] = []
+            for text, _ in to_evaluate:
+                rule_eval = self._rule_score_draft(
                     persona=persona,
                     prompt=prompt,
-                    representative_tweets=representative_tweets,
+                    candidate_text=text,
                     source_texts=source_texts,
                     matched_theme_tweets=matched_theme_tweets,
                     theme_keywords=theme_keywords,
                     theme_top_keywords=theme_top_keywords,
-                    seen_texts=seen_texts,
-                    seen_texts_lock=seen_texts_lock,
-                    request_id=request_id,
-                    thread_index=i,
-                    candidates_per_round=candidates_per_round,
-                ): i
-                for i in range(draft_count)
-            }
-            thread_results: list[dict[str, Any]] = []
-            for future in concurrent.futures.as_completed(futures):
-                thread_results.append(future.result())
+                )
+                rule_results.append(rule_eval)
 
-        all_candidates: list[dict[str, Any]] = []
-        attempts: list[dict[str, Any]] = []
-        for result in sorted(thread_results, key=lambda r: r["thread_index"]):
-            all_candidates.extend(result["all_candidates"])
-            attempts.extend(result["rounds"])
+            llm_eligible_indices = [
+                i for i, rule_eval in enumerate(rule_results)
+                if rule_eval["passed"] and not rule_eval["hard_fail"]
+            ]
+
+            llm_batch_results: list[dict[str, Any]] = []
+            if llm_eligible_indices:
+                eligible_texts = [to_evaluate[i][0] for i in llm_eligible_indices]
+                try:
+                    llm_batch_results = self.score_drafts_batch(
+                        persona=persona,
+                        prompt=prompt,
+                        candidate_texts=eligible_texts,
+                        matched_theme_tweets=matched_theme_tweets,
+                        theme_keywords=theme_keywords,
+                        theme_top_keywords=theme_top_keywords,
+                        request_id=request_id,
+                    )
+                except LLMTransportError as exc:
+                    llm_batch_results = [
+                        {
+                            "score": round(rule_results[i]["score"], 1),
+                            "verdict": "provider_timeout_fallback",
+                            "strengths": [],
+                            "issues": [f"LLM scoring skipped after transient failure: {exc.category}"],
+                            "must_fix": [],
+                        }
+                        for i in llm_eligible_indices
+                    ]
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "draft_batch_score_fallback",
+                        request_id=request_id,
+                        provider=self.provider_name,
+                        error_category=exc.category,
+                        eligible_count=len(llm_eligible_indices),
+                    )
+
+            llm_result_map: dict[int, dict[str, Any]] = {}
+            for batch_idx, orig_idx in enumerate(llm_eligible_indices):
+                if batch_idx < len(llm_batch_results):
+                    llm_result_map[orig_idx] = llm_batch_results[batch_idx]
+
+            for i, (text, eval_item) in enumerate(to_evaluate):
+                rule_eval = rule_results[i]
+                llm_eval = llm_result_map.get(i, {
+                    "score": round(rule_eval["score"], 1),
+                    "verdict": "Skipped due to rule score gate",
+                    "strengths": [],
+                    "issues": [],
+                    "must_fix": rule_eval["issues"][:4],
+                })
+                final_score = self._compute_final_score(rule_eval["score"], llm_eval["score"])
+                failure_reasons = []
+                if final_score < TARGET_DRAFT_SCORE:
+                    failure_reasons = _dedupe_preserve_order(
+                        rule_eval["issues"] + llm_eval["issues"] + llm_eval.get("must_fix", [])
+                    )
+                evaluation = {
+                    "rule_score": round(rule_eval["score"], 1),
+                    "llm_score": round(llm_eval["score"], 1),
+                    "final_score": final_score,
+                    "passed": final_score >= TARGET_DRAFT_SCORE,
+                    "rule_issues": rule_eval["issues"],
+                    "rule_strengths": rule_eval["strengths"],
+                    "llm_verdict": llm_eval["verdict"],
+                    "llm_issues": llm_eval.get("issues", []),
+                    "llm_strengths": llm_eval.get("strengths", []),
+                    "must_fix": llm_eval.get("must_fix", []) or rule_eval["issues"][:4],
+                    "failure_reasons": failure_reasons,
+                }
+                candidate = {
+                    "text": text,
+                    "tone_tags": eval_item.tone_tags[:4],
+                    "rationale": clean_text(eval_item.rationale),
+                    "evaluation": evaluation,
+                }
+                round_candidates.append(candidate)
+                all_candidates.append(candidate)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "draft_candidate_scored",
+                    request_id=request_id,
+                    provider=self.provider_name,
+                    attempt=round_index,
+                    final_score=evaluation["final_score"],
+                    rule_score=evaluation["rule_score"],
+                    llm_score=evaluation["llm_score"],
+                    passed=evaluation["passed"],
+                    failure_reasons=evaluation["failure_reasons"][:3],
+                    text_snippet=redact_for_log(text, 160),
+                )
+
+            round_candidate_results = [self._candidate_result(**c) for c in round_candidates]
+            best_round_score = max(
+                (float(c.get("final_score", 0.0)) for c in round_candidate_results),
+                default=0.0,
+            )
+            target_met = any(c["passed"] for c in round_candidate_results)
+            attempt_feedback = self._build_attempt_feedback(round_candidate_results)
+            attempts.append(
+                {
+                    "attempt": round_index,
+                    "best_score": best_round_score,
+                    "target_score_met": target_met,
+                    "candidates": round_candidate_results,
+                    "issues": attempt_feedback,
+                }
+            )
+            for c in round_candidates:
+                if c["evaluation"]["final_score"] < TARGET_DRAFT_SCORE:
+                    rejected_texts.append(c["text"])
+
+            log_event(
+                logger,
+                logging.INFO,
+                "draft_generation_attempt_completed",
+                request_id=request_id,
+                provider=self.provider_name,
+                attempt=round_index,
+                best_score=best_round_score,
+                target_score_met=target_met,
+                candidate_count=len(round_candidates),
+                feedback=attempt_feedback,
+            )
+
+            passed_count = sum(
+                1 for c in all_candidates if c["evaluation"]["final_score"] >= TARGET_DRAFT_SCORE
+            )
+            if passed_count >= draft_count:
+                break
 
         ranked_candidates = sorted(
             all_candidates,
@@ -469,187 +673,6 @@ class LLMClient:
             },
         }
 
-    def _generate_single_draft_with_retries(
-        self,
-        *,
-        persona: dict[str, Any],
-        prompt: str,
-        representative_tweets: list[dict[str, Any]],
-        source_texts: list[str],
-        matched_theme_tweets: list[dict[str, Any]],
-        theme_keywords: list[str],
-        theme_top_keywords: list[str],
-        seen_texts: set[str],
-        seen_texts_lock: threading.Lock,
-        request_id: str | None,
-        thread_index: int,
-        candidates_per_round: int = 3,
-    ) -> dict[str, Any]:
-        max_rounds = self.settings.max_generation_attempts
-        all_candidates: list[dict[str, Any]] = []
-        rejected_texts: list[str] = []
-        attempt_feedback: list[str] = []
-        rounds: list[dict[str, Any]] = []
-
-        for round_index in range(1, max_rounds + 1):
-            log_event(
-                logger,
-                logging.INFO,
-                "draft_thread_round_started",
-                request_id=request_id,
-                provider=self.provider_name,
-                thread_index=thread_index,
-                round_index=round_index,
-                max_rounds=max_rounds,
-            )
-
-            request_payload = self._build_draft_request_payload(
-                persona=persona,
-                prompt=prompt,
-                representative_tweets=representative_tweets,
-                matched_theme_tweets=matched_theme_tweets,
-                theme_keywords=theme_keywords,
-                theme_top_keywords=theme_top_keywords,
-                rejected_texts=rejected_texts,
-                attempt_feedback=attempt_feedback,
-                draft_count=candidates_per_round,
-            )
-            payload = self._chat_completion_json(
-                system_prompt=(
-                    "You write original X posts that sound like the provided persona. "
-                    "The goal is inspired-by writing, not copying. "
-                    "Treat the persona's generation_guardrails as hard style guidance. "
-                    "Prioritize the theme-matched historical tweets over generic persona habits. "
-                    "Prefer concrete, timeline-native phrasing over polished summary language. "
-                    "Return strict JSON with a top-level 'drafts' array. "
-                    "Each draft object must have keys: text, tone_tags, rationale."
-                ),
-                user_prompt=json.dumps(request_payload, ensure_ascii=True),
-                temperature=0.9,
-                request_id=request_id,
-                purpose="draft_generation",
-            )
-
-            normalized_payload = self._normalize_drafts_payload(payload)
-            try:
-                generated = DraftsOutput.parse_obj(normalized_payload).drafts
-            except ValidationError as exc:
-                log_event(
-                    logger,
-                    logging.ERROR,
-                    "draft_generation_schema_failed",
-                    request_id=request_id,
-                    provider=self.provider_name,
-                    thread_index=thread_index,
-                    round_index=round_index,
-                    error=str(exc),
-                    payload_snippet=redact_for_log(normalized_payload, self.settings.log_max_body_chars),
-                )
-                raise LLMError(f"Draft schema validation failed: {exc}") from exc
-
-            round_candidates: list[dict[str, Any]] = []
-            to_evaluate: list[tuple[str, DraftItem]] = []
-            for item in generated:
-                text = clean_text(item.text)
-                if not text or len(text) > 280:
-                    if text:
-                        rejected_texts.append(text)
-                    continue
-                normalized = text.lower()
-                with seen_texts_lock:
-                    if normalized in seen_texts:
-                        rejected_texts.append(text)
-                        continue
-                    seen_texts.add(normalized)
-                to_evaluate.append((text, item))
-
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(self.settings.evaluation_max_workers, len(to_evaluate) or 1),
-            ) as eval_executor:
-                future_to_item = {
-                    eval_executor.submit(
-                        self._evaluate_candidate,
-                        persona=persona,
-                        prompt=prompt,
-                        candidate_text=text,
-                        source_texts=source_texts,
-                        matched_theme_tweets=matched_theme_tweets,
-                        theme_keywords=theme_keywords,
-                        theme_top_keywords=theme_top_keywords,
-                        request_id=request_id,
-                    ): (text, eval_item)
-                    for text, eval_item in to_evaluate
-                }
-                for future in concurrent.futures.as_completed(future_to_item):
-                    text, eval_item = future_to_item[future]
-                    evaluation = future.result()
-                    candidate = {
-                        "text": text,
-                        "tone_tags": eval_item.tone_tags[:4],
-                        "rationale": clean_text(eval_item.rationale),
-                        "evaluation": evaluation,
-                    }
-                    round_candidates.append(candidate)
-                    all_candidates.append(candidate)
-                    log_event(
-                        logger,
-                        logging.INFO,
-                        "draft_candidate_scored",
-                        request_id=request_id,
-                        provider=self.provider_name,
-                        thread_index=thread_index,
-                        round_index=round_index,
-                        final_score=evaluation["final_score"],
-                        rule_score=evaluation["rule_score"],
-                        llm_score=evaluation["llm_score"],
-                        passed=evaluation["final_score"] >= TARGET_DRAFT_SCORE,
-                        failure_reasons=evaluation["failure_reasons"][:3],
-                        text_snippet=redact_for_log(text, 160),
-                    )
-
-            round_candidate_results = [self._candidate_result(**c) for c in round_candidates]
-            best_round_score = max(
-                (float(c.get("final_score", 0.0)) for c in round_candidate_results),
-                default=0.0,
-            )
-            target_met = any(c["passed"] for c in round_candidate_results)
-            attempt_feedback = self._build_attempt_feedback(round_candidate_results)
-            rounds.append(
-                {
-                    "attempt": round_index,
-                    "thread_index": thread_index,
-                    "best_score": best_round_score,
-                    "target_score_met": target_met,
-                    "candidates": round_candidate_results,
-                    "issues": attempt_feedback,
-                }
-            )
-            for c in round_candidates:
-                if c["evaluation"]["final_score"] < TARGET_DRAFT_SCORE:
-                    rejected_texts.append(c["text"])
-
-            log_event(
-                logger,
-                logging.INFO,
-                "draft_thread_round_completed",
-                request_id=request_id,
-                provider=self.provider_name,
-                thread_index=thread_index,
-                round_index=round_index,
-                best_score=best_round_score,
-                target_score_met=target_met,
-                candidate_count=len(round_candidates),
-            )
-
-            if target_met:
-                break
-
-        return {
-            "thread_index": thread_index,
-            "all_candidates": all_candidates,
-            "rounds": rounds,
-        }
-
     def score_draft(
         self,
         *,
@@ -705,6 +728,97 @@ class LLMClient:
             "issues": _as_string_list(payload.get("issues")),
             "must_fix": _as_string_list(payload.get("must_fix")),
         }
+
+    def score_drafts_batch(
+        self,
+        *,
+        persona: dict[str, Any],
+        prompt: str,
+        candidate_texts: list[str],
+        matched_theme_tweets: list[dict[str, Any]],
+        theme_keywords: list[str],
+        theme_top_keywords: list[str],
+        request_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if not candidate_texts:
+            return []
+        candidates_input = [
+            {"index": i, "text": text}
+            for i, text in enumerate(candidate_texts)
+        ]
+        payload = self._chat_completion_json(
+            system_prompt=(
+                "You are a strict evaluator for whether generated X posts sound like the same author "
+                "for the specific topic at hand. Score each candidate's style fit from 0 to 10. "
+                "Return strict JSON with key 'scores': an array of objects, one per candidate, "
+                "each with keys: index, score, verdict, strengths, issues, must_fix."
+            ),
+            user_prompt=json.dumps(
+                {
+                    "persona": {
+                        "author_summary": persona.get("author_summary", ""),
+                        "voice_traits": persona.get("voice_traits", []),
+                        "do_not_sound_like": persona.get("do_not_sound_like", []),
+                        "generation_guardrails": persona.get("generation_guardrails", {}),
+                    },
+                    "prompt": prompt,
+                    "candidates": candidates_input,
+                    "theme_keywords": theme_keywords,
+                    "theme_top_keywords": theme_top_keywords,
+                    "matched_theme_tweets": matched_theme_tweets[:8],
+                    "instructions": [
+                        "Score whether each post sounds like the same author on this topic, not whether it is generally well-written.",
+                        "Penalize generic summary language, topic drift, unnatural words, and phrases that do not fit the matched historical tweets.",
+                        "Do not reward polished completeness if the author's style is naturally compressed.",
+                        "Return one score object per candidate in the same order.",
+                    ],
+                },
+                ensure_ascii=True,
+            ),
+            temperature=0.2,
+            request_id=request_id,
+            purpose="score_batch",
+            timeout_seconds=float(self.settings.llm_score_timeout_seconds) + len(candidate_texts) * 3,
+        )
+        scores_raw = payload.get("scores") if isinstance(payload, dict) else None
+        if not isinstance(scores_raw, list):
+            if isinstance(payload, list):
+                scores_raw = payload
+            else:
+                scores_raw = []
+
+        results: list[dict[str, Any]] = [
+            {"score": 0.0, "verdict": "missing", "strengths": [], "issues": [], "must_fix": []}
+            for _ in candidate_texts
+        ]
+        for item in scores_raw:
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("index")
+            if idx is None:
+                continue
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= idx < len(candidate_texts):
+                score_val = item.get("score", 0)
+                try:
+                    score_val = max(0.0, min(10.0, round(float(score_val), 1)))
+                except (TypeError, ValueError):
+                    score_val = 0.0
+                results[idx] = {
+                    "score": score_val,
+                    "verdict": clean_text(str(item.get("verdict") or "")),
+                    "strengths": _as_string_list(item.get("strengths")),
+                    "issues": _as_string_list(item.get("issues")),
+                    "must_fix": _as_string_list(item.get("must_fix")),
+                }
+        return results
+
+    @staticmethod
+    def _compute_final_score(rule_score: float, llm_score: float) -> float:
+        return round(rule_score * 0.4 + llm_score * 0.6, 1)
 
     def _evaluate_candidate(
         self,
@@ -763,7 +877,7 @@ class LLMClient:
                     error_category=exc.category,
                     text_snippet=redact_for_log(candidate_text, 160),
                 )
-        final_score = round(min(rule_evaluation["score"], llm_evaluation["score"]), 1)
+        final_score = self._compute_final_score(rule_evaluation["score"], llm_evaluation["score"])
         failure_reasons = []
         if final_score < TARGET_DRAFT_SCORE:
             failure_reasons = _dedupe_preserve_order(

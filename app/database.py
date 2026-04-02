@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS draft_requests (
     created_at TEXT NOT NULL,
     FOREIGN KEY(persona_snapshot_id) REFERENCES persona_snapshots(id)
 );
+
+CREATE TABLE IF NOT EXISTS allowed_usernames (
+    username TEXT PRIMARY KEY
+);
 """
 
 
@@ -248,11 +252,55 @@ class Database:
             connection.commit()
             return int(cursor.lastrowid)
 
-    def get_user_by_username(self, username: str) -> Optional[dict[str, Any]]:
+    def list_allowed_usernames(self) -> list[str]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT username
+                FROM allowed_usernames
+                ORDER BY username ASC
+                """
+            ).fetchall()
+        return [str(row["username"]) for row in rows]
+
+    def add_allowed_username(self, username: str) -> str:
+        normalized_username = normalize_username(username)
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO allowed_usernames (username)
+                VALUES (?)
+                """,
+                (normalized_username,),
+            )
+            connection.commit()
+        return normalized_username
+
+    def remove_allowed_username(self, username: str) -> str:
+        normalized_username = normalize_username(username)
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM allowed_usernames WHERE username = ?",
+                (normalized_username,),
+            )
+            connection.commit()
+        return normalized_username
+
+    def is_username_allowed(self, username: str) -> bool:
+        normalized_username = normalize_username(username)
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM users WHERE username = ?",
-                (username,),
+                "SELECT 1 FROM allowed_usernames WHERE username = ? LIMIT 1",
+                (normalized_username,),
+            ).fetchone()
+        return row is not None
+
+    def get_user_by_username(self, username: str) -> Optional[dict[str, Any]]:
+        normalized_username = normalize_username(username)
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE lower(username) = ?",
+                (normalized_username,),
             ).fetchone()
         if row is None:
             return None
@@ -270,19 +318,24 @@ class Database:
         return [_row_to_tweet(row) for row in rows]
 
     def get_latest_persona_snapshot(self, username: str) -> Optional[dict[str, Any]]:
+        normalized_username = normalize_username(username)
         with self.connect() as connection:
             row = connection.execute(
                 """
                 SELECT * FROM persona_snapshots
-                WHERE username = ?
+                WHERE lower(username) = ?
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
-                (username,),
+                (normalized_username,),
             ).fetchone()
         if row is None:
             return None
         return _row_to_persona_snapshot(row)
+
+
+def normalize_username(username: str) -> str:
+    return str(username or "").strip().lower()
 
 
 def _tweet_flags(tweet: dict[str, Any]) -> dict[str, bool]:

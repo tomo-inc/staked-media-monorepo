@@ -69,11 +69,44 @@ class LoggingTestCase(unittest.TestCase):
 
             self.assertEqual(handler_ids_after, handler_ids)
 
+            for logger_name in ("uvicorn.error", "uvicorn.access", "uvicorn.asgi", "fastapi"):
+                logger = logging.getLogger(logger_name)
+                self.assertEqual([id(handler) for handler in logger.handlers], handler_ids)
+                self.assertEqual(logger.level, parent_logger.level)
+                self.assertFalse(logger.propagate)
+
     def test_format_log_event_drops_none_fields(self) -> None:
         payload = format_log_event("test_event", present="ok", missing=None)
         self.assertIn('"event":"test_event"', payload)
         self.assertIn('"present":"ok"', payload)
         self.assertNotIn("missing", payload)
+
+    def test_uvicorn_and_fastapi_logs_use_shared_timestamped_handlers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "app.log"
+            settings = Settings(
+                openai_api_key="test-key",
+                log_file_path=str(log_path),
+                log_enable_file=True,
+                log_level="INFO",
+            )
+
+            configure_logging(settings)
+            logging.getLogger("uvicorn.error").info("uvicorn error entry")
+            logging.getLogger("uvicorn.access").info('127.0.0.1 - "GET /healthz HTTP/1.1" 200')
+            logging.getLogger("fastapi").warning("fastapi warning entry")
+            for handler in logging.getLogger("app").handlers:
+                handler.flush()
+
+            contents = log_path.read_text(encoding="utf-8")
+            self.assertRegex(contents, r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} INFO uvicorn\.error uvicorn error entry")
+            self.assertRegex(
+                contents,
+                r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} INFO uvicorn\.access 127\.0\.0\.1 - "GET /healthz HTTP/1\.1" 200',
+            )
+            self.assertRegex(contents, r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} WARNING fastapi fastapi warning entry")
+            self.assertEqual(contents.count("uvicorn error entry"), 1)
+            self.assertEqual(contents.count("fastapi warning entry"), 1)
 
     @patch("app.llm.base_client.requests.post")
     def test_invalid_json_logs_redacted_snippet_without_api_key(self, mock_post) -> None:

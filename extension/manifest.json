@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Staked Media Copilot",
+  "description": "MVP browser extension for generating X/Twitter drafts through the existing Python backend.",
+  "version": "0.1.0",
+  "permissions": [
+    "storage",
+    "tabs",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http: https:"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Staked Media Copilot"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": [
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
