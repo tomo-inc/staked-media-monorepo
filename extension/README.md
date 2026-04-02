@@ -24,6 +24,7 @@ python -m app.run -c config.json --reload
 5. Select the `extension/` directory from this repository
 6. Open `https://x.com`, click the extension icon, and use the default host mode
 7. In extension Settings, choose `Switch to Side Panel` or `Switch to Popup` to persist how the toolbar icon opens the UI
+8. The shipped default backend URL is `https://api.sayviner.top:8443`; change it in Settings if you want to use a local API instead
 
 ## Tests
 

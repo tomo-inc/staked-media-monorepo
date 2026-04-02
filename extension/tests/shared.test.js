@@ -27,6 +27,10 @@ test("routeMessage rejects unsupported handlers", async () => {
   );
 });
 
+test("default config uses the hosted backend URL", () => {
+  assert.equal(DEFAULT_CONFIG.backendBaseUrl, "https://api.sayviner.top:8443");
+});
+
 test("sanitizeConfig normalizes and trims persisted settings", () => {
   const config = sanitizeConfig({
     defaultUsername: "  satoshi  ",

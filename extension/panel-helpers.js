@@ -168,7 +168,7 @@
               <section class="smc-section">
                 <label class="smc-label">
                   API Base URL
-                  <input class="smc-input" data-field="s-backendBaseUrl" type="text" placeholder="http://127.0.0.1:8000">
+                  <input class="smc-input" data-field="s-backendBaseUrl" type="text" placeholder="https://api.sayviner.top:8443">
                 </label>
                 <div class="smc-settings-helper">Press Enter or click outside to save the URL.</div>
 
