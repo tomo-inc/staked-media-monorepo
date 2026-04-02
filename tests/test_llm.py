@@ -740,6 +740,59 @@ class LlmProviderTestCase(unittest.TestCase):
         )
 
     @patch("app.llm.base_client.requests.post")
+    def test_openai_recovers_plaintext_numbered_drafts(self, mock_post) -> None:
+        mock_post.return_value = FakeResponse(
+            json_body={
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                "1. 天气不是背景板，它已经在接管情绪。\n\n"
+                                "2. 当季节秩序开始漂移，日常就会变成风险管理。"
+                            )
+                        }
+                    }
+                ]
+            }
+        )
+        client = OpenAIClient(Settings(openai_api_key="openai-key"))
+
+        payload = client._chat_completion_json(
+            system_prompt="Return JSON",
+            user_prompt='{"prompt":"写天气主题推文"}',
+            temperature=0.8,
+            purpose="draft_generation",
+        )
+
+        self.assertIn("drafts", payload)
+        self.assertEqual(len(payload["drafts"]), 2)
+        self.assertEqual(payload["drafts"][0]["tone_tags"], [])
+        self.assertIn("天气不是背景板", payload["drafts"][0]["text"])
+
+    @patch("app.llm.base_client.requests.post")
+    def test_openai_plaintext_response_still_fails_for_non_draft_purpose(self, mock_post) -> None:
+        mock_post.return_value = FakeResponse(
+            json_body={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "这不是 JSON，只是普通文本。"
+                        }
+                    }
+                ]
+            }
+        )
+        client = OpenAIClient(Settings(openai_api_key="openai-key"))
+
+        with self.assertRaisesRegex(LLMError, "OpenAI returned invalid JSON"):
+            client._chat_completion_json(
+                system_prompt="Return JSON",
+                user_prompt='{"candidate_text":"hello"}',
+                temperature=0.1,
+                purpose="score",
+            )
+
+    @patch("app.llm.base_client.requests.post")
     def test_openai_http_error_raises_llmerror(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(status_code=400, text="bad request")
         client = OpenAIClient(Settings(openai_api_key="openai-key"))

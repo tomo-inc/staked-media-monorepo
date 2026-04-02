@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from app.config import Settings
@@ -77,9 +78,84 @@ class OpenAIClient(LLMClient):
             )
             raise LLMError("OpenAI response content was empty")
 
-        return _parse_json_response(
-            content_text,
-            provider_name="OpenAI",
-            request_id=request_id,
-            max_body_chars=self.settings.log_max_body_chars,
+        try:
+            return _parse_json_response(
+                content_text,
+                provider_name="OpenAI",
+                request_id=request_id,
+                max_body_chars=self.settings.log_max_body_chars,
+            )
+        except LLMError:
+            recovered_payload = None
+            if purpose == "draft_generation":
+                recovered_payload = self._recover_plaintext_drafts(content_text)
+            if not recovered_payload:
+                raise
+            log_event(
+                logger,
+                logging.WARNING,
+                "llm_provider_plaintext_drafts_recovered",
+                request_id=request_id,
+                provider=self.provider_name,
+                recovered_count=len(recovered_payload.get("drafts", [])),
+            )
+            return recovered_payload
+
+    @staticmethod
+    def _recover_plaintext_drafts(content_text: str) -> dict[str, Any] | None:
+        numbered_pattern = re.compile(
+            r"(?:^|\n)\s*\d{1,2}[\.、\)]\s*(.*?)(?=(?:\n\s*\d{1,2}[\.、\)])|\Z)",
+            flags=re.DOTALL,
         )
+        bullet_pattern = re.compile(r"(?:^|\n)\s*[-*•]\s*(.+)")
+
+        candidates: list[str] = []
+
+        numbered_matches = numbered_pattern.findall(content_text)
+        for chunk in numbered_matches:
+            normalized = OpenAIClient._normalize_plaintext_candidate(chunk)
+            if normalized:
+                candidates.append(normalized)
+
+        if not candidates:
+            bullet_matches = bullet_pattern.findall(content_text)
+            for chunk in bullet_matches:
+                normalized = OpenAIClient._normalize_plaintext_candidate(chunk)
+                if normalized:
+                    candidates.append(normalized)
+
+        if not candidates:
+            paragraph_chunks = [part for part in re.split(r"\n\s*\n+", content_text) if part.strip()]
+            for chunk in paragraph_chunks:
+                normalized = OpenAIClient._normalize_plaintext_candidate(chunk)
+                if normalized:
+                    candidates.append(normalized)
+
+        if not candidates:
+            return None
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            lowered = candidate.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            deduped.append(candidate)
+
+        drafts = [
+            {
+                "text": text,
+                "tone_tags": [],
+                "rationale": "Recovered from non-JSON OpenAI output",
+            }
+            for text in deduped
+        ]
+        return {"drafts": drafts} if drafts else None
+
+    @staticmethod
+    def _normalize_plaintext_candidate(text: str) -> str:
+        compact = "\n".join(line.strip() for line in text.splitlines()).strip()
+        compact = re.sub(r"\s+", " ", compact)
+        compact = compact.strip("`\"' ")
+        return compact
