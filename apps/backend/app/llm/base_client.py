@@ -291,7 +291,7 @@ class LLMClient:
                 "topic_clusters, writing_patterns, lexical_markers, do_not_sound_like, cta_style, "
                 "generation_guardrails, risk_notes, language_profile, domain_expertise, "
                 "emotional_baseline, audience_profile, interaction_style, posting_cadence, "
-                "media_habits, banned_phrases."
+                "media_habits, geo_context, stance_patterns, banned_phrases."
             ),
             user_prompt=json.dumps(request_payload, ensure_ascii=True),
             temperature=0.4,
@@ -417,7 +417,7 @@ class LLMClient:
                     "The goal is inspired-by writing, not copying. "
                     "Treat the persona's generation_guardrails as hard style guidance. "
                     "Use the full style_brief, including emotional_baseline, audience_profile, "
-                    "interaction_style, posting_cadence, and media_habits. "
+                    "interaction_style, posting_cadence, media_habits, geo_context, and stance_patterns. "
                     "Prioritize the theme-matched historical tweets over generic persona habits. "
                     "Prefer concrete, timeline-native phrasing over polished summary language. "
                     "Return strict JSON with a top-level 'drafts' array. "
@@ -739,6 +739,8 @@ class LLMClient:
                         "interaction_style": persona.get("interaction_style", {}),
                         "posting_cadence": persona.get("posting_cadence", {}),
                         "media_habits": persona.get("media_habits", {}),
+                        "geo_context": persona.get("geo_context", {}),
+                        "stance_patterns": persona.get("stance_patterns", {}),
                     },
                     "prompt": prompt,
                     "candidate_text": candidate_text,
@@ -756,6 +758,10 @@ class LLMClient:
                         "Check whether the amount of polish and assumed context fit audience_profile.",
                         "Check whether the tone feels consistent with interaction_style for the likely post type.",
                         "Check whether the draft matches the persona's posting cadence and media habit defaults.",
+                        "Check whether the draft invents unsupported local context or event proximity inconsistent "
+                        "with geo_context.",
+                        "Check whether hot-take intensity, controversy posture, and endorsement style fit "
+                        "stance_patterns.",
                     ],
                 },
                 ensure_ascii=True,
@@ -813,6 +819,8 @@ class LLMClient:
                         "interaction_style": persona.get("interaction_style", {}),
                         "posting_cadence": persona.get("posting_cadence", {}),
                         "media_habits": persona.get("media_habits", {}),
+                        "geo_context": persona.get("geo_context", {}),
+                        "stance_patterns": persona.get("stance_patterns", {}),
                     },
                     "prompt": prompt,
                     "candidates": candidates_input,
@@ -830,6 +838,10 @@ class LLMClient:
                         "Check whether the amount of polish and assumed context fit audience_profile.",
                         "Check whether the tone feels consistent with interaction_style for the likely post type.",
                         "Check whether each draft matches the persona's posting cadence and media habit defaults.",
+                        "Check whether the draft invents unsupported local context or event proximity inconsistent "
+                        "with geo_context.",
+                        "Check whether hot-take intensity, controversy posture, and endorsement style fit "
+                        "stance_patterns.",
                         "Return one score object per candidate in the same order.",
                     ],
                 },
@@ -1159,6 +1171,8 @@ class LLMClient:
         normalized["interaction_style"] = self._normalize_interaction_style(normalized.get("interaction_style"))
         normalized["posting_cadence"] = self._normalize_posting_cadence(normalized.get("posting_cadence"))
         normalized["media_habits"] = self._normalize_media_habits(normalized.get("media_habits"))
+        normalized["geo_context"] = self._normalize_geo_context(normalized.get("geo_context"))
+        normalized["stance_patterns"] = self._normalize_stance_patterns(normalized.get("stance_patterns"))
         normalized["banned_phrases"] = _as_string_list(normalized.get("banned_phrases"))
 
         cta_style = normalized.get("cta_style")
@@ -1391,6 +1405,38 @@ class LLMClient:
             "notes": clean_text(str(raw.get("notes") or "")),
         }
 
+    def _normalize_geo_context(self, value: Any) -> dict[str, Any]:
+        raw = value if isinstance(value, dict) else {}
+        return {
+            "declared_location": clean_text(
+                str(raw.get("declared_location") or raw.get("location") or raw.get("declared") or "")
+            ),
+            "region_hint": clean_text(str(raw.get("region_hint") or raw.get("region") or "unknown")).lower()
+            or "unknown",
+            "timezone_hint": (
+                clean_text(str(raw.get("timezone_hint") or raw.get("timezone") or raw.get("tz") or "unknown"))
+                or "unknown"
+            ),
+            "confidence": clean_text(str(raw.get("confidence") or "low")).lower() or "low",
+            "notes": clean_text(str(raw.get("notes") or raw.get("rationale") or "")),
+        }
+
+    def _normalize_stance_patterns(self, value: Any) -> dict[str, Any]:
+        raw = value if isinstance(value, dict) else {}
+        return {
+            "hot_take_style": clean_text(str(raw.get("hot_take_style") or raw.get("hot_take") or "mixed")).lower()
+            or "mixed",
+            "controversy_posture": clean_text(
+                str(raw.get("controversy_posture") or raw.get("controversy") or "mixed")
+            ).lower()
+            or "mixed",
+            "endorsement_style": clean_text(
+                str(raw.get("endorsement_style") or raw.get("endorsement") or "selective")
+            ).lower()
+            or "selective",
+            "notes": clean_text(str(raw.get("notes") or raw.get("rationale") or "")),
+        }
+
     def _coerce_sentence_length(self, value: Any) -> str | None:
         if isinstance(value, str):
             normalized = clean_text(value).lower()
@@ -1540,6 +1586,11 @@ class LLMClient:
                 "whether this author is bursty, steady, or sporadic, and infer preferred_post_length.",
                 "media_habits should capture text_only_ratio, link_ratio, media_attachment_ratio, dominant_format, "
                 "and notes. Use only tweet evidence; do not invent off-platform habits.",
+                "geo_context should infer only coarse location or timezone hints from profile.location and UTC "
+                "posting windows. Keep confidence conservative and do not invent exact residence, travel, or "
+                "event attendance.",
+                "stance_patterns should summarize the author's usual hot-take style, controversy posture, and "
+                "endorsement style based on observable posts. Do not invent unsupported beliefs or affiliations.",
                 "banned_phrases should list internet cliches or phrases this author would not naturally use.",
                 "risk_notes should mention limits of inference and sensitive content caution.",
             ],
@@ -1566,6 +1617,8 @@ class LLMClient:
         interaction_style = self._normalize_interaction_style(persona.get("interaction_style"))
         posting_cadence = self._normalize_posting_cadence(persona.get("posting_cadence"))
         media_habits = self._normalize_media_habits(persona.get("media_habits"))
+        geo_context = self._normalize_geo_context(persona.get("geo_context"))
+        stance_patterns = self._normalize_stance_patterns(persona.get("stance_patterns"))
 
         language_mode = prompt_language_mode(prompt)
         full_chinese_mode = language_mode == "full_chinese"
@@ -1597,6 +1650,11 @@ class LLMClient:
             "or media-friendly endings are allowed when they fit the persona.",
             "Match the language requested by the user prompt. If the persona is bilingual, "
             "code-switch only when it feels native rather than decorative.",
+            "Use geo_context only as soft localization texture when it is relevant to the topic.",
+            "Do not invent precise local presence, local time, or event attendance beyond what geo_context supports.",
+            "Keep the draft's hot-take, controversy, and endorsement posture aligned with stance_patterns. "
+            "If the user prompt asks for a stronger stance, follow the prompt while staying as close as possible "
+            "to the persona's normal posture.",
         ]
         if full_chinese_mode:
             drafting_rules.append(
@@ -1652,6 +1710,8 @@ class LLMClient:
                 "interaction_style": interaction_style,
                 "posting_cadence": posting_cadence,
                 "media_habits": media_habits,
+                "geo_context": geo_context,
+                "stance_patterns": stance_patterns,
                 "generation_guardrails": guardrails,
             },
             "user_prompt": prompt_for_generation,

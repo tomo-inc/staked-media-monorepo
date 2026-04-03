@@ -80,6 +80,11 @@ class PersonaHelpersTestCase(unittest.TestCase):
         self.assertEqual(stats["engagement_patterns"]["avg_engagement_reply"], 7)
         self.assertEqual(stats["temporal_patterns"]["avg_daily_tweets"], 1.0)
         self.assertEqual(stats["temporal_patterns"]["most_active_hours"], [0])
+        self.assertEqual(stats["geo_signals"]["declared_location"], "")
+        self.assertEqual(stats["geo_signals"]["most_active_hours_utc"], [0])
+        self.assertEqual(stats["geo_signals"]["active_windows_utc"], [0])
+        self.assertEqual(stats["geo_signals"]["inferred_utc_offset"], "unknown")
+        self.assertIn("coarse region or timezone hints", stats["geo_signals"]["source_note"])
         self.assertEqual(stats["cadence_stats"]["avg_daily_tweets"], 1.0)
         self.assertEqual(stats["cadence_stats"]["posting_style_hint"], "steady")
         self.assertEqual(stats["cadence_stats"]["preferred_post_length_hint"], "short")
@@ -93,7 +98,7 @@ class PersonaHelpersTestCase(unittest.TestCase):
             "name": "Tester",
             "username": "tester",
             "description": "Builder",
-            "location": "",
+            "location": "Singapore",
             "public_metrics": {"followers_count": 50},
         }
         tweet_rows = [
@@ -186,12 +191,57 @@ class PersonaHelpersTestCase(unittest.TestCase):
         stats = build_corpus_stats(profile, tweet_rows, sample_size=4)
 
         self.assertEqual(stats["cadence_stats"]["avg_daily_tweets"], 6.0)
+        self.assertEqual(stats["geo_signals"]["declared_location"], "Singapore")
+        self.assertEqual(stats["geo_signals"]["active_windows_utc"], [9, 10])
+        self.assertEqual(stats["geo_signals"]["inferred_utc_offset"], "UTC+8")
         self.assertEqual(stats["cadence_stats"]["posting_style_hint"], "burst-poster")
         self.assertEqual(stats["cadence_stats"]["preferred_post_length_hint"], "short")
         self.assertEqual(stats["media_stats"]["text_only_ratio"], 0.0)
         self.assertEqual(stats["media_stats"]["link_ratio"], 0.0)
         self.assertEqual(stats["media_stats"]["media_attachment_ratio"], 1.0)
         self.assertEqual(stats["media_stats"]["dominant_format_hint"], "media-led")
+
+    def test_build_corpus_stats_keeps_ambiguous_location_timezone_unknown(self) -> None:
+        profile = {
+            "name": "Tester",
+            "username": "tester",
+            "description": "Builder",
+            "location": "Phuket",
+            "public_metrics": {"followers_count": 50},
+        }
+        tweet_rows = [
+            {
+                "id": "1",
+                "text": "Quick market note",
+                "created_at": "2026-03-01T09:00:00Z",
+                "lang": "en",
+                "is_retweet": False,
+                "is_reply": False,
+                "is_quote": False,
+                "like_count": 1,
+                "retweet_count": 0,
+                "reply_count": 0,
+                "quote_count": 0,
+            },
+            {
+                "id": "2",
+                "text": "Another market note",
+                "created_at": "2026-03-01T10:00:00Z",
+                "lang": "en",
+                "is_retweet": False,
+                "is_reply": False,
+                "is_quote": False,
+                "like_count": 1,
+                "retweet_count": 0,
+                "reply_count": 0,
+                "quote_count": 0,
+            },
+        ]
+
+        stats = build_corpus_stats(profile, tweet_rows, sample_size=2)
+
+        self.assertEqual(stats["geo_signals"]["declared_location"], "Phuket")
+        self.assertEqual(stats["geo_signals"]["inferred_utc_offset"], "unknown")
 
     def test_similarity_guard_blocks_near_duplicates(self) -> None:
         source_texts = ["Shipping product updates with clear takeaways"]

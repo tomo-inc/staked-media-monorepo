@@ -149,6 +149,19 @@ class FakeLLMClient:
                 "dominant_format": corpus_stats["media_stats"]["dominant_format_hint"],
                 "notes": "mostly standalone product updates",
             },
+            "geo_context": {
+                "declared_location": profile.get("location") or "",
+                "region_hint": "southeast asia",
+                "timezone_hint": "UTC+8",
+                "confidence": "medium",
+                "notes": "location and posting windows point to Singapore/UTC+8",
+            },
+            "stance_patterns": {
+                "hot_take_style": "measured",
+                "controversy_posture": "avoids pile-ons",
+                "endorsement_style": "selective",
+                "notes": "prefers practical takes over maximalist endorsement",
+            },
             "banned_phrases": ["dear ser"],
         }
 

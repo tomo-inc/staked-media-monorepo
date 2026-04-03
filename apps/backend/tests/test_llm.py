@@ -89,6 +89,19 @@ class LlmNormalizationTestCase(unittest.TestCase):
                 "format": "media-led",
                 "notes": "usually screenshot captions",
             },
+            "geo_context": {
+                "location": "Singapore",
+                "region": "SEA",
+                "tz": "UTC+8",
+                "confidence": "medium",
+                "notes": "location and posting hours both point to Singapore/Southeast Asia",
+            },
+            "stance_patterns": {
+                "hot_take": "early contrarian",
+                "controversy": "avoids pile-ons",
+                "endorsement": "selective",
+                "notes": "rarely overcommits unless there is clear edge",
+            },
             "banned_phrases": "gm ser",
         }
 
@@ -118,6 +131,13 @@ class LlmNormalizationTestCase(unittest.TestCase):
         self.assertEqual(normalized["posting_cadence"]["active_windows_utc"], [9, 10])
         self.assertEqual(normalized["media_habits"]["dominant_format"], "media-led")
         self.assertEqual(normalized["media_habits"]["notes"], "usually screenshot captions")
+        self.assertEqual(normalized["geo_context"]["declared_location"], "Singapore")
+        self.assertEqual(normalized["geo_context"]["region_hint"], "sea")
+        self.assertEqual(normalized["geo_context"]["timezone_hint"], "UTC+8")
+        self.assertEqual(normalized["geo_context"]["confidence"], "medium")
+        self.assertEqual(normalized["stance_patterns"]["hot_take_style"], "early contrarian")
+        self.assertEqual(normalized["stance_patterns"]["controversy_posture"], "avoids pile-ons")
+        self.assertEqual(normalized["stance_patterns"]["endorsement_style"], "selective")
         self.assertEqual(normalized["banned_phrases"], ["gm ser"])
 
     def test_normalize_drafts_payload_accepts_string_items(self) -> None:
@@ -193,6 +213,19 @@ class LlmNormalizationTestCase(unittest.TestCase):
                     "dominant_format": "text-only",
                     "notes": "mostly standalone text",
                 },
+                "geo_context": {
+                    "declared_location": "Singapore",
+                    "region_hint": "sea",
+                    "timezone_hint": "UTC+8",
+                    "confidence": "medium",
+                    "notes": "bio location and posting windows align",
+                },
+                "stance_patterns": {
+                    "hot_take_style": "early contrarian",
+                    "controversy_posture": "avoids pile-ons",
+                    "endorsement_style": "selective",
+                    "notes": "prefers edge over consensus cheerleading",
+                },
                 "generation_guardrails": {
                     "preferred_openings": ["scene-first"],
                     "compression_rules": ["leave some implication unstated"],
@@ -214,6 +247,8 @@ class LlmNormalizationTestCase(unittest.TestCase):
         self.assertFalse(payload["constraints"]["full_chinese_only"])
         self.assertEqual(payload["style_brief"]["posting_cadence"]["posting_style"], "burst-poster")
         self.assertEqual(payload["style_brief"]["media_habits"]["dominant_format"], "text-only")
+        self.assertEqual(payload["style_brief"]["geo_context"]["declared_location"], "Singapore")
+        self.assertEqual(payload["style_brief"]["stance_patterns"]["hot_take_style"], "early contrarian")
         self.assertEqual(
             payload["style_brief"]["generation_guardrails"]["preferred_openings"],
             ["scene-first"],
@@ -227,6 +262,10 @@ class LlmNormalizationTestCase(unittest.TestCase):
                 "one sharp observation is better than a fully explained argument" in rule
                 for rule in payload["drafting_rules"]
             )
+        )
+        self.assertTrue(any("soft localization texture" in rule for rule in payload["drafting_rules"]))
+        self.assertTrue(
+            any("hot-take, controversy, and endorsement posture" in rule for rule in payload["drafting_rules"])
         )
 
     def test_build_draft_request_payload_full_chinese_prompt_overrides_persona_language_profile(self) -> None:
@@ -659,6 +698,8 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
                     "interaction_style": {"original_post_tone": "direct"},
                     "posting_cadence": {"posting_style": "steady"},
                     "media_habits": {"dominant_format": "text-only"},
+                    "geo_context": {"region_hint": "sea"},
+                    "stance_patterns": {"hot_take_style": "measured"},
                 },
                 prompt="test",
                 candidate_texts=["候选A", "候选B"],
@@ -677,8 +718,42 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
         self.assertIn("interaction_style", request_payload["persona"])
         self.assertIn("posting_cadence", request_payload["persona"])
         self.assertIn("media_habits", request_payload["persona"])
+        self.assertIn("geo_context", request_payload["persona"])
+        self.assertIn("stance_patterns", request_payload["persona"])
         self.assertTrue(any("emotional register" in instruction for instruction in request_payload["instructions"]))
         self.assertTrue(any("interaction_style" in instruction for instruction in request_payload["instructions"]))
+        self.assertTrue(any("geo_context" in instruction for instruction in request_payload["instructions"]))
+        self.assertTrue(any("stance_patterns" in instruction for instruction in request_payload["instructions"]))
+
+    def test_single_score_includes_geo_and_stance_guidance(self) -> None:
+        with patch.object(
+            self.client,
+            "_chat_completion_json",
+            return_value={"score": 8.8, "verdict": "fit", "strengths": [], "issues": [], "must_fix": []},
+        ) as mock_chat:
+            result = self.client.score_draft(
+                persona={
+                    "author_summary": "",
+                    "voice_traits": [],
+                    "do_not_sound_like": [],
+                    "generation_guardrails": {},
+                    "language_profile": {"primary_language": "en"},
+                    "geo_context": {"region_hint": "sea"},
+                    "stance_patterns": {"hot_take_style": "measured"},
+                },
+                prompt="test",
+                candidate_text="candidate",
+                matched_theme_tweets=[],
+                theme_keywords=[],
+                theme_top_keywords=[],
+            )
+
+        request_payload = json.loads(mock_chat.call_args.kwargs["user_prompt"])
+        self.assertEqual(result["score"], 8.8)
+        self.assertIn("geo_context", request_payload["persona"])
+        self.assertIn("stance_patterns", request_payload["persona"])
+        self.assertTrue(any("geo_context" in instruction for instruction in request_payload["instructions"]))
+        self.assertTrue(any("stance_patterns" in instruction for instruction in request_payload["instructions"]))
 
     def test_batch_returns_defaults_for_missing_indices(self) -> None:
         batch_response = {

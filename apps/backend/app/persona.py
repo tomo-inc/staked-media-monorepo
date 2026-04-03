@@ -215,6 +215,25 @@ CHINESE_PROMPT_SCAFFOLD_MARKERS = {
     "保持",
 }
 
+LOCATION_UTC_OFFSET_HINTS = (
+    ("singapore", 8),
+    ("beijing", 8),
+    ("shanghai", 8),
+    ("hong kong", 8),
+    ("taipei", 8),
+    ("tokyo", 9),
+    ("seoul", 9),
+    ("dubai", 4),
+    ("london", 0),
+    ("uk", 0),
+    ("berlin", 1),
+    ("paris", 1),
+    ("new york", -5),
+    ("nyc", -5),
+    ("san francisco", -8),
+    ("los angeles", -8),
+)
+
 
 def clean_text(text: str) -> str:
     sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text or "")
@@ -534,6 +553,19 @@ def build_corpus_stats(
             "most_active_hours": [hour for hour, _ in active_hours.most_common(3)],
             "avg_daily_tweets": round(total_tweets / len(active_days), 2) if active_days else 0.0,
         },
+        "geo_signals": {
+            "declared_location": clean_text(str(profile.get("location") or "")),
+            "most_active_hours_utc": [hour for hour, _ in active_hours.most_common(3)],
+            "active_windows_utc": cadence_active_windows,
+            "inferred_utc_offset": _infer_utc_offset_hint(
+                clean_text(str(profile.get("location") or "")),
+                cadence_active_windows,
+            ),
+            "source_note": (
+                "Infer only coarse region or timezone hints from declared location and UTC activity windows. "
+                "Do not assume exact residence, travel history, or event attendance."
+            ),
+        },
         "cadence_stats": {
             "avg_daily_tweets": authored_avg_daily_tweets,
             "active_windows_utc": cadence_active_windows,
@@ -731,6 +763,33 @@ def _parse_tweet_timestamp(value: Any) -> datetime | None:
         return datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _format_utc_offset(offset_hours: int) -> str:
+    sign = "+" if offset_hours >= 0 else "-"
+    return f"UTC{sign}{abs(offset_hours)}"
+
+
+def _location_hint_matches(location: str, marker: str) -> bool:
+    pattern = r"\b" + re.escape(marker).replace(r"\ ", r"\s+") + r"\b"
+    return bool(re.search(pattern, location))
+
+
+def _infer_utc_offset_hint(location: str, active_hours_utc: list[int]) -> str:
+    normalized_location = clean_text(location).lower()
+    inferred_offset = next(
+        (offset for marker, offset in LOCATION_UTC_OFFSET_HINTS if _location_hint_matches(normalized_location, marker)),
+        None,
+    )
+    if inferred_offset is None:
+        return "unknown"
+
+    if active_hours_utc:
+        local_hours = [int((hour + inferred_offset) % 24) for hour in active_hours_utc[:3]]
+        if local_hours and all(0 <= hour <= 4 for hour in local_hours):
+            return "unknown"
+
+    return _format_utc_offset(inferred_offset)
 
 
 def _posting_style_hint(avg_daily_tweets: float, active_windows_utc: list[int]) -> str:

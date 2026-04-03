@@ -155,6 +155,21 @@ class MediaHabits(BaseModel):
     notes: str = ""
 
 
+class GeoContext(BaseModel):
+    declared_location: str = ""
+    region_hint: str = "unknown"
+    timezone_hint: str = "unknown"
+    confidence: str = "low"
+    notes: str = ""
+
+
+class StancePatterns(BaseModel):
+    hot_take_style: str = "mixed"
+    controversy_posture: str = "mixed"
+    endorsement_style: str = "selective"
+    notes: str = ""
+
+
 class PersonaOutput(BaseModel):
     persona_version: str = "v1"
     author_summary: str
@@ -173,6 +188,8 @@ class PersonaOutput(BaseModel):
     interaction_style: InteractionStyle = Field(default_factory=InteractionStyle)
     posting_cadence: PostingCadence = Field(default_factory=PostingCadence)
     media_habits: MediaHabits = Field(default_factory=MediaHabits)
+    geo_context: GeoContext = Field(default_factory=GeoContext)
+    stance_patterns: StancePatterns = Field(default_factory=StancePatterns)
     banned_phrases: list[str] = Field(default_factory=list)
 
 
