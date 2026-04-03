@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -52,19 +53,9 @@ def create_app(
     configure_logging(settings)
     database = Database(settings.database_path)
     database.init()
-    app = FastAPI(title="Staked Media MVP", version="0.1.0")
-    app.state.settings = settings
-    app.state.database = database
-    app.state.upstream = upstream_client or UpstreamClient(settings)
-    app.state.llm = llm_client or create_llm_client(settings)
-    app.state.content_orchestrator = content_orchestrator or ContentOrchestrator(
-        settings=settings,
-        database=database,
-        llm=app.state.llm,
-    )
 
-    @app.on_event("startup")
-    def on_startup() -> None:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
         app.state.database.init()
         log_event(
             logger,
@@ -78,6 +69,18 @@ def create_app(
             log_file_enabled=settings.log_enable_file,
             log_file_path=settings.log_file_path if settings.log_enable_file else None,
         )
+        yield
+
+    app = FastAPI(title="Staked Media MVP", version="0.1.0", lifespan=lifespan)
+    app.state.settings = settings
+    app.state.database = database
+    app.state.upstream = upstream_client or UpstreamClient(settings)
+    app.state.llm = llm_client or create_llm_client(settings)
+    app.state.content_orchestrator = content_orchestrator or ContentOrchestrator(
+        settings=settings,
+        database=database,
+        llm=app.state.llm,
+    )
 
     @app.get("/healthz")
     def healthcheck() -> dict[str, str]:

@@ -17,8 +17,7 @@ be-format:
 be-typecheck:
 	cd $(BE_DIR) && pyright app/
 
-be-check: be-lint be-typecheck
-	cd $(BE_DIR) && ruff format --check app/ tests/
+be-check: be-lint be-format be-typecheck
 
 be-test:
 	cd $(BE_DIR) && python -m pytest tests/ -q
