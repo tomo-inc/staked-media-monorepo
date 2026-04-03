@@ -58,15 +58,15 @@ test("sanitizeConfig falls back for invalid stored backend URLs", () => {
   assert.equal(config.backendBaseUrl, DEFAULT_CONFIG.backendBaseUrl);
 });
 
-test("sanitizeConfig accepts hosted backend URLs in strict mode", () => {
+test("sanitizeConfig accepts allowed backend hosts in strict mode", () => {
   const config = sanitizeConfig(
     {
-      backendBaseUrl: "https://api.example.com/v1/"
+      backendBaseUrl: "https://api.sayviner.top:8443/v1/"
     },
     { strictBackendBaseUrl: true }
   );
 
-  assert.equal(config.backendBaseUrl, "https://api.example.com/v1");
+  assert.equal(config.backendBaseUrl, "https://api.sayviner.top:8443/v1");
 });
 
 test("sanitizeConfig rejects unsupported backend protocols in strict mode", () => {
@@ -78,7 +78,7 @@ test("sanitizeConfig rejects unsupported backend protocols in strict mode", () =
         },
         { strictBackendBaseUrl: true }
       ),
-    /Backend URL must be a valid http\(s\) URL without embedded credentials\./
+    /Backend URL must be a valid http\(s\) URL pointing to an allowed host\./
   );
 });
 
@@ -87,12 +87,32 @@ test("sanitizeConfig rejects backend URLs with credentials in strict mode", () =
     () =>
       sanitizeConfig(
         {
-          backendBaseUrl: "https://user:secret@example.com"
+          backendBaseUrl: "https://user:secret@localhost"
         },
         { strictBackendBaseUrl: true }
       ),
-    /Backend URL must be a valid http\(s\) URL without embedded credentials\./
+    /Backend URL must be a valid http\(s\) URL pointing to an allowed host\./
   );
+});
+
+test("sanitizeConfig rejects non-whitelisted backend hosts in strict mode", () => {
+  assert.throws(
+    () =>
+      sanitizeConfig(
+        {
+          backendBaseUrl: "https://evil.example.com"
+        },
+        { strictBackendBaseUrl: true }
+      ),
+    /Backend URL must be a valid http\(s\) URL pointing to an allowed host\./
+  );
+});
+
+test("sanitizeConfig falls back for non-whitelisted hosts in non-strict mode", () => {
+  const config = sanitizeConfig({
+    backendBaseUrl: "https://evil.example.com"
+  });
+  assert.equal(config.backendBaseUrl, DEFAULT_CONFIG.backendBaseUrl);
 });
 
 test("sanitizeConfig keeps system theme and ignores unknown themes", () => {

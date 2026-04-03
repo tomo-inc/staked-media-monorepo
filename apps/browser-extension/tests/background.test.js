@@ -150,18 +150,18 @@ test("background save_config updates host mode and popup behavior", async () => 
   assert.equal(harness.calls.setPanelBehavior.at(-1)?.openPanelOnActionClick, false);
 });
 
-test("background save_config accepts hosted backend URLs", async () => {
+test("background save_config accepts allowed backend hosts", async () => {
   const harness = createBackgroundHarness();
   await flushTasks();
 
   const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
     type: "save_config",
-    payload: { backendBaseUrl: "https://api.example.com" }
+    payload: { backendBaseUrl: "https://api.sayviner.top:8443" }
   });
 
   assert.equal(response.ok, true);
-  assert.equal(response.config.backendBaseUrl, "https://api.example.com");
-  assert.equal(harness.storage.backendBaseUrl, "https://api.example.com");
+  assert.equal(response.config.backendBaseUrl, "https://api.sayviner.top:8443");
+  assert.equal(harness.storage.backendBaseUrl, "https://api.sayviner.top:8443");
 });
 
 test("background save_config rejects unsupported backend protocols", async () => {
@@ -174,7 +174,7 @@ test("background save_config rejects unsupported backend protocols", async () =>
   });
 
   assert.equal(response.ok, false);
-  assert.match(response.error.message, /Backend URL must be a valid http\(s\) URL without embedded credentials\./);
+  assert.match(response.error.message, /Backend URL must be a valid http\(s\) URL pointing to an allowed host\./);
 });
 
 test("background save_config rejects backend credentials", async () => {
@@ -183,11 +183,24 @@ test("background save_config rejects backend credentials", async () => {
 
   const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
     type: "save_config",
-    payload: { backendBaseUrl: "https://user:secret@example.com" }
+    payload: { backendBaseUrl: "https://user:secret@localhost" }
   });
 
   assert.equal(response.ok, false);
-  assert.match(response.error.message, /Backend URL must be a valid http\(s\) URL without embedded credentials\./);
+  assert.match(response.error.message, /Backend URL must be a valid http\(s\) URL pointing to an allowed host\./);
+});
+
+test("background save_config rejects non-whitelisted backend hosts", async () => {
+  const harness = createBackgroundHarness();
+  await flushTasks();
+
+  const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+    type: "save_config",
+    payload: { backendBaseUrl: "https://evil.example.com" }
+  });
+
+  assert.equal(response.ok, false);
+  assert.match(response.error.message, /Backend URL must be a valid http\(s\) URL pointing to an allowed host\./);
 });
 
 test("background check_profile converts api 403 into username-specific whitelist message", async () => {

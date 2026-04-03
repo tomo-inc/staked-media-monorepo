@@ -6,6 +6,11 @@
   }
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   const FALLBACK_BACKEND_BASE_URL = "https://api.sayviner.top:8443";
+  const ALLOWED_BACKEND_HOSTS = new Set([
+    "127.0.0.1",
+    "localhost",
+    "api.sayviner.top"
+  ]);
   const DEFAULT_CONFIG = Object.freeze({
     defaultUsername: "",
     backendBaseUrl: FALLBACK_BACKEND_BASE_URL,
@@ -46,11 +51,14 @@
       if (parsed.username || parsed.password) {
         throw new Error("Backend URL credentials are not supported");
       }
+      if (!ALLOWED_BACKEND_HOSTS.has(parsed.hostname)) {
+        throw new Error(`Backend host "${parsed.hostname}" is not in the allowed list. Allowed: ${[...ALLOWED_BACKEND_HOSTS].join(", ")}`);
+      }
       const normalizedPath = parsed.pathname && parsed.pathname !== "/" ? parsed.pathname.replace(/\/+$/, "") : "";
       return `${parsed.protocol}//${parsed.host}${normalizedPath}`;
     } catch (_error) {
       if (strictBackendBaseUrl) {
-        throw new Error("Backend URL must be a valid http(s) URL without embedded credentials.");
+        throw new Error("Backend URL must be a valid http(s) URL pointing to an allowed host.");
       }
       return FALLBACK_BACKEND_BASE_URL;
     }
@@ -134,6 +142,7 @@
 
   return {
     DEFAULT_CONFIG,
+    ALLOWED_BACKEND_HOSTS,
     FALLBACK_BACKEND_BASE_URL,
     coerceWindowId,
     escapeHtml,
