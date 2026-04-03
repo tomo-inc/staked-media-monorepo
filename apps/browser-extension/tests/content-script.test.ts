@@ -1,20 +1,55 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import test from "node:test";
 
-const {
-	findComposer,
-	getComposerState,
-	insertIntoComposer,
-} = require("../dist/content-script.js");
+const require = createRequire(import.meta.url);
+
+interface FakeComposerElement {
+	attributes: Record<string, string>;
+	textContent: string;
+	focused: boolean;
+	events: FakeEvent[];
+	getAttribute(name: string): string | null;
+	focus(): void;
+	dispatchEvent(event: FakeEvent): boolean;
+}
+
+interface FakeDocument {
+	querySelectorAll(): FakeComposerElement[];
+}
+
+interface ContentScriptModule {
+	findComposer(doc?: FakeDocument): FakeComposerElement | null;
+	getComposerState(options?: { document?: FakeDocument }): {
+		available: boolean;
+		message: string;
+	};
+	insertIntoComposer(
+		text: string,
+		options?: {
+			document?: FakeDocument;
+			window?: { getSelection(): null };
+			Event?: typeof FakeEvent;
+			InputEvent?: typeof FakeEvent;
+		},
+	): FakeComposerElement;
+}
+
+const { findComposer, getComposerState, insertIntoComposer } =
+	require("../dist/content-script.js") as ContentScriptModule;
 
 class FakeEvent {
-	constructor(type, init = {}) {
+	type: string;
+
+	constructor(type: string, init: Record<string, unknown> = {}) {
 		this.type = type;
 		Object.assign(this, init);
 	}
 }
 
-function createElement(attributes = {}) {
+function createElement(
+	attributes: Record<string, string> = {},
+): FakeComposerElement {
 	return {
 		attributes: { ...attributes },
 		textContent: "",
@@ -33,7 +68,7 @@ function createElement(attributes = {}) {
 	};
 }
 
-function createDocument(elements) {
+function createDocument(elements: FakeComposerElement[]): FakeDocument {
 	return {
 		querySelectorAll() {
 			return elements;

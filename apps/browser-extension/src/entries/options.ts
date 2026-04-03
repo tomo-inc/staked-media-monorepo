@@ -1,31 +1,62 @@
-const { DEFAULT_CONFIG, sendRuntimeMessage } =
+const { DEFAULT_CONFIG: OPTIONS_DEFAULT_CONFIG, sendRuntimeMessage } =
 	window.StakedMediaExtensionShared;
 
-const DEFAULTS = { ...DEFAULT_CONFIG };
+type OptionsPage = "home" | "api";
+type StatusKind = "" | "warn";
+
+interface OptionsConfigResponse {
+	config?: StakedMediaExtensionConfig;
+}
+
+interface OptionsFields {
+	headerTitle: HTMLElement;
+	backButton: HTMLButtonElement;
+	homePage: HTMLElement;
+	apiPage: HTMLElement;
+	openApiSettingsButton: HTMLButtonElement;
+	backendBaseUrl: HTMLInputElement;
+	apiModeDrafts: HTMLInputElement;
+	apiModeContent: HTMLInputElement;
+	theme: HTMLSelectElement;
+	hostModeTitle: HTMLElement;
+	toggleOpenModeButton: HTMLButtonElement;
+	status: HTMLElement;
+}
+
+interface OptionsState {
+	config: StakedMediaExtensionConfig | null;
+	page: OptionsPage;
+}
+
+const DEFAULTS = { ...OPTIONS_DEFAULT_CONFIG };
 const systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
-const state = {
+const state: OptionsState = {
 	config: null,
 	page: "home",
 };
 
-const fields = {
-	headerTitle: document.getElementById("headerTitle"),
-	backButton: document.getElementById("backButton"),
-	homePage: document.getElementById("homePage"),
-	apiPage: document.getElementById("apiPage"),
-	openApiSettingsButton: document.getElementById("openApiSettingsButton"),
-	backendBaseUrl: document.getElementById("backendBaseUrl"),
-	apiModeDrafts: document.getElementById("apiModeDrafts"),
-	apiModeContent: document.getElementById("apiModeContent"),
-	theme: document.getElementById("theme"),
-	hostModeTitle: document.getElementById("hostModeTitle"),
-	toggleOpenModeButton: document.getElementById("toggleOpenModeButton"),
-	status: document.getElementById("status"),
+const fields: OptionsFields = {
+	headerTitle: document.getElementById("headerTitle") as HTMLElement,
+	backButton: document.getElementById("backButton") as HTMLButtonElement,
+	homePage: document.getElementById("homePage") as HTMLElement,
+	apiPage: document.getElementById("apiPage") as HTMLElement,
+	openApiSettingsButton: document.getElementById(
+		"openApiSettingsButton",
+	) as HTMLButtonElement,
+	backendBaseUrl: document.getElementById("backendBaseUrl") as HTMLInputElement,
+	apiModeDrafts: document.getElementById("apiModeDrafts") as HTMLInputElement,
+	apiModeContent: document.getElementById("apiModeContent") as HTMLInputElement,
+	theme: document.getElementById("theme") as HTMLSelectElement,
+	hostModeTitle: document.getElementById("hostModeTitle") as HTMLElement,
+	toggleOpenModeButton: document.getElementById(
+		"toggleOpenModeButton",
+	) as HTMLButtonElement,
+	status: document.getElementById("status") as HTMLElement,
 };
 
 init().catch((error) => {
-	setStatus(String(error.message || error), "warn");
+	setStatus(formatRuntimeError(error), "warn");
 });
 
 fields.backButton.addEventListener("click", async () => {
@@ -78,14 +109,21 @@ if (typeof systemThemeQuery.addEventListener === "function") {
 }
 
 async function init() {
-	const response = await sendRuntimeMessage({ type: "get_config" });
+	const response = await sendRuntimeMessage<OptionsConfigResponse>({
+		type: "get_config",
+	});
 	state.config = response.config || DEFAULTS;
 	applyConfig(state.config, { syncApiForm: true });
 	renderPage();
 	setStatus("", "");
 }
 
-function applyConfig(config, options = {}) {
+function applyConfig(
+	config: StakedMediaExtensionConfig,
+	options: {
+		syncApiForm?: boolean;
+	} = {},
+): void {
 	const syncApiForm = options.syncApiForm !== false;
 	const next = { ...DEFAULTS, ...config };
 	state.config = next;
@@ -104,7 +142,7 @@ function applyConfig(config, options = {}) {
 	applyTheme(next.theme);
 }
 
-function renderPage() {
+function renderPage(): void {
 	const isApiPage = state.page === "api";
 	fields.homePage.hidden = isApiPage;
 	fields.apiPage.hidden = !isApiPage;
@@ -116,7 +154,7 @@ function renderPage() {
 	fields.headerTitle.textContent = isApiPage ? "API & Generation" : "Settings";
 }
 
-async function closeCurrentPage() {
+async function closeCurrentPage(): Promise<void> {
 	if (state.page !== "api") {
 		return;
 	}
@@ -128,9 +166,9 @@ async function closeCurrentPage() {
 	renderPage();
 }
 
-async function saveTheme(theme) {
+async function saveTheme(theme: string): Promise<void> {
 	try {
-		const response = await sendRuntimeMessage({
+		const response = await sendRuntimeMessage<OptionsConfigResponse>({
 			type: "save_config",
 			payload: { theme },
 		});
@@ -138,13 +176,13 @@ async function saveTheme(theme) {
 		setStatus("", "");
 	} catch (error) {
 		applyConfig(state.config || DEFAULTS, { syncApiForm: false });
-		setStatus(String(error.message || error), "warn");
+		setStatus(formatRuntimeError(error), "warn");
 	}
 }
 
-async function saveApiMode(apiMode) {
+async function saveApiMode(apiMode: StakedMediaApiMode): Promise<void> {
 	try {
-		const response = await sendRuntimeMessage({
+		const response = await sendRuntimeMessage<OptionsConfigResponse>({
 			type: "save_config",
 			payload: { apiMode },
 		});
@@ -152,11 +190,11 @@ async function saveApiMode(apiMode) {
 		setStatus("", "");
 	} catch (error) {
 		applyConfig(state.config || DEFAULTS, { syncApiForm: false });
-		setStatus(String(error.message || error), "warn");
+		setStatus(formatRuntimeError(error), "warn");
 	}
 }
 
-async function saveBackendBaseUrl() {
+async function saveBackendBaseUrl(): Promise<boolean> {
 	const nextValue = fields.backendBaseUrl.value.trim();
 	const currentValue = String(
 		state.config?.backendBaseUrl || DEFAULTS.backendBaseUrl,
@@ -167,7 +205,7 @@ async function saveBackendBaseUrl() {
 	}
 
 	try {
-		const response = await sendRuntimeMessage({
+		const response = await sendRuntimeMessage<OptionsConfigResponse>({
 			type: "save_config",
 			payload: { backendBaseUrl: nextValue },
 		});
@@ -176,25 +214,25 @@ async function saveBackendBaseUrl() {
 		setStatus("", "");
 		return true;
 	} catch (error) {
-		setStatus(String(error.message || error), "warn");
+		setStatus(formatRuntimeError(error), "warn");
 		return false;
 	}
 }
 
-async function switchHostMode(hostMode) {
+async function switchHostMode(hostMode: StakedMediaHostMode): Promise<void> {
 	try {
-		const response = await sendRuntimeMessage({
+		const response = await sendRuntimeMessage<OptionsConfigResponse>({
 			type: "save_config",
 			payload: { hostMode },
 		});
 		applyConfig(response.config || DEFAULTS, { syncApiForm: false });
 		setStatus("", "");
 	} catch (error) {
-		setStatus(String(error.message || error), "warn");
+		setStatus(formatRuntimeError(error), "warn");
 	}
 }
 
-function applyTheme(theme) {
+function applyTheme(theme: StakedMediaThemeMode | null | undefined): void {
 	const requestedTheme = theme || state.config?.theme || DEFAULTS.theme;
 	const resolvedTheme =
 		requestedTheme === "system"
@@ -205,17 +243,23 @@ function applyTheme(theme) {
 	document.documentElement.setAttribute("data-options-theme", resolvedTheme);
 }
 
-function getOpenModeToggleLabel(hostMode) {
+function getOpenModeToggleLabel(hostMode: StakedMediaHostMode): string {
 	return hostMode === "popup" ? "Switch to Side Panel" : "Switch to Popup";
 }
 
-function getNextHostMode() {
+function getNextHostMode(): StakedMediaHostMode {
 	return state.config?.hostMode === "popup" ? "sidepanel" : "popup";
 }
 
-function setStatus(message, kind) {
+function setStatus(message: unknown, kind: StatusKind): void {
 	const text = String(message || "");
 	fields.status.textContent = text;
 	fields.status.className = `status${kind ? ` ${kind}` : ""}`;
 	fields.status.hidden = !text;
+}
+
+function formatRuntimeError(error: unknown): string {
+	return String(
+		(error as Error | undefined)?.message || error || "Unknown error",
+	);
 }

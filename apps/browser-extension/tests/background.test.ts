@@ -1,18 +1,65 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import test from "node:test";
+import vm from "node:vm";
 
-const shared = require("../dist/shared.js");
+const require = createRequire(import.meta.url);
 
-function createBackgroundHarness(options = {}) {
-	const storage = { ...(options.storage || {}) };
-	const calls = {
+const shared = require("../dist/shared.js") as StakedMediaExtensionSharedApi;
+const objectHasOwn = (
+	Object as typeof Object & {
+		hasOwn(target: object, property: PropertyKey): boolean;
+	}
+).hasOwn;
+
+interface BackgroundHarnessOptions {
+	storage?: Record<string, unknown>;
+	fetch?: (
+		url: unknown,
+		init?: unknown,
+	) => Promise<{
+		ok: boolean;
+		status: number;
+		text(): Promise<string>;
+	}>;
+}
+
+interface BackgroundCalls {
+	setPopup: Array<{ popup: string }>;
+	setPanelBehavior: Array<{ openPanelOnActionClick: boolean }>;
+}
+
+interface BackgroundListeners {
+	onInstalled: (() => void | Promise<void>) | null;
+	onStartup: (() => void | Promise<void>) | null;
+	onMessage:
+		| ((
+				message: unknown,
+				sender: unknown,
+				sendResponse: (response?: unknown) => void,
+		  ) => boolean | undefined)
+		| null;
+}
+
+interface BackgroundHarness {
+	context: vm.Context & {
+		StakedMediaExtensionShared?: StakedMediaExtensionSharedApi;
+	};
+	storage: Record<string, unknown>;
+	calls: BackgroundCalls;
+	listeners: BackgroundListeners;
+}
+
+function createBackgroundHarness(
+	options: BackgroundHarnessOptions = {},
+): BackgroundHarness {
+	const storage: Record<string, unknown> = { ...(options.storage || {}) };
+	const calls: BackgroundCalls = {
 		setPopup: [],
 		setPanelBehavior: [],
 	};
-	const listeners = {
+	const listeners: BackgroundListeners = {
 		onInstalled: null,
 		onStartup: null,
 		onMessage: null,
@@ -47,6 +94,61 @@ function createBackgroundHarness(options = {}) {
 		importScripts() {
 			context.StakedMediaExtensionShared = shared;
 		},
+	} as unknown as vm.Context & {
+		StakedMediaExtensionShared?: StakedMediaExtensionSharedApi;
+		chrome: {
+			runtime: {
+				onInstalled: {
+					addListener(listener: () => void | Promise<void>): void;
+				};
+				onStartup: {
+					addListener(listener: () => void | Promise<void>): void;
+				};
+				onMessage: {
+					addListener(
+						listener: (
+							message: unknown,
+							sender: unknown,
+							sendResponse: (response?: unknown) => void,
+						) => boolean | undefined,
+					): void;
+				};
+				lastError: { message?: string } | null;
+			};
+			storage: {
+				sync: {
+					get(
+						keys: string[] | string | null,
+						callback: (items: Record<string, unknown>) => void,
+					): void;
+					set(values: Record<string, unknown>, callback?: () => void): void;
+				};
+			};
+			action: {
+				setPopup(payload: { popup: string }): Promise<void>;
+			};
+			sidePanel: {
+				setPanelBehavior(payload: {
+					openPanelOnActionClick: boolean;
+				}): Promise<void>;
+			};
+			tabs: {
+				query(): Promise<unknown[]>;
+				sendMessage(): Promise<null>;
+			};
+			windows: {
+				getCurrent(): Promise<{ type: string; id: number }>;
+				getLastFocused(): Promise<{ type: string; id: number }>;
+				getAll(): Promise<Array<{ type: string; id: number }>>;
+				get(windowId: number): Promise<{ type: string; id: number }>;
+			};
+		};
+		globalThis: unknown;
+		importScripts(...paths: string[]): void;
+		fetch: NonNullable<BackgroundHarnessOptions["fetch"]>;
+		performance: {
+			now(): number;
+		};
 	};
 
 	context.globalThis = context;
@@ -72,10 +174,10 @@ function createBackgroundHarness(options = {}) {
 		storage: {
 			sync: {
 				get(keys, callback) {
-					const result = {};
+					const result: Record<string, unknown> = {};
 					if (Array.isArray(keys)) {
 						for (const key of keys) {
-							if (Object.hasOwn(storage, key)) {
+							if (objectHasOwn(storage, key)) {
 								result[key] = storage[key];
 							}
 						}
@@ -107,6 +209,9 @@ function createBackgroundHarness(options = {}) {
 			},
 		},
 		windows: {
+			async getCurrent() {
+				return { type: "normal", id: 91 };
+			},
 			async getLastFocused() {
 				return { type: "normal", id: 91 };
 			},
@@ -119,8 +224,8 @@ function createBackgroundHarness(options = {}) {
 		},
 	};
 
-	const code = fs.readFileSync(
-		path.join(__dirname, "..", "dist", "background.js"),
+	const code = readFileSync(
+		new URL("../dist/background.js", import.meta.url),
 		"utf8",
 	);
 	vm.runInNewContext(code, context, {
@@ -134,14 +239,27 @@ function flushTasks() {
 	return new Promise((resolve) => setImmediate(resolve));
 }
 
-function dispatchRuntimeMessage(listener, message) {
+function dispatchRuntimeMessage<TResponse>(
+	listener: BackgroundListeners["onMessage"],
+	message: unknown,
+): Promise<TResponse> {
+	assert.ok(listener);
 	return new Promise((resolve) => {
-		const keepAlive = listener(message, {}, (response) => resolve(response));
+		const keepAlive = listener(message, {}, (response) => {
+			resolve(response as TResponse);
+		});
 		assert.equal(keepAlive, true);
 	});
 }
 
-function createJsonResponse(status, payload) {
+function createJsonResponse(
+	status: number,
+	payload: Record<string, unknown>,
+): {
+	ok: boolean;
+	status: number;
+	text(): Promise<string>;
+} {
 	return {
 		ok: status >= 200 && status < 300,
 		status,
@@ -155,7 +273,10 @@ test("background save_config updates host mode and popup behavior", async () => 
 	const harness = createBackgroundHarness();
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		config: StakedMediaExtensionConfig;
+	}>(harness.listeners.onMessage, {
 		type: "save_config",
 		payload: { hostMode: "popup" },
 	});
@@ -163,9 +284,13 @@ test("background save_config updates host mode and popup behavior", async () => 
 	assert.equal(response.ok, true);
 	assert.equal(response.config.hostMode, "popup");
 	assert.equal(harness.storage.hostMode, "popup");
-	assert.equal(harness.calls.setPopup.at(-1)?.popup, "panel.html?host=popup");
 	assert.equal(
-		harness.calls.setPanelBehavior.at(-1)?.openPanelOnActionClick,
+		harness.calls.setPopup[harness.calls.setPopup.length - 1]?.popup,
+		"panel.html?host=popup",
+	);
+	assert.equal(
+		harness.calls.setPanelBehavior[harness.calls.setPanelBehavior.length - 1]
+			?.openPanelOnActionClick,
 		false,
 	);
 });
@@ -174,7 +299,10 @@ test("background save_config accepts allowed backend hosts", async () => {
 	const harness = createBackgroundHarness();
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		config: StakedMediaExtensionConfig;
+	}>(harness.listeners.onMessage, {
 		type: "save_config",
 		payload: { backendBaseUrl: "https://api.sayviner.top:8443" },
 	});
@@ -188,7 +316,10 @@ test("background save_config rejects unsupported backend protocols", async () =>
 	const harness = createBackgroundHarness();
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { message: string };
+	}>(harness.listeners.onMessage, {
 		type: "save_config",
 		payload: { backendBaseUrl: "ftp://api.example.com" },
 	});
@@ -204,7 +335,10 @@ test("background save_config rejects backend credentials", async () => {
 	const harness = createBackgroundHarness();
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { message: string };
+	}>(harness.listeners.onMessage, {
 		type: "save_config",
 		payload: { backendBaseUrl: "https://user:secret@localhost" },
 	});
@@ -220,7 +354,10 @@ test("background save_config rejects non-whitelisted backend hosts", async () =>
 	const harness = createBackgroundHarness();
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { message: string };
+	}>(harness.listeners.onMessage, {
 		type: "save_config",
 		payload: { backendBaseUrl: "https://evil.example.com" },
 	});
@@ -233,7 +370,7 @@ test("background save_config rejects non-whitelisted backend hosts", async () =>
 });
 
 test("background generate defaults to drafts api mode when config is not persisted", async () => {
-	const seenUrls = [];
+	const seenUrls: string[] = [];
 	const harness = createBackgroundHarness({
 		fetch: async (url) => {
 			seenUrls.push(String(url));
@@ -242,7 +379,10 @@ test("background generate defaults to drafts api mode when config is not persist
 	});
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		result: StakedMediaDraftSource;
+	}>(harness.listeners.onMessage, {
 		type: "generate",
 		payload: { username: "alice", idea: "btc", draft_count: 2 },
 	});
@@ -258,7 +398,10 @@ test("background check_profile converts api 403 into username-specific whitelist
 	});
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { status: number; message: string };
+	}>(harness.listeners.onMessage, {
 		type: "check_profile",
 		payload: { username: "alice" },
 	});
@@ -277,7 +420,10 @@ test("background ingest_profile converts api 403 into username-specific whitelis
 	});
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { status: number; message: string };
+	}>(harness.listeners.onMessage, {
 		type: "ingest_profile",
 		payload: { username: "bob" },
 	});
@@ -296,7 +442,10 @@ test("background generate_content converts api 403 into username-specific whitel
 	});
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { status: number; message: string };
+	}>(harness.listeners.onMessage, {
 		type: "generate_content",
 		payload: { username: "carol", idea: "btc", draft_count: 2 },
 	});
@@ -315,7 +464,10 @@ test("background analyze_exposure converts api 403 into username-specific whitel
 	});
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { status: number; message: string };
+	}>(harness.listeners.onMessage, {
 		type: "analyze_exposure",
 		payload: { username: "dave", text: "hello" },
 	});
@@ -334,7 +486,10 @@ test("background suggest_ideas falls back to generic whitelist message on api 40
 	});
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { status: number; message: string };
+	}>(harness.listeners.onMessage, {
 		type: "suggest_ideas",
 		payload: { domain: "crypto" },
 	});
@@ -353,7 +508,10 @@ test("background whitelist message does not duplicate the @ prefix", async () =>
 	});
 	await flushTasks();
 
-	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { status: number; message: string };
+	}>(harness.listeners.onMessage, {
 		type: "check_profile",
 		payload: { username: "@erin" },
 	});

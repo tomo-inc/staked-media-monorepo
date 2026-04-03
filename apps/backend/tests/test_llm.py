@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import patch
 
@@ -61,12 +62,41 @@ class LlmNormalizationTestCase(unittest.TestCase):
                 "language_notes": "natural CN-EN code-switching only",
             },
             "risk_notes": "Public-post inference only",
+            "language_profile": {
+                "primary": "ZH",
+                "secondary": "EN",
+                "code_switch_style": "term-only",
+                "notes": "technical terms in EN",
+            },
+            "domain_expertise": {
+                "domain": "crypto",
+                "level": "expert",
+                "examples": "AMM",
+            },
+            "emotional_baseline": {"dominant": "mixed", "sarcasm": "frequent"},
+            "audience_profile": {"type": "crypto-native peers", "knowledge": "MEV", "formality": "raw"},
+            "interaction_style": {"original_tone": "blunt", "topics": ["breaking news"]},
+            "posting_cadence": {
+                "avg_daily_tweets": "6",
+                "style": "burst-poster",
+                "length_preference": "short",
+                "active_hours": ["9", "10"],
+            },
+            "media_habits": {
+                "text_only_ratio": "0.2",
+                "link_ratio": "0.1",
+                "media_attachment_ratio": "0.7",
+                "format": "media-led",
+                "notes": "usually screenshot captions",
+            },
+            "banned_phrases": "gm ser",
         }
 
         normalized = self.client._normalize_persona_payload(payload)
 
-        self.assertEqual(normalized["persona_version"], "1.0")
-        self.assertEqual(normalized["writing_patterns"]["patterns"][0], "short punchy lines")
+        self.assertEqual(normalized["persona_version"], "v1")
+        self.assertEqual(normalized["writing_patterns"]["avg_sentence_length"], "medium")
+        self.assertEqual(normalized["writing_patterns"]["punctuation_habits"][0], "short punchy lines")
         self.assertEqual(normalized["do_not_sound_like"], ["corporate PR"])
         self.assertIn("Light CTA usage", normalized["cta_style"])
         self.assertEqual(
@@ -77,6 +107,18 @@ class LlmNormalizationTestCase(unittest.TestCase):
             normalized["generation_guardrails"]["language_notes"],
             ["natural CN-EN code-switching only"],
         )
+        self.assertEqual(normalized["language_profile"]["primary_language"], "zh")
+        self.assertEqual(normalized["language_profile"]["secondary_languages"], ["en"])
+        self.assertEqual(normalized["language_profile"]["mixing_pattern"], "term-only")
+        self.assertEqual(normalized["domain_expertise"][0]["jargon_examples"], ["AMM"])
+        self.assertEqual(normalized["emotional_baseline"]["sarcasm_level"], "frequent")
+        self.assertEqual(normalized["audience_profile"]["formality"], "raw")
+        self.assertEqual(normalized["interaction_style"]["engagement_triggers"], ["breaking news"])
+        self.assertEqual(normalized["posting_cadence"]["avg_daily_tweets"], 6.0)
+        self.assertEqual(normalized["posting_cadence"]["active_windows_utc"], [9, 10])
+        self.assertEqual(normalized["media_habits"]["dominant_format"], "media-led")
+        self.assertEqual(normalized["media_habits"]["notes"], "usually screenshot captions")
+        self.assertEqual(normalized["banned_phrases"], ["gm ser"])
 
     def test_normalize_drafts_payload_accepts_string_items(self) -> None:
         payload = {"drafts": ["One clear post", {"draft": "Second clear post", "tags": "direct"}]}
@@ -113,13 +155,51 @@ class LlmNormalizationTestCase(unittest.TestCase):
                 "voice_traits": ["casual", "meme-aware"],
                 "lexical_markers": ["gm frens", "timeline"],
                 "do_not_sound_like": ["essay"],
+                "writing_patterns": {
+                    "avg_sentence_length": "short",
+                    "paragraph_structure": "single-shot",
+                },
+                "language_profile": {
+                    "primary_language": "zh",
+                    "secondary_languages": ["en"],
+                    "mixing_pattern": "term-only",
+                    "mixing_notes": "technical terms in EN",
+                },
+                "emotional_baseline": {
+                    "default_valence": "neutral",
+                    "intensity": "moderate",
+                    "sarcasm_level": "occasional",
+                },
+                "audience_profile": {
+                    "primary_audience": "crypto-native peers",
+                    "assumed_knowledge": ["DeFi"],
+                    "formality": "casual",
+                },
+                "interaction_style": {
+                    "original_post_tone": "blunt",
+                    "reply_tone": "supportive",
+                    "quote_tone": "one-line take",
+                },
+                "posting_cadence": {
+                    "avg_daily_tweets": 6.0,
+                    "posting_style": "burst-poster",
+                    "preferred_post_length": "short",
+                    "active_windows_utc": [9, 10],
+                },
+                "media_habits": {
+                    "text_only_ratio": 0.8,
+                    "link_ratio": 0.1,
+                    "media_attachment_ratio": 0.1,
+                    "dominant_format": "text-only",
+                    "notes": "mostly standalone text",
+                },
                 "generation_guardrails": {
                     "preferred_openings": ["scene-first"],
                     "compression_rules": ["leave some implication unstated"],
                     "anti_patterns": ["generic summary language"],
                 },
             },
-            prompt="Write one Chinese X post about WTDD",
+            prompt="Talk about WTDD with the same punchy tone",
             representative_tweets=[{"text": "gm frens"}],
             matched_theme_tweets=[{"text": "WTDD meme energy", "match_terms": ["WTDD"]}],
             theme_keywords=["WTDD"],
@@ -130,11 +210,16 @@ class LlmNormalizationTestCase(unittest.TestCase):
         )
 
         self.assertEqual(payload["constraints"]["draft_count"], 4)
-        self.assertIn("Match the user's requested language", payload["constraints"]["language_mode"])
+        self.assertIn("Default to zh", payload["constraints"]["language_mode"])
+        self.assertFalse(payload["constraints"]["full_chinese_only"])
+        self.assertEqual(payload["style_brief"]["posting_cadence"]["posting_style"], "burst-poster")
+        self.assertEqual(payload["style_brief"]["media_habits"]["dominant_format"], "text-only")
         self.assertEqual(
             payload["style_brief"]["generation_guardrails"]["preferred_openings"],
             ["scene-first"],
         )
+        self.assertEqual(payload["style_brief"]["language_profile"]["mixing_pattern"], "term-only")
+        self.assertEqual(payload["style_brief"]["audience_profile"]["primary_audience"], "crypto-native peers")
         self.assertEqual(payload["theme_keywords"], ["WTDD"])
         self.assertEqual(payload["theme_top_keywords"], ["meme", "energy"])
         self.assertTrue(
@@ -143,6 +228,57 @@ class LlmNormalizationTestCase(unittest.TestCase):
                 for rule in payload["drafting_rules"]
             )
         )
+
+    def test_build_draft_request_payload_full_chinese_prompt_overrides_persona_language_profile(self) -> None:
+        payload = self.client._build_draft_request_payload(
+            persona={
+                "language_profile": {
+                    "primary_language": "en",
+                    "secondary_languages": ["zh"],
+                    "mixing_pattern": "fluid",
+                    "mixing_notes": "switches freely",
+                },
+                "generation_guardrails": {},
+            },
+            prompt="写一条关于WTDD的推文，全中文，不要夹英文。",
+            representative_tweets=[{"text": "WTDD today"}],
+            matched_theme_tweets=[{"text": "WTDD today", "match_terms": ["WTDD"]}],
+            theme_keywords=["WTDD"],
+            theme_top_keywords=["today"],
+            rejected_texts=[],
+            attempt_feedback=[],
+            draft_count=2,
+        )
+
+        self.assertTrue(payload["constraints"]["full_chinese_only"])
+        self.assertIn("Full-Chinese only", payload["constraints"]["language_mode"])
+        self.assertEqual(payload["constraints"]["allowed_english_tokens"], ["wtdd"])
+
+    def test_build_draft_request_payload_explicit_english_prompt_disables_full_chinese_mode(self) -> None:
+        payload = self.client._build_draft_request_payload(
+            persona={
+                "language_profile": {
+                    "primary_language": "zh",
+                    "secondary_languages": ["en"],
+                    "mixing_pattern": "term-only",
+                    "mixing_notes": "keeps English to terms unless asked",
+                },
+                "generation_guardrails": {},
+            },
+            prompt="请用英语写一条关于BTC的推文",
+            representative_tweets=[{"text": "BTC 先看结构"}],
+            matched_theme_tweets=[{"text": "BTC reclaim is the only thing that matters", "match_terms": ["BTC"]}],
+            theme_keywords=["BTC"],
+            theme_top_keywords=["reclaim"],
+            rejected_texts=[],
+            attempt_feedback=[],
+            draft_count=1,
+        )
+
+        self.assertFalse(payload["constraints"]["full_chinese_only"])
+        self.assertIn("explicit English or bilingual request", payload["constraints"]["language_mode"])
+        self.assertEqual(payload["constraints"]["allowed_english_tokens"], [])
+        self.assertEqual(payload["user_prompt"], "请用英语写一条关于BTC的推文")
 
     def test_sanitize_prompt_for_full_chinese_mode_preserves_theme_english_tokens(self) -> None:
         sanitized = self.client._sanitize_prompt_for_full_chinese_mode(
@@ -201,6 +337,189 @@ class LlmNormalizationTestCase(unittest.TestCase):
         self.assertTrue(
             any(issue.startswith("Contains English despite full-Chinese prompt") for issue in evaluation["issues"])
         )
+
+    def test_rule_score_blocks_english_for_plain_chinese_prompt(self) -> None:
+        evaluation = self.client._rule_score_draft(
+            persona={
+                "lexical_markers": [],
+                "banned_phrases": [],
+            },
+            prompt="写一条关于PEPE反弹的帖子。",
+            candidate_text="PEPE rebound looks cleaner now.",
+            source_texts=["PEPE这波先看量能。"],
+            matched_theme_tweets=[{"text": "PEPE反弹的时候情绪会先回来。"}],
+            theme_keywords=["PEPE"],
+            theme_top_keywords=["反弹", "情绪"],
+        )
+
+        self.assertTrue(
+            any(issue.startswith("Contains English despite full-Chinese prompt") for issue in evaluation["issues"])
+        )
+
+    def test_rule_score_allows_english_for_chinese_prompt_that_explicitly_requests_english(self) -> None:
+        evaluation = self.client._rule_score_draft(
+            persona={
+                "lexical_markers": [],
+                "banned_phrases": [],
+            },
+            prompt="请用英语写一条关于BTC的推文",
+            candidate_text="BTC reclaim looks clean here.",
+            source_texts=["BTC 先看量能，再看结构。"],
+            matched_theme_tweets=[{"text": "BTC reclaim looked strong last time."}],
+            theme_keywords=["BTC"],
+            theme_top_keywords=["reclaim", "strong"],
+        )
+
+        self.assertFalse(
+            any(issue.startswith("Contains English despite full-Chinese prompt") for issue in evaluation["issues"])
+        )
+
+    def test_rule_score_penalizes_emotional_and_audience_mismatch(self) -> None:
+        evaluation = self.client._rule_score_draft(
+            persona={
+                "lexical_markers": [],
+                "banned_phrases": [],
+                "emotional_baseline": {"sarcasm_level": "frequent"},
+                "audience_profile": {"formality": "raw"},
+                "posting_cadence": {
+                    "posting_style": "burst-poster",
+                    "preferred_post_length": "short",
+                },
+                "media_habits": {"dominant_format": "text-only"},
+            },
+            prompt="写一条关于PEPE反弹的帖子。",
+            candidate_text=(
+                "PEPE这波走势值得耐心观察。第一，量能已经回来了。第二，情绪也在修复。"
+                "第三，这里更像是一次结构性回升。详见链接。"
+            ),
+            source_texts=["PEPE这波还是先看量能。"],
+            matched_theme_tweets=[{"text": "PEPE反弹的时候情绪会先回来。"}],
+            theme_keywords=["PEPE"],
+            theme_top_keywords=["反弹", "情绪"],
+        )
+
+        self.assertTrue(
+            any(
+                "Polish level is especially misaligned for this persona's casual audience" in issue
+                for issue in evaluation["issues"]
+            )
+        )
+        self.assertTrue(any("Draft lacks expected sarcasm for this persona" in issue for issue in evaluation["issues"]))
+        self.assertTrue(
+            any("Too complete for this persona's posting cadence" in issue for issue in evaluation["issues"])
+        )
+        self.assertTrue(
+            any("Too link-forward for this persona's text-only habit" in issue for issue in evaluation["issues"])
+        )
+
+    def test_rule_score_penalizes_media_led_drafts_that_read_too_complete(self) -> None:
+        evaluation = self.client._rule_score_draft(
+            persona={
+                "lexical_markers": [],
+                "banned_phrases": [],
+                "media_habits": {"dominant_format": "media-led"},
+            },
+            prompt="Write about PEPE momentum",
+            candidate_text=(
+                "PEPE momentum is back in a visible way. First, participation broadened across the board. "
+                "Second, the reaction function looked much cleaner than last week. Third, positioning now matters more."
+            ),
+            source_texts=["PEPE momentum is back"],
+            matched_theme_tweets=[{"text": "PEPE momentum is back"}],
+            theme_keywords=["PEPE"],
+            theme_top_keywords=["momentum"],
+        )
+
+        self.assertTrue(
+            any("Too self-contained for this persona's media-led habit" in issue for issue in evaluation["issues"])
+        )
+
+    def test_rule_score_penalizes_earnest_question_for_high_sarcasm_persona(self) -> None:
+        evaluation = self.client._rule_score_draft(
+            persona={
+                "lexical_markers": [],
+                "banned_phrases": [],
+                "emotional_baseline": {"sarcasm_level": "defining"},
+            },
+            prompt="Write about PEPE momentum",
+            candidate_text="PEPE这波你觉得还能继续走吗？",
+            source_texts=["PEPE这波有点意思。"],
+            matched_theme_tweets=[{"text": "PEPE momentum is back", "match_terms": ["PEPE"]}],
+            theme_keywords=["PEPE"],
+            theme_top_keywords=["momentum"],
+        )
+
+        self.assertTrue(any("Draft lacks expected sarcasm for this persona" in issue for issue in evaluation["issues"]))
+
+    def test_rule_score_penalizes_earnest_question_with_agreement_cue_for_high_sarcasm_persona(self) -> None:
+        evaluation = self.client._rule_score_draft(
+            persona={
+                "lexical_markers": [],
+                "banned_phrases": [],
+                "emotional_baseline": {"sarcasm_level": "defining"},
+            },
+            prompt="Write about BTC structure",
+            candidate_text="现在先等确认更合理，对吧？",
+            source_texts=["这波先等确认，不急着追。"],
+            matched_theme_tweets=[{"text": "BTC structure still needs confirmation", "match_terms": ["BTC"]}],
+            theme_keywords=["BTC"],
+            theme_top_keywords=["structure", "confirmation"],
+        )
+
+        self.assertTrue(any("Draft lacks expected sarcasm for this persona" in issue for issue in evaluation["issues"]))
+
+    def test_rule_score_penalizes_earnest_sentences_with_generic_sarcasm_words(self) -> None:
+        candidates = [
+            "Right now BTC looks strong.",
+            "Of course BTC needs volume confirmation.",
+            "Sure BTC can keep grinding if bids hold.",
+        ]
+
+        for candidate_text in candidates:
+            with self.subTest(candidate_text=candidate_text):
+                evaluation = self.client._rule_score_draft(
+                    persona={
+                        "lexical_markers": [],
+                        "banned_phrases": [],
+                        "emotional_baseline": {"sarcasm_level": "defining"},
+                    },
+                    prompt="Write about BTC structure",
+                    candidate_text=candidate_text,
+                    source_texts=["BTC still needs confirmation."],
+                    matched_theme_tweets=[{"text": "BTC structure still needs confirmation", "match_terms": ["BTC"]}],
+                    theme_keywords=["BTC"],
+                    theme_top_keywords=["BTC"],
+                )
+
+                self.assertTrue(
+                    any("Draft lacks expected sarcasm for this persona" in issue for issue in evaluation["issues"])
+                )
+
+    def test_rule_score_allows_contextual_sarcasm_markers_for_high_sarcasm_persona(self) -> None:
+        candidates = [
+            "Yeah right, BTC just teleports through resistance.",
+            "Sure, because BTC always rewards late longs.",
+        ]
+
+        for candidate_text in candidates:
+            with self.subTest(candidate_text=candidate_text):
+                evaluation = self.client._rule_score_draft(
+                    persona={
+                        "lexical_markers": [],
+                        "banned_phrases": [],
+                        "emotional_baseline": {"sarcasm_level": "defining"},
+                    },
+                    prompt="Write about BTC structure",
+                    candidate_text=candidate_text,
+                    source_texts=["BTC still needs confirmation."],
+                    matched_theme_tweets=[{"text": "BTC structure still needs confirmation", "match_terms": ["BTC"]}],
+                    theme_keywords=["BTC"],
+                    theme_top_keywords=["BTC"],
+                )
+
+                self.assertFalse(
+                    any("Draft lacks expected sarcasm for this persona" in issue for issue in evaluation["issues"])
+                )
 
     def test_generate_drafts_full_chinese_falls_back_to_best_available_candidate(self) -> None:
         rule_result = {
@@ -327,13 +646,19 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
                 },
             ]
         }
-        with patch.object(self.client, "_chat_completion_json", return_value=batch_response):
+        with patch.object(self.client, "_chat_completion_json", return_value=batch_response) as mock_chat:
             results = self.client.score_drafts_batch(
                 persona={
                     "author_summary": "",
                     "voice_traits": [],
                     "do_not_sound_like": [],
                     "generation_guardrails": {},
+                    "language_profile": {"primary_language": "zh"},
+                    "emotional_baseline": {"sarcasm_level": "occasional"},
+                    "audience_profile": {"formality": "casual"},
+                    "interaction_style": {"original_post_tone": "direct"},
+                    "posting_cadence": {"posting_style": "steady"},
+                    "media_habits": {"dominant_format": "text-only"},
                 },
                 prompt="test",
                 candidate_texts=["候选A", "候选B"],
@@ -341,10 +666,19 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
                 theme_keywords=[],
                 theme_top_keywords=[],
             )
+        request_payload = json.loads(mock_chat.call_args.kwargs["user_prompt"])
         self.assertEqual(len(results), 2)
         self.assertEqual(results[0]["score"], 9.0)
         self.assertEqual(results[1]["score"], 7.5)
         self.assertEqual(results[1]["issues"], ["drift"])
+        self.assertIn("language_profile", request_payload["persona"])
+        self.assertIn("emotional_baseline", request_payload["persona"])
+        self.assertIn("audience_profile", request_payload["persona"])
+        self.assertIn("interaction_style", request_payload["persona"])
+        self.assertIn("posting_cadence", request_payload["persona"])
+        self.assertIn("media_habits", request_payload["persona"])
+        self.assertTrue(any("emotional register" in instruction for instruction in request_payload["instructions"]))
+        self.assertTrue(any("interaction_style" in instruction for instruction in request_payload["instructions"]))
 
     def test_batch_returns_defaults_for_missing_indices(self) -> None:
         batch_response = {

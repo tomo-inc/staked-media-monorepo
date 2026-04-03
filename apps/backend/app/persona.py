@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Callable, Sequence
+from datetime import datetime
 from difflib import SequenceMatcher
 from statistics import mean
 from typing import Any
@@ -152,12 +154,65 @@ BILINGUAL_OR_ENGLISH_REQUEST_MARKERS = {
     "codeswitch",
 }
 
+EXPLICIT_CHINESE_OUTPUT_PATTERNS = (
+    re.compile(r"\b(?:in|use|using|only|all|fully|pure)\s+chinese\b", flags=re.IGNORECASE),
+    re.compile(
+        r"\bchinese\s+(?:x\s+)?(?:post|tweet|thread|reply|response|output|draft|version)\b",
+        flags=re.IGNORECASE,
+    ),
+)
+
+EXPLICIT_ENGLISH_OUTPUT_PATTERNS = (
+    re.compile(r"\b(?:in|use|using|only|all|fully|pure)\s+english\b", flags=re.IGNORECASE),
+    re.compile(
+        r"\benglish\s+(?:x\s+)?(?:post|tweet|thread|reply|response|output|draft|version)\b",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(r"(?:用|以)(?:英文|英语)(?:来|去)?(?:写|生成|输出)"),
+    re.compile(
+        r"(?:写|生成|输出)(?:[一二两三四五六七八九十\d]+\s*)?(?:条|篇|个|则|份)?\s*(?:英文|英语)\s*(?:x\s*)?(?:帖子|推文|thread|回复|草稿|版本|内容|文案)"
+    ),
+    re.compile(r"(?:英文|英语)\s*(?:x\s*)?(?:帖子|推文|thread|回复|草稿|版本|内容|文案)"),
+)
+
+EXPLICIT_BILINGUAL_OR_ENGLISH_MARKERS = {
+    "中英双语",
+    "双语",
+    "中英都要",
+    "中英都可以",
+    "中英混写",
+    "中英混着来",
+    "夹带英文",
+    "英文版",
+    "英语版",
+    "in english",
+    "english only",
+    "bilingual",
+    "code-switch",
+    "codeswitch",
+}
+
 SUMMARY_DRIFT_PHRASES = {
     "有趣之处在于",
     "更像是",
     "交汇点",
     "辨识度",
     "生命力",
+}
+
+CHINESE_PROMPT_SCAFFOLD_MARKERS = {
+    "写一条",
+    "写个",
+    "写篇",
+    "关于",
+    "帖子",
+    "推文",
+    "主题",
+    "风格",
+    "口吻",
+    "观点",
+    "不要",
+    "保持",
 }
 
 
@@ -171,16 +226,31 @@ def prompt_requests_full_chinese(prompt: str) -> bool:
     if not normalized_prompt:
         return False
 
-    lowered_prompt = normalized_prompt.lower()
-    compact_prompt = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", lowered_prompt)
-    if any(marker in lowered_prompt or marker in compact_prompt for marker in FULL_CHINESE_PROMPT_MARKERS):
+    explicit_mode = _explicit_prompt_language_mode(normalized_prompt)
+    if explicit_mode == "full_chinese":
         return True
-    if any(marker in lowered_prompt for marker in BILINGUAL_OR_ENGLISH_REQUEST_MARKERS):
+    if explicit_mode == "english_or_bilingual":
         return False
 
     chinese_char_count = len(re.findall(r"[\u4e00-\u9fff]", normalized_prompt))
     latin_char_count = len(re.findall(r"[A-Za-z]", normalized_prompt))
-    return chinese_char_count >= max(6, latin_char_count * 2)
+    if chinese_char_count >= max(6, latin_char_count * 2):
+        return True
+    if chinese_char_count >= 6 and any(marker in normalized_prompt for marker in CHINESE_PROMPT_SCAFFOLD_MARKERS):
+        return True
+    return False
+
+
+def prompt_language_mode(prompt: str) -> str:
+    normalized_prompt = clean_text(prompt)
+    if not normalized_prompt:
+        return "unspecified"
+
+    explicit_mode = _explicit_prompt_language_mode(normalized_prompt)
+    if explicit_mode is not None:
+        return explicit_mode
+
+    return "full_chinese" if prompt_requests_full_chinese(normalized_prompt) else "unspecified"
 
 
 def normalize_for_similarity(text: str) -> str:
@@ -338,12 +408,21 @@ def build_corpus_stats(
     original_or_quote_rows = [row for row in tweet_rows if not row["is_retweet"] or row["is_quote"]]
 
     analysis_rows = original_rows or original_or_quote_rows or tweet_rows
+    authored_rows = original_rows or tweet_rows
     texts = [clean_text(row["text"]) for row in analysis_rows if clean_text(row["text"])]
     all_texts = [clean_text(row["text"]) for row in tweet_rows if clean_text(row["text"])]
+    authored_texts = [clean_text(row["text"]) for row in authored_rows if clean_text(row["text"])]
 
     start_patterns = Counter()
     end_patterns = Counter()
     keyword_counter = Counter()
+    language_counter = Counter()
+    active_hours = Counter()
+    active_days: set[str] = set()
+    engagement_original_scores: list[int] = []
+    engagement_reply_scores: list[int] = []
+    cadence_active_hours = Counter()
+    cadence_active_days: set[str] = set()
 
     for text in texts:
         tokens = WORD_RE.findall(text.lower())
@@ -355,6 +434,30 @@ def build_corpus_stats(
                 continue
             keyword_counter[token] += 1
 
+    bilingual_tweet_ratio = _feature_ratio(all_texts, _is_bilingual_text)
+
+    for row in tweet_rows:
+        lang = clean_text(str(row.get("lang") or "")).lower()
+        if lang:
+            language_counter[lang] += 1
+
+        parsed_created_at = _parse_tweet_timestamp(row.get("created_at"))
+        if parsed_created_at is not None:
+            active_hours[parsed_created_at.hour] += 1
+            active_days.add(parsed_created_at.date().isoformat())
+
+        engagement_score = _engagement_score(row)
+        if not row["is_retweet"]:
+            engagement_original_scores.append(engagement_score)
+        if row["is_reply"]:
+            engagement_reply_scores.append(engagement_score)
+
+    for row in authored_rows:
+        parsed_created_at = _parse_tweet_timestamp(row.get("created_at"))
+        if parsed_created_at is not None:
+            cadence_active_hours[parsed_created_at.hour] += 1
+            cadence_active_days.add(parsed_created_at.date().isoformat())
+
     sample_tweets = select_representative_tweets(tweet_rows, limit=sample_size)
     high_engagement = sorted(
         tweet_rows,
@@ -365,6 +468,19 @@ def build_corpus_stats(
     average_length = round(mean(len(text) for text in texts), 2) if texts else 0.0
     window_start = min((row["created_at"] for row in tweet_rows), default=None)
     window_end = max((row["created_at"] for row in tweet_rows), default=None)
+    language_total = sum(language_counter.values())
+    language_distribution = {
+        lang: round(count / language_total, 3) for lang, count in language_counter.most_common() if language_total > 0
+    }
+    authored_avg_daily_tweets = round(len(authored_rows) / len(cadence_active_days), 2) if cadence_active_days else 0.0
+    authored_avg_length = round(mean(len(text) for text in authored_texts), 2) if authored_texts else 0.0
+    link_ratio_authored = _feature_ratio(authored_texts, lambda text: bool(URL_RE.search(text)))
+    media_attachment_ratio = _feature_ratio(authored_rows, _row_has_media_attachment)
+    text_only_ratio = _feature_ratio(
+        authored_rows,
+        lambda row: not bool(URL_RE.search(clean_text(row.get("text", "")))) and not _row_has_media_attachment(row),
+    )
+    cadence_active_windows = [hour for hour, _ in cadence_active_hours.most_common(3)]
 
     return {
         "profile_snapshot": {
@@ -396,6 +512,43 @@ def build_corpus_stats(
             "top_openings": [pattern for pattern, _ in start_patterns.most_common(10)],
             "top_closings": [pattern for pattern, _ in end_patterns.most_common(10)],
             "top_keywords": [word for word, _ in keyword_counter.most_common(20)],
+        },
+        "language_stats": {
+            "primary_language": language_counter.most_common(1)[0][0] if language_counter else "unknown",
+            "language_distribution": language_distribution,
+            "bilingual_tweet_ratio": bilingual_tweet_ratio,
+        },
+        "engagement_patterns": {
+            "reply_ratio": (
+                round(sum(1 for row in tweet_rows if row["is_reply"]) / total_tweets, 3) if total_tweets else 0.0
+            ),
+            "quote_ratio": (
+                round(sum(1 for row in tweet_rows if row["is_quote"]) / total_tweets, 3) if total_tweets else 0.0
+            ),
+            "avg_engagement_original": (
+                round(mean(engagement_original_scores), 2) if engagement_original_scores else 0.0
+            ),
+            "avg_engagement_reply": round(mean(engagement_reply_scores), 2) if engagement_reply_scores else 0.0,
+        },
+        "temporal_patterns": {
+            "most_active_hours": [hour for hour, _ in active_hours.most_common(3)],
+            "avg_daily_tweets": round(total_tweets / len(active_days), 2) if active_days else 0.0,
+        },
+        "cadence_stats": {
+            "avg_daily_tweets": authored_avg_daily_tweets,
+            "active_windows_utc": cadence_active_windows,
+            "posting_style_hint": _posting_style_hint(authored_avg_daily_tweets, cadence_active_windows),
+            "preferred_post_length_hint": _preferred_post_length_hint(authored_avg_length),
+        },
+        "media_stats": {
+            "text_only_ratio": text_only_ratio,
+            "link_ratio": link_ratio_authored,
+            "media_attachment_ratio": media_attachment_ratio,
+            "dominant_format_hint": _dominant_media_format_hint(
+                text_only_ratio=text_only_ratio,
+                link_ratio=link_ratio_authored,
+                media_attachment_ratio=media_attachment_ratio,
+            ),
         },
         "high_engagement_examples": [
             {
@@ -440,11 +593,11 @@ def select_representative_tweets(tweet_rows: list[dict[str, Any]], limit: int = 
     return selected
 
 
-def _feature_ratio(texts: list[str], matcher) -> float:
-    if not texts:
+def _feature_ratio(items: Sequence[Any], matcher: Callable[[Any], bool]) -> float:
+    if not items:
         return 0.0
-    matches = sum(1 for text in texts if matcher(text))
-    return round(matches / len(texts), 3)
+    matches = sum(1 for item in items if matcher(item))
+    return round(matches / len(items), 3)
 
 
 def _engagement_score(row: dict[str, Any]) -> int:
@@ -532,6 +685,78 @@ def expand_related_keywords(
 
 def extract_english_words(text: str) -> list[str]:
     return WORD_RE.findall(text or "")
+
+
+def _is_bilingual_text(text: str) -> bool:
+    sanitized = clean_text(URL_RE.sub("", MENTION_RE.sub("", text or "")))
+    has_chinese = bool(re.search(r"[\u4e00-\u9fff]", sanitized))
+    has_english = bool(WORD_RE.search(sanitized))
+    return has_chinese and has_english
+
+
+def _explicit_prompt_language_mode(prompt: str) -> str | None:
+    lowered_prompt = prompt.lower()
+    compact_prompt = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", lowered_prompt)
+
+    if any(marker in lowered_prompt or marker in compact_prompt for marker in FULL_CHINESE_PROMPT_MARKERS):
+        return "full_chinese"
+    if any(marker in lowered_prompt for marker in EXPLICIT_BILINGUAL_OR_ENGLISH_MARKERS):
+        return "english_or_bilingual"
+    if any(pattern.search(prompt) for pattern in EXPLICIT_CHINESE_OUTPUT_PATTERNS):
+        return "full_chinese"
+    if any(pattern.search(prompt) for pattern in EXPLICIT_ENGLISH_OUTPUT_PATTERNS):
+        return "english_or_bilingual"
+    return None
+
+
+def _row_has_media_attachment(row: dict[str, Any]) -> bool:
+    raw_json = row.get("raw_json")
+    if not isinstance(raw_json, dict):
+        return False
+    data = raw_json.get("data")
+    if not isinstance(data, dict):
+        return False
+    attachments = data.get("attachments")
+    if not isinstance(attachments, dict):
+        return False
+    media_keys = attachments.get("media_keys")
+    return isinstance(media_keys, list) and bool(media_keys)
+
+
+def _parse_tweet_timestamp(value: Any) -> datetime | None:
+    text = clean_text(str(value or ""))
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _posting_style_hint(avg_daily_tweets: float, active_windows_utc: list[int]) -> str:
+    if avg_daily_tweets >= 5 and len(active_windows_utc) <= 2:
+        return "burst-poster"
+    if avg_daily_tweets < 1:
+        return "sporadic"
+    return "steady"
+
+
+def _preferred_post_length_hint(average_length: float) -> str:
+    if average_length <= 80:
+        return "short"
+    if average_length <= 180:
+        return "medium"
+    return "mixed"
+
+
+def _dominant_media_format_hint(*, text_only_ratio: float, link_ratio: float, media_attachment_ratio: float) -> str:
+    if text_only_ratio >= 0.7:
+        return "text-only"
+    if link_ratio >= 0.35 and link_ratio > media_attachment_ratio:
+        return "link-led"
+    if media_attachment_ratio >= 0.25 and media_attachment_ratio > link_ratio:
+        return "media-led"
+    return "mixed"
 
 
 def _extract_keyword_candidates(text: str) -> list[str]:

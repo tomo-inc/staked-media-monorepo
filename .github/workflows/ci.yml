@@ -65,7 +65,7 @@ jobs:
           cache: npm
           cache-dependency-path: apps/browser-extension/package-lock.json
       - run: npm ci
-      - run: npx biome check src/ tests/
+      - run: npx biome check --error-on-warnings src/ tests/
 
   fe-typecheck:
     name: "Frontend: typecheck"
@@ -98,5 +98,4 @@ jobs:
           cache: npm
           cache-dependency-path: apps/browser-extension/package-lock.json
       - run: npm ci
-      - run: npm run build
-      - run: node --test tests/*.test.js
+      - run: npm run test:compiled

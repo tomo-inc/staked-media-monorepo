@@ -3,10 +3,10 @@ import { build } from "esbuild";
 const entries = [
   ["src/scripts/shared.ts", "dist/shared.js"],
   ["src/scripts/panel-helpers.ts", "dist/panel-helpers.js"],
-  ["src/entries/background.js", "dist/background.js"],
-  ["src/entries/content-script.js", "dist/content-script.js"],
-  ["src/entries/panel.js", "dist/panel.js"],
-  ["src/entries/options.js", "dist/options.js"]
+  ["src/entries/background.ts", "dist/background.js"],
+  ["src/entries/content-script.ts", "dist/content-script.js"],
+  ["src/entries/panel.ts", "dist/panel.js"],
+  ["src/entries/options.ts", "dist/options.js"]
 ];
 
 await Promise.all(
