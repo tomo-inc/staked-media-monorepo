@@ -232,6 +232,26 @@ test("background save_config rejects non-whitelisted backend hosts", async () =>
 	);
 });
 
+test("background generate defaults to drafts api mode when config is not persisted", async () => {
+	const seenUrls = [];
+	const harness = createBackgroundHarness({
+		fetch: async (url) => {
+			seenUrls.push(String(url));
+			return createJsonResponse(200, { drafts: [{ text: "alpha" }] });
+		},
+	});
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage(harness.listeners.onMessage, {
+		type: "generate",
+		payload: { username: "alice", idea: "btc", draft_count: 2 },
+	});
+
+	assert.equal(response.ok, true);
+	assert.equal(response.result.drafts[0].text, "alpha");
+	assert.match(seenUrls[0], /\/api\/v1\/drafts\/generate$/);
+});
+
 test("background check_profile converts api 403 into username-specific whitelist message", async () => {
 	const harness = createBackgroundHarness({
 		fetch: async () => createJsonResponse(403, { detail: "forbidden" }),

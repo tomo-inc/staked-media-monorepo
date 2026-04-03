@@ -1,3 +1,7 @@
+interface StakedMediaExtensionSharedHost {
+	StakedMediaExtensionShared?: unknown;
+}
+
 (function (globalRoot, factory) {
 	const api = factory();
 	globalRoot.StakedMediaExtensionShared = api;
@@ -5,7 +9,9 @@
 		module.exports = api;
 	}
 })(
-	typeof globalThis !== "undefined" ? (globalThis as any) : (this as any),
+	typeof globalThis !== "undefined"
+		? (globalThis as StakedMediaExtensionSharedHost)
+		: (this as StakedMediaExtensionSharedHost),
 	function () {
 		const FALLBACK_BACKEND_BASE_URL = "https://api.sayviner.top:8443";
 
@@ -45,10 +51,22 @@
 			};
 		}
 
+		type DraftRecord = { text?: string } & Record<string, unknown>;
+
+		interface DraftVariant {
+			drafts?: DraftRecord[] | null;
+		}
+
+		interface DraftSource {
+			drafts?: DraftRecord[] | null;
+			variants?: DraftVariant[] | null;
+			formatted_drafts?: string[] | null;
+		}
+
 		const DEFAULT_CONFIG: Readonly<ExtensionConfig> = Object.freeze({
 			defaultUsername: "",
 			backendBaseUrl: FALLBACK_BACKEND_BASE_URL,
-			apiMode: "content",
+			apiMode: "drafts",
 			theme: "light",
 			hostMode: "sidepanel",
 		});
@@ -148,8 +166,8 @@
 		}
 
 		function extractDrafts(
-			result: any,
-		): Array<{ text?: string } & Record<string, unknown>> {
+			result: DraftSource | null | undefined,
+		): DraftRecord[] {
 			if (!result) return [];
 			if (Array.isArray(result.drafts) && result.drafts.length) {
 				return result.drafts;
@@ -188,10 +206,10 @@
 			message: unknown,
 		): Promise<TResponse> {
 			return new Promise((resolve, reject) => {
-				(chrome as any).runtime.sendMessage(
+				chrome.runtime.sendMessage(
 					message,
 					(response: RuntimeResponse<TResponse> & TResponse) => {
-						const runtimeError = (chrome as any).runtime.lastError;
+						const runtimeError = chrome.runtime.lastError;
 						if (runtimeError) {
 							reject(new Error(runtimeError.message));
 							return;

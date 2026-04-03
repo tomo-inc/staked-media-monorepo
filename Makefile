@@ -4,7 +4,7 @@ BE_CONFIG ?= config.json
 
 .PHONY: lint format typecheck check test build \
         be-lint be-format be-format-check be-typecheck be-check be-test be-run \
-        fe-lint fe-format fe-typecheck fe-check fe-build fe-test \
+        fe-lint fe-format fe-format-check fe-typecheck fe-check fe-build fe-test \
         fe-install
 
 # ── Backend ──────────────────────────────────────────────
@@ -35,10 +35,13 @@ fe-install:
 	cd $(FE_DIR) && npm install
 
 fe-lint:
-	cd $(FE_DIR) && npx biome check src/ tests/
+	cd $(FE_DIR) && npx biome check --error-on-warnings src/ tests/
 
 fe-format:
 	cd $(FE_DIR) && npx biome format --write src/ tests/
+
+fe-format-check:
+	cd $(FE_DIR) && npx biome format src/ tests/
 
 fe-typecheck:
 	cd $(FE_DIR) && npx tsc --noEmit -p tsconfig.json
@@ -46,7 +49,7 @@ fe-typecheck:
 fe-build:
 	cd $(FE_DIR) && npm run build
 
-fe-check: fe-lint fe-typecheck
+fe-check: fe-lint fe-format-check fe-typecheck
 
 fe-test: fe-build
 	cd $(FE_DIR) && node --test tests/*.test.js
