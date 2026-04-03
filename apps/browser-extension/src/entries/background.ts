@@ -1,18 +1,89 @@
 importScripts("shared.js");
 
+type BackgroundGlobalRoot = typeof globalThis & {
+	StakedMediaExtensionShared: StakedMediaExtensionSharedApi;
+};
+
+interface RuntimeErrorWithStatus extends Error {
+	status?: number;
+	payload?: unknown;
+}
+
+interface ProfileRecord extends Record<string, unknown> {
+	username?: string;
+	followers_count?: number;
+	following_count?: number;
+}
+
+interface PersonaSnapshotRecord extends Record<string, unknown> {
+	persona?: Record<string, unknown>;
+}
+
+interface HealthApiPayload {
+	status?: string;
+}
+
+interface CheckProfileApiPayload {
+	profile?: ProfileRecord | null;
+	stored_tweet_count?: number;
+	latest_persona_snapshot?: PersonaSnapshotRecord | null;
+}
+
+interface ComposerBridgeState {
+	available?: boolean;
+	message?: string;
+}
+
+interface InsertComposerBridgeResponse {
+	ok?: boolean;
+	error?: {
+		message?: string;
+	} | null;
+}
+
+interface RequestJsonOptions {
+	path: string;
+	method: "GET" | "POST";
+	body?: Record<string, unknown>;
+	deniedUsername?: string;
+}
+
+interface ComposerStateResult {
+	available: boolean;
+	supportedPage: boolean;
+	message: string;
+	tabTitle: string;
+	tabUrl: string;
+}
+
+interface TargetTabResult {
+	tab: ChromeTabLike | null;
+	windowId: number | null;
+}
+
+type BackgroundPayload = Record<string, unknown>;
+type BackgroundMessage =
+	| {
+			type?: string;
+			payload?: BackgroundPayload;
+	  }
+	| null
+	| undefined;
+
 const {
-	DEFAULT_CONFIG,
+	DEFAULT_CONFIG: SHARED_DEFAULT_CONFIG,
 	FALLBACK_BACKEND_BASE_URL,
 	coerceWindowId,
 	normalizeBaseUrl,
 	normalizeHostMode,
 	routeMessage,
 	sanitizeConfig,
-} = globalThis.StakedMediaExtensionShared;
+} = (globalThis as BackgroundGlobalRoot).StakedMediaExtensionShared;
 
 const API = {
 	healthz: "/healthz",
-	profile: (username) => `/api/v1/profiles/${encodeURIComponent(username)}`,
+	profile: (username: string) =>
+		`/api/v1/profiles/${encodeURIComponent(username)}`,
 	ingest: "/api/v1/profiles/ingest",
 	draftsGenerate: "/api/v1/drafts/generate",
 	contentGenerate: "/api/v1/content/generate",
@@ -23,18 +94,18 @@ const API = {
 initializeHostBehavior();
 
 chrome.runtime.onInstalled.addListener(async () => {
-	const current = await storageGet(Object.keys(DEFAULT_CONFIG));
+	const current = await storageGet(Object.keys(SHARED_DEFAULT_CONFIG));
 	const nextConfig = sanitizeConfig(current);
 	await storageSet(nextConfig);
 	await applyHostMode(nextConfig.hostMode);
 });
 
 chrome.runtime.onStartup.addListener(() => {
-	initializeHostBehavior();
+	void initializeHostBehavior();
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-	handleMessage(message, _sender)
+	handleMessage(message)
 		.then((payload) => sendResponse({ ok: true, ...payload }))
 		.catch((error) =>
 			sendResponse({ ok: false, error: normalizeError(error) }),
@@ -42,47 +113,54 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	return true;
 });
 
-async function handleMessage(message) {
-	return routeMessage(message, {
-		get_config: async () => ({ config: await getConfig() }),
-		save_config: async (payload) => ({
-			config: await saveConfig(payload || {}),
-		}),
-		health_check: async () => ({ health: await healthCheck() }),
-		check_profile: async (payload) => ({
-			profile: await checkProfile(payload || {}),
-		}),
-		ingest_profile: async (payload) => ({
-			result: await ingestProfile(payload || {}),
-		}),
-		generate: async (payload) => ({ result: await generate(payload || {}) }),
-		generate_drafts: async (payload) => ({
-			result: await generateDrafts(payload || {}),
-		}),
-		generate_content: async (payload) => ({
-			result: await generateContent(payload || {}),
-		}),
-		suggest_ideas: async (payload) => ({
-			result: await suggestIdeas(payload || {}),
-		}),
-		analyze_exposure: async (payload) => ({
-			result: await analyzeExposure(payload || {}),
-		}),
-		get_composer_state: async (payload) => ({
-			composer: await getComposerState(payload || {}),
-		}),
-		insert_text: async (payload) => ({
-			result: await insertTextIntoComposer(payload || {}),
-		}),
-	});
+async function handleMessage(
+	message: unknown,
+): Promise<Record<string, unknown>> {
+	return routeMessage<BackgroundPayload, Record<string, unknown>>(
+		message as BackgroundMessage,
+		{
+			get_config: async () => ({ config: await getConfig() }),
+			save_config: async (payload) => ({
+				config: await saveConfig(payload || {}),
+			}),
+			health_check: async () => ({ health: await healthCheck() }),
+			check_profile: async (payload) => ({
+				profile: await checkProfile(payload || {}),
+			}),
+			ingest_profile: async (payload) => ({
+				result: await ingestProfile(payload || {}),
+			}),
+			generate: async (payload) => ({ result: await generate(payload || {}) }),
+			generate_drafts: async (payload) => ({
+				result: await generateDrafts(payload || {}),
+			}),
+			generate_content: async (payload) => ({
+				result: await generateContent(payload || {}),
+			}),
+			suggest_ideas: async (payload) => ({
+				result: await suggestIdeas(payload || {}),
+			}),
+			analyze_exposure: async (payload) => ({
+				result: await analyzeExposure(payload || {}),
+			}),
+			get_composer_state: async (payload) => ({
+				composer: await getComposerState(payload || {}),
+			}),
+			insert_text: async (payload) => ({
+				result: await insertTextIntoComposer(payload || {}),
+			}),
+		},
+	);
 }
 
-async function getConfig() {
-	const stored = await storageGet(Object.keys(DEFAULT_CONFIG));
+async function getConfig(): Promise<StakedMediaExtensionConfig> {
+	const stored = await storageGet(Object.keys(SHARED_DEFAULT_CONFIG));
 	return sanitizeConfig(stored);
 }
 
-async function saveConfig(patch) {
+async function saveConfig(
+	patch: BackgroundPayload,
+): Promise<StakedMediaExtensionConfig> {
 	const nextConfig = sanitizeConfig(
 		{
 			...(await getConfig()),
@@ -95,15 +173,19 @@ async function saveConfig(patch) {
 	return nextConfig;
 }
 
-async function getBackendBaseUrl() {
+async function getBackendBaseUrl(): Promise<string> {
 	const config = await getConfig();
 	return normalizeBaseUrl(config.backendBaseUrl || FALLBACK_BACKEND_BASE_URL);
 }
 
-async function healthCheck() {
+async function healthCheck(): Promise<{
+	baseUrl: string;
+	status: string;
+	latencyMs: number;
+}> {
 	const baseUrl = await getBackendBaseUrl();
 	const start = performance.now();
-	const payload = await requestJson({
+	const payload = await requestJson<HealthApiPayload>({
 		path: API.healthz,
 		method: "GET",
 	});
@@ -115,10 +197,17 @@ async function healthCheck() {
 	};
 }
 
-async function checkProfile({ username }) {
+async function checkProfile({ username }: BackgroundPayload): Promise<{
+	exists: boolean;
+	username: string;
+	storedTweetCount: number;
+	personaReady: boolean;
+	profile: ProfileRecord | null;
+	latestPersonaSnapshot: PersonaSnapshotRecord | null;
+}> {
 	const normalizedUsername = assertNonEmpty(username, "username");
 	try {
-		const payload = await requestJson({
+		const payload = await requestJson<CheckProfileApiPayload>({
 			path: API.profile(normalizedUsername),
 			method: "GET",
 			deniedUsername: normalizedUsername,
@@ -132,7 +221,8 @@ async function checkProfile({ username }) {
 			latestPersonaSnapshot: payload.latest_persona_snapshot || null,
 		};
 	} catch (error) {
-		if (error && typeof error === "object" && error.status === 404) {
+		const runtimeError = error as RuntimeErrorWithStatus;
+		if (runtimeError && runtimeError.status === 404) {
 			return {
 				exists: false,
 				username: normalizedUsername,
@@ -146,11 +236,13 @@ async function checkProfile({ username }) {
 	}
 }
 
-async function ingestProfile(payload) {
+async function ingestProfile(
+	payload: BackgroundPayload,
+): Promise<Record<string, unknown>> {
 	const body = {
 		username: assertNonEmpty(payload.username, "username"),
 	};
-	const result = await requestJson({
+	const result = await requestJson<Record<string, unknown>>({
 		path: API.ingest,
 		method: "POST",
 		body,
@@ -160,7 +252,7 @@ async function ingestProfile(payload) {
 	return result;
 }
 
-async function generate(payload) {
+async function generate(payload: BackgroundPayload): Promise<unknown> {
 	const config = await getConfig();
 	if (config.apiMode === "drafts") {
 		return generateDrafts(payload);
@@ -168,13 +260,13 @@ async function generate(payload) {
 	return generateContent(payload);
 }
 
-async function generateDrafts(payload) {
+async function generateDrafts(payload: BackgroundPayload): Promise<unknown> {
 	const body = {
 		username: assertNonEmpty(payload.username, "username"),
 		prompt: assertNonEmpty(payload.idea || payload.prompt, "idea"),
 		draft_count: clampInt(payload.draft_count || 3, 1, 10),
 	};
-	const result = await requestJson({
+	const result = await requestJson<unknown>({
 		path: API.draftsGenerate,
 		method: "POST",
 		body,
@@ -184,7 +276,7 @@ async function generateDrafts(payload) {
 	return result;
 }
 
-async function generateContent(payload) {
+async function generateContent(payload: BackgroundPayload): Promise<unknown> {
 	const body = {
 		username: assertNonEmpty(payload.username, "username"),
 		mode: "A",
@@ -192,7 +284,7 @@ async function generateContent(payload) {
 		topic: String(payload.topic || payload.idea || "").trim(),
 		draft_count: clampInt(payload.draft_count || 3, 1, 10),
 	};
-	const result = await requestJson({
+	const result = await requestJson<unknown>({
 		path: API.contentGenerate,
 		method: "POST",
 		body,
@@ -202,28 +294,32 @@ async function generateContent(payload) {
 	return result;
 }
 
-async function suggestIdeas(payload) {
+async function suggestIdeas(
+	payload: BackgroundPayload,
+): Promise<Record<string, unknown> | null> {
 	const body = {
 		direction: String(payload.direction || "").trim(),
 		domain: String(payload.domain || "").trim(),
 		topic_hint: String(payload.topic_hint || "").trim(),
 		limit: clampInt(payload.limit || 8, 1, 20),
 	};
-	return requestJson({
+	return requestJson<Record<string, unknown> | null>({
 		path: API.contentIdeas,
 		method: "POST",
 		body,
 	});
 }
 
-async function analyzeExposure(payload) {
+async function analyzeExposure(
+	payload: BackgroundPayload,
+): Promise<Record<string, unknown> | null> {
 	const body = {
 		username: String(payload.username || "").trim(),
 		text: assertNonEmpty(payload.text, "text"),
 		topic: String(payload.topic || "").trim(),
 		domain: String(payload.domain || "").trim(),
 	};
-	return requestJson({
+	return requestJson<Record<string, unknown> | null>({
 		path: API.exposureAnalyze,
 		method: "POST",
 		body,
@@ -231,7 +327,9 @@ async function analyzeExposure(payload) {
 	});
 }
 
-async function getComposerState(payload) {
+async function getComposerState(
+	payload: BackgroundPayload,
+): Promise<ComposerStateResult> {
 	const target = await resolveTargetTab(payload.targetWindowId);
 	if (!target.tab) {
 		return {
@@ -254,9 +352,12 @@ async function getComposerState(payload) {
 	}
 
 	try {
-		const response = await chrome.tabs.sendMessage(target.tab.id, {
-			type: "get_composer_state",
-		});
+		const response = await chrome.tabs.sendMessage<ComposerBridgeState>(
+			target.tab.id as number,
+			{
+				type: "get_composer_state",
+			},
+		);
 		return {
 			available: Boolean(response?.available),
 			supportedPage: true,
@@ -275,7 +376,11 @@ async function getComposerState(payload) {
 	}
 }
 
-async function insertTextIntoComposer(payload) {
+async function insertTextIntoComposer(payload: BackgroundPayload): Promise<{
+	inserted: boolean;
+	tabTitle: string;
+	tabUrl: string;
+}> {
 	const target = await resolveTargetTab(payload.targetWindowId);
 	const tab = target.tab;
 	if (!tab) {
@@ -287,12 +392,15 @@ async function insertTextIntoComposer(payload) {
 		throw new Error("The active tab is not x.com or twitter.com.");
 	}
 
-	const response = await chrome.tabs.sendMessage(tab.id, {
-		type: "insert_text",
-		payload: {
-			text: assertNonEmpty(payload.text, "text"),
+	const response = await chrome.tabs.sendMessage<InsertComposerBridgeResponse>(
+		tab.id as number,
+		{
+			type: "insert_text",
+			payload: {
+				text: assertNonEmpty(payload.text, "text"),
+			},
 		},
-	});
+	);
 
 	if (!response?.ok) {
 		throw new Error(
@@ -308,9 +416,14 @@ async function insertTextIntoComposer(payload) {
 	};
 }
 
-async function requestJson({ path, method, body, deniedUsername }) {
+async function requestJson<TResponse = unknown>({
+	path,
+	method,
+	body,
+	deniedUsername,
+}: RequestJsonOptions): Promise<TResponse> {
 	const baseUrl = await getBackendBaseUrl();
-	let response;
+	let response: Response;
 	try {
 		response = await fetch(`${baseUrl}${path}`, {
 			method,
@@ -326,7 +439,7 @@ async function requestJson({ path, method, body, deniedUsername }) {
 	}
 
 	const rawText = await response.text();
-	let payload = null;
+	let payload: unknown = null;
 	if (rawText) {
 		try {
 			payload = JSON.parse(rawText);
@@ -337,25 +450,27 @@ async function requestJson({ path, method, body, deniedUsername }) {
 
 	if (!response.ok) {
 		if (response.status === 403 && path.startsWith("/api/v1/")) {
-			const error = new Error(formatForbiddenMessage(deniedUsername));
+			const error = new Error(
+				formatForbiddenMessage(deniedUsername),
+			) as RuntimeErrorWithStatus;
 			error.status = response.status;
 			error.payload = payload;
 			throw error;
 		}
 		const detail =
 			payload && typeof payload === "object" && !Array.isArray(payload)
-				? payload.detail || JSON.stringify(payload)
+				? (payload as { detail?: unknown }).detail || JSON.stringify(payload)
 				: String(payload || response.statusText || "Request failed");
-		const error = new Error(detail);
+		const error = new Error(String(detail)) as RuntimeErrorWithStatus;
 		error.status = response.status;
 		error.payload = payload;
 		throw error;
 	}
 
-	return payload;
+	return payload as TResponse;
 }
 
-function formatForbiddenMessage(username) {
+function formatForbiddenMessage(username: unknown): string {
 	const normalizedUsername = String(username || "").trim();
 	if (normalizedUsername) {
 		const handle = normalizedUsername.startsWith("@")
@@ -366,7 +481,7 @@ function formatForbiddenMessage(username) {
 	return "This user is not allowed. Please contact the administrator.";
 }
 
-function clampInt(value, min, max) {
+function clampInt(value: unknown, min: number, max: number): number {
 	const parsed = Number.parseInt(String(value), 10);
 	if (!Number.isFinite(parsed)) {
 		return min;
@@ -374,7 +489,7 @@ function clampInt(value, min, max) {
 	return Math.min(max, Math.max(min, parsed));
 }
 
-function assertNonEmpty(value, name) {
+function assertNonEmpty(value: unknown, name: string): string {
 	const normalized = String(value || "").trim();
 	if (!normalized) {
 		throw new Error(`${name} is required`);
@@ -382,48 +497,61 @@ function assertNonEmpty(value, name) {
 	return normalized;
 }
 
-function normalizeError(error) {
+function normalizeError(error: unknown): {
+	message: string;
+	status?: number;
+	payload?: unknown;
+} {
 	if (!error) {
 		return { message: "Unknown error" };
 	}
 	if (typeof error === "string") {
 		return { message: error };
 	}
+	const runtimeError = error as RuntimeErrorWithStatus;
 	return {
-		message: String(error.message || error),
-		status: Number.isFinite(error.status) ? error.status : undefined,
-		payload: error.payload,
+		message: String(runtimeError.message || error),
+		status: Number.isFinite(runtimeError.status)
+			? runtimeError.status
+			: undefined,
+		payload: runtimeError.payload,
 	};
 }
 
-function storageGet(keys) {
+function storageGet(keys: string[]): Promise<Record<string, unknown>> {
 	return new Promise((resolve) => chrome.storage.sync.get(keys, resolve));
 }
 
-function storageSet(values) {
-	return new Promise((resolve) => chrome.storage.sync.set(values, resolve));
+function storageSet(
+	values: Record<string, unknown> | StakedMediaExtensionConfig,
+): Promise<void> {
+	return new Promise((resolve) =>
+		chrome.storage.sync.set(values as Record<string, unknown>, resolve),
+	);
 }
 
-async function initializeHostBehavior() {
+async function initializeHostBehavior(): Promise<void> {
 	const config = await getConfig();
 	await applyHostMode(config.hostMode);
 }
 
-async function applyHostMode(hostMode) {
+async function applyHostMode(hostMode: unknown): Promise<void> {
 	const normalizedHostMode = normalizeHostMode(hostMode);
 	await chrome.action
 		.setPopup({
 			popup: normalizedHostMode === "popup" ? "panel.html?host=popup" : "",
 		})
-		.catch(() => undefined);
+		.catch((): void => undefined);
 	return chrome.sidePanel
 		.setPanelBehavior({
 			openPanelOnActionClick: normalizedHostMode === "sidepanel",
 		})
-		.catch(() => undefined);
+		.catch((): void => undefined);
 }
 
-async function resolveTargetTab(targetWindowId) {
+async function resolveTargetTab(
+	targetWindowId: unknown,
+): Promise<TargetTabResult> {
 	const windowId = await resolveNormalWindowId(targetWindowId);
 	if (!windowId) {
 		return { tab: null, windowId: null };
@@ -438,7 +566,9 @@ async function resolveTargetTab(targetWindowId) {
 	};
 }
 
-async function resolveNormalWindowId(candidate) {
+async function resolveNormalWindowId(
+	candidate: unknown,
+): Promise<number | null> {
 	const explicitWindowId = coerceWindowId(candidate);
 	if (explicitWindowId) {
 		const directMatch = await getNormalWindow(explicitWindowId);
@@ -464,7 +594,9 @@ async function resolveNormalWindowId(candidate) {
 	return fallbackWindow?.id || null;
 }
 
-async function getNormalWindow(windowId) {
+async function getNormalWindow(
+	windowId: number,
+): Promise<ChromeWindowLike | null> {
 	try {
 		const windowInfo = await chrome.windows.get(windowId);
 		if (windowInfo?.type === "normal") {
@@ -476,7 +608,7 @@ async function getNormalWindow(windowId) {
 	return null;
 }
 
-function isXTab(tab) {
+function isXTab(tab: ChromeTabLike | null | undefined): boolean {
 	const url = String(tab?.url || "");
 	return /^https:\/\/(?:x|twitter)\.com\//.test(url);
 }

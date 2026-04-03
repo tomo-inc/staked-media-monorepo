@@ -51,8 +51,8 @@ fe-build:
 
 fe-check: fe-lint fe-format-check fe-typecheck
 
-fe-test: fe-build
-	cd $(FE_DIR) && node --test tests/*.test.js
+fe-test:
+	cd $(FE_DIR) && npm run test:compiled
 
 # ── All ──────────────────────────────────────────────────
 

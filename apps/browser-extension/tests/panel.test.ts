@@ -1,11 +1,14 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import test from "node:test";
 
-const {
-	buildPanelShell,
-	deriveConnectionIndicator,
-	isWhitelistDeniedError,
-} = require("../dist/panel-helpers.js");
+const require = createRequire(import.meta.url);
+
+const { buildPanelShell, deriveConnectionIndicator, isWhitelistDeniedError } =
+	require("../dist/panel-helpers.js") as Pick<
+		StakedMediaPanelHelpersApi,
+		"buildPanelShell" | "deriveConnectionIndicator" | "isWhitelistDeniedError"
+	>;
 
 test("deriveConnectionIndicator distinguishes loading from failed health checks", () => {
 	const loading = deriveConnectionIndicator({

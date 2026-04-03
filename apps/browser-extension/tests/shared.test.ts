@@ -1,5 +1,8 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import test from "node:test";
+
+const require = createRequire(import.meta.url);
 
 const {
 	DEFAULT_CONFIG,
@@ -7,7 +10,14 @@ const {
 	extractDrafts,
 	routeMessage,
 	sanitizeConfig,
-} = require("../dist/shared.js");
+} = require("../dist/shared.js") as Pick<
+	StakedMediaExtensionSharedApi,
+	| "DEFAULT_CONFIG"
+	| "escapeHtml"
+	| "extractDrafts"
+	| "routeMessage"
+	| "sanitizeConfig"
+>;
 
 test("routeMessage dispatches supported handlers", async () => {
 	const result = await routeMessage(
@@ -118,7 +128,12 @@ test("sanitizeConfig falls back for non-whitelisted hosts in non-strict mode", (
 
 test("sanitizeConfig keeps system theme and ignores unknown themes", () => {
 	assert.equal(sanitizeConfig({ theme: "system" }).theme, "system");
-	assert.equal(sanitizeConfig({ theme: "neon" }).theme, DEFAULT_CONFIG.theme);
+	assert.equal(
+		sanitizeConfig({
+			theme: "neon" as unknown as StakedMediaThemeMode,
+		}).theme,
+		DEFAULT_CONFIG.theme,
+	);
 });
 
 test("extractDrafts prefers direct drafts and variant drafts", () => {

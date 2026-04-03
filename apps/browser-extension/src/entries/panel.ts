@@ -1,20 +1,164 @@
+interface PanelWindow extends Window {
+	StakedMediaExtensionShared: StakedMediaExtensionSharedApi;
+	StakedMediaPanelHelpers: StakedMediaPanelHelpersApi;
+}
+
+interface RuntimeErrorWithStatus extends Error {
+	status?: number;
+	payload?: unknown;
+}
+
+interface PanelHealth {
+	baseUrl?: string;
+	status?: string;
+	latencyMs?: number;
+}
+
+interface ProfileRecord extends Record<string, unknown> {
+	followers_count?: number;
+	following_count?: number;
+}
+
+interface PersonaTopicCluster {
+	label?: string;
+	name?: string;
+}
+
+interface PersonaPayload {
+	author_summary?: string;
+	voice_traits?: string[];
+	topic_clusters?: PersonaTopicCluster[];
+}
+
+interface PersonaSnapshot {
+	persona?: PersonaPayload | null;
+}
+
+interface PanelProfileState {
+	exists: boolean;
+	username: string;
+	storedTweetCount: number;
+	personaReady: boolean;
+	profile: ProfileRecord | null;
+	latestPersonaSnapshot: PersonaSnapshot | null;
+}
+
+interface PanelConfigResponse {
+	config: StakedMediaExtensionConfig;
+}
+
+interface PanelHealthResponse {
+	health?: PanelHealth;
+}
+
+interface PanelCheckProfileResponse {
+	profile: PanelProfileState;
+}
+
+interface PanelIngestProfileResult {
+	username?: string;
+	fetched_tweet_count?: number;
+	profile?: ProfileRecord | null;
+	persona?: PersonaPayload | null;
+}
+
+interface PanelIngestProfileResponse {
+	result: PanelIngestProfileResult;
+}
+
+interface PanelGenerateResponse {
+	result: StakedMediaDraftSource | null;
+}
+
+interface PanelComposerResponse {
+	composer?: {
+		available?: boolean;
+		message?: string;
+	} | null;
+}
+
+interface GenerationProgress {
+	percent: number;
+	message: string;
+}
+
+type PanelView = "main" | "settings";
+type PanelSettingsPage = "home" | "api";
+type PanelTab = "profile" | "draft";
+type HealthState = "loading" | "ready" | "error";
+type PanelStatusKind = "" | "warn";
+type PanelDraftLike = StakedMediaDraftRecord | string;
+
+interface PanelState {
+	config: StakedMediaExtensionConfig | null;
+	health: PanelHealth | null;
+	latencyMs: number | null;
+	healthState: HealthState;
+	generated: StakedMediaDraftSource | null;
+	lastGenerateDurationMs: number | null;
+	loading: boolean;
+	composerAvailable: boolean;
+	composerMessage: string;
+	currentWindowId: number | null;
+	targetWindowId: number | null;
+	currentView: PanelView;
+	settingsPage: PanelSettingsPage;
+	activeTab: PanelTab;
+	profile: PanelProfileState | null;
+	profileLoading: boolean;
+	usernameError: string;
+	generationProgress: GenerationProgress | null;
+	generationProgressTimer: number | null;
+	generationStartedAt: number | null;
+}
+
+interface PanelUi {
+	headerTitle: HTMLElement;
+	username: HTMLInputElement;
+	idea: HTMLTextAreaElement;
+	draftCount: HTMLInputElement;
+	generateButton: HTMLButtonElement;
+	openSettingsButton: HTMLButtonElement;
+	closeSettingsButton: HTMLButtonElement;
+	openApiSettingsButton: HTMLButtonElement;
+	toggleOpenModeButton: HTMLButtonElement;
+	statusSection: HTMLElement;
+	status: HTMLElement;
+	usernameError: HTMLElement;
+	results: HTMLElement;
+	composer: HTMLElement;
+	dot: HTMLElement;
+	latencyText: HTMLElement;
+	settingsStatusSection: HTMLElement;
+	settingsStatus: HTMLElement;
+	sBackendBaseUrl: HTMLInputElement;
+	sApiModeDrafts: HTMLInputElement;
+	sApiModeContent: HTMLInputElement;
+	sTheme: HTMLSelectElement;
+	sHostModeTitle: HTMLElement;
+	profileInfo: HTMLElement;
+	views: NodeListOf<HTMLElement>;
+	settingsPages: NodeListOf<HTMLElement>;
+}
+
 (function () {
+	const panelWindow = window as PanelWindow;
 	const {
 		DEFAULT_CONFIG,
 		coerceWindowId,
 		escapeHtml,
 		extractDrafts,
 		sendRuntimeMessage,
-	} = window.StakedMediaExtensionShared;
+	} = panelWindow.StakedMediaExtensionShared;
 	const { buildPanelShell, deriveConnectionIndicator, isWhitelistDeniedError } =
-		window.StakedMediaPanelHelpers;
+		panelWindow.StakedMediaPanelHelpers;
 	const params = new URLSearchParams(window.location.search);
 	const HOST_MODE = params.get("host") === "popup" ? "popup" : "sidepanel";
 	const systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
 	const SETTINGS_DEFAULTS = { ...DEFAULT_CONFIG };
 
-	const STATE = {
+	const STATE: PanelState = {
 		config: null,
 		health: null,
 		latencyMs: null,
@@ -37,45 +181,79 @@
 		generationStartedAt: null,
 	};
 
-	const root = document.getElementById("app");
+	const root = document.getElementById("app") as HTMLElement;
 	root.innerHTML = buildPanelShell();
 	root.firstElementChild?.setAttribute("data-host", HOST_MODE);
 
-	const ui = {
-		headerTitle: root.querySelector('[data-slot="header-title"]'),
-		username: root.querySelector('[data-field="username"]'),
-		idea: root.querySelector('[data-field="idea"]'),
-		draftCount: root.querySelector('[data-field="draftCount"]'),
-		generateButton: root.querySelector('[data-action="generate"]'),
-		openSettingsButton: root.querySelector('[data-action="open-settings"]'),
-		closeSettingsButton: root.querySelector('[data-action="close-settings"]'),
+	const ui: PanelUi = {
+		headerTitle: root.querySelector(
+			'[data-slot="header-title"]',
+		) as HTMLElement,
+		username: root.querySelector('[data-field="username"]') as HTMLInputElement,
+		idea: root.querySelector('[data-field="idea"]') as HTMLTextAreaElement,
+		draftCount: root.querySelector(
+			'[data-field="draftCount"]',
+		) as HTMLInputElement,
+		generateButton: root.querySelector(
+			'[data-action="generate"]',
+		) as HTMLButtonElement,
+		openSettingsButton: root.querySelector(
+			'[data-action="open-settings"]',
+		) as HTMLButtonElement,
+		closeSettingsButton: root.querySelector(
+			'[data-action="close-settings"]',
+		) as HTMLButtonElement,
 		openApiSettingsButton: root.querySelector(
 			'[data-action="open-api-settings"]',
-		),
+		) as HTMLButtonElement,
 		toggleOpenModeButton: root.querySelector(
 			'[data-action="toggle-open-mode"]',
-		),
-		statusSection: root.querySelector('[data-slot="status-section"]'),
-		status: root.querySelector('[data-slot="status"]'),
-		usernameError: root.querySelector('[data-slot="username-error"]'),
-		results: root.querySelector('[data-slot="results"]'),
-		composer: root.querySelector('[data-slot="composer"]'),
-		dot: root.querySelector('[data-slot="connection"]'),
-		latencyText: root.querySelector('[data-slot="latency-text"]'),
-		settingsStatusSection: root.querySelector(".smc-settings-status-section"),
-		settingsStatus: root.querySelector('[data-slot="settings-status"]'),
-		sBackendBaseUrl: root.querySelector('[data-field="s-backendBaseUrl"]'),
-		sApiModeDrafts: root.querySelector('[data-field="s-apiModeDrafts"]'),
-		sApiModeContent: root.querySelector('[data-field="s-apiModeContent"]'),
-		sTheme: root.querySelector('[data-field="s-theme"]'),
-		sHostModeTitle: root.querySelector('[data-slot="s-host-mode-title"]'),
-		profileInfo: root.querySelector('[data-slot="profile-info"]'),
-		views: root.querySelectorAll("[data-view]"),
-		settingsPages: root.querySelectorAll("[data-settings-view]"),
+		) as HTMLButtonElement,
+		statusSection: root.querySelector(
+			'[data-slot="status-section"]',
+		) as HTMLElement,
+		status: root.querySelector('[data-slot="status"]') as HTMLElement,
+		usernameError: root.querySelector(
+			'[data-slot="username-error"]',
+		) as HTMLElement,
+		results: root.querySelector('[data-slot="results"]') as HTMLElement,
+		composer: root.querySelector('[data-slot="composer"]') as HTMLElement,
+		dot: root.querySelector('[data-slot="connection"]') as HTMLElement,
+		latencyText: root.querySelector(
+			'[data-slot="latency-text"]',
+		) as HTMLElement,
+		settingsStatusSection: root.querySelector(
+			".smc-settings-status-section",
+		) as HTMLElement,
+		settingsStatus: root.querySelector(
+			'[data-slot="settings-status"]',
+		) as HTMLElement,
+		sBackendBaseUrl: root.querySelector(
+			'[data-field="s-backendBaseUrl"]',
+		) as HTMLInputElement,
+		sApiModeDrafts: root.querySelector(
+			'[data-field="s-apiModeDrafts"]',
+		) as HTMLInputElement,
+		sApiModeContent: root.querySelector(
+			'[data-field="s-apiModeContent"]',
+		) as HTMLInputElement,
+		sTheme: root.querySelector('[data-field="s-theme"]') as HTMLSelectElement,
+		sHostModeTitle: root.querySelector(
+			'[data-slot="s-host-mode-title"]',
+		) as HTMLElement,
+		profileInfo: root.querySelector(
+			'[data-slot="profile-info"]',
+		) as HTMLElement,
+		views: root.querySelectorAll("[data-view]") as NodeListOf<HTMLElement>,
+		settingsPages: root.querySelectorAll(
+			"[data-settings-view]",
+		) as NodeListOf<HTMLElement>,
 	};
 
 	// Tab navigation
-	root.querySelectorAll("[data-tab-target]").forEach((btn) => {
+	(
+		root.querySelectorAll("[data-tab-target]") as NodeListOf<HTMLButtonElement>
+	).forEach((btn) => {
 		btn.addEventListener("click", () => {
 			switchTab(btn.getAttribute("data-tab-target"));
 		});
@@ -180,37 +358,44 @@
 		});
 	}
 
-	function switchTab(tabName) {
-		STATE.activeTab = tabName;
-		root.querySelectorAll("[data-tab-target]").forEach((btn) => {
+	function switchTab(tabName: string | null): void {
+		const nextTab: PanelTab = tabName === "draft" ? "draft" : "profile";
+		STATE.activeTab = nextTab;
+		(
+			root.querySelectorAll(
+				"[data-tab-target]",
+			) as NodeListOf<HTMLButtonElement>
+		).forEach((btn) => {
 			btn.classList.toggle(
 				"smc-tab-active",
-				btn.getAttribute("data-tab-target") === tabName,
+				btn.getAttribute("data-tab-target") === nextTab,
 			);
 		});
-		root.querySelectorAll("[data-tab-panel]").forEach((panel) => {
+		(
+			root.querySelectorAll("[data-tab-panel]") as NodeListOf<HTMLElement>
+		).forEach((panel) => {
 			panel.classList.toggle(
 				"smc-tab-panel-active",
-				panel.getAttribute("data-tab-panel") === tabName,
+				panel.getAttribute("data-tab-panel") === nextTab,
 			);
 		});
 	}
 
-	function openSettingsView() {
+	function openSettingsView(): void {
 		STATE.currentView = "settings";
 		STATE.settingsPage = "home";
 		loadSettingsUI({ syncApiForm: true });
 		renderView();
 	}
 
-	function openApiSettingsPage() {
+	function openApiSettingsPage(): void {
 		STATE.currentView = "settings";
 		STATE.settingsPage = "api";
 		loadSettingsUI({ syncApiForm: true });
 		renderView();
 	}
 
-	async function closeSettingsView() {
+	async function closeSettingsView(): Promise<void> {
 		if (STATE.currentView !== "settings") {
 			return;
 		}
@@ -227,7 +412,7 @@
 		renderView();
 	}
 
-	async function bootstrap() {
+	async function bootstrap(): Promise<void> {
 		const currentWindow = await chrome.windows.getCurrent();
 		STATE.currentWindowId = coerceWindowId(currentWindow?.id);
 		STATE.targetWindowId =
@@ -235,7 +420,9 @@
 				? await resolvePopupTargetWindowId()
 				: STATE.currentWindowId;
 
-		const configResponse = await sendRuntimeMessage({ type: "get_config" });
+		const configResponse = await sendRuntimeMessage<PanelConfigResponse>({
+			type: "get_config",
+		});
 		STATE.config = configResponse.config;
 		applyTheme(STATE.config?.theme);
 		hydrateInputs();
@@ -244,9 +431,11 @@
 		render();
 	}
 
-	async function refreshHealth() {
+	async function refreshHealth(): Promise<void> {
 		try {
-			const response = await sendRuntimeMessage({ type: "health_check" });
+			const response = await sendRuntimeMessage<PanelHealthResponse>({
+				type: "health_check",
+			});
 			STATE.health = response.health;
 			STATE.latencyMs = response.health?.latencyMs ?? null;
 			STATE.healthState = "ready";
@@ -258,7 +447,7 @@
 		renderConnectionDot();
 	}
 
-	function loadSettingsUI(options = {}) {
+	function loadSettingsUI(options: { syncApiForm?: boolean } = {}): void {
 		const syncApiForm = options.syncApiForm !== false;
 		const config = STATE.config || {};
 		const merged = { ...SETTINGS_DEFAULTS, ...config };
@@ -276,9 +465,9 @@
 		}
 	}
 
-	async function saveTheme(theme) {
+	async function saveTheme(theme: string): Promise<void> {
 		try {
-			const response = await sendRuntimeMessage({
+			const response = await sendRuntimeMessage<PanelConfigResponse>({
 				type: "save_config",
 				payload: { theme },
 			});
@@ -292,9 +481,9 @@
 		}
 	}
 
-	async function saveApiMode(apiMode) {
+	async function saveApiMode(apiMode: StakedMediaApiMode): Promise<void> {
 		try {
-			const response = await sendRuntimeMessage({
+			const response = await sendRuntimeMessage<PanelConfigResponse>({
 				type: "save_config",
 				payload: { apiMode },
 			});
@@ -307,7 +496,7 @@
 		}
 	}
 
-	async function saveBackendBaseUrl() {
+	async function saveBackendBaseUrl(): Promise<boolean> {
 		const nextValue = ui.sBackendBaseUrl.value.trim();
 		const currentValue = String(
 			STATE.config?.backendBaseUrl || SETTINGS_DEFAULTS.backendBaseUrl,
@@ -316,7 +505,7 @@
 			return true;
 		}
 		try {
-			const response = await sendRuntimeMessage({
+			const response = await sendRuntimeMessage<PanelConfigResponse>({
 				type: "save_config",
 				payload: { backendBaseUrl: nextValue },
 			});
@@ -331,7 +520,7 @@
 		}
 	}
 
-	async function switchHostMode(hostMode) {
+	async function switchHostMode(hostMode: StakedMediaHostMode): Promise<void> {
 		const nextHostMode = hostMode === "popup" ? "popup" : "sidepanel";
 		try {
 			if (HOST_MODE === "sidepanel" && nextHostMode === "popup") {
@@ -348,8 +537,10 @@
 		}
 	}
 
-	async function persistHostMode(hostMode) {
-		const response = await sendRuntimeMessage({
+	async function persistHostMode(
+		hostMode: StakedMediaHostMode,
+	): Promise<StakedMediaExtensionConfig> {
+		const response = await sendRuntimeMessage<PanelConfigResponse>({
 			type: "save_config",
 			payload: { hostMode },
 		});
@@ -359,12 +550,12 @@
 		return response.config;
 	}
 
-	async function switchSidePanelToPopup() {
+	async function switchSidePanelToPopup(): Promise<void> {
 		await persistHostMode("popup");
 		await closeCurrentSidePanelShell();
 	}
 
-	async function switchPopupToSidePanel() {
+	async function switchPopupToSidePanel(): Promise<void> {
 		const targetWindowId = coerceWindowId(STATE.targetWindowId);
 		if (!targetWindowId) {
 			renderSettingsStatus(
@@ -392,7 +583,7 @@
 		window.close();
 	}
 
-	function renderSettingsStatus(text, kind) {
+	function renderSettingsStatus(text: unknown, kind: PanelStatusKind): void {
 		if (!ui.settingsStatus) return;
 		const message = String(text || "");
 		ui.settingsStatus.textContent = message;
@@ -402,7 +593,7 @@
 		}
 	}
 
-	async function handleLoadProfile() {
+	async function handleLoadProfile(): Promise<void> {
 		const username = ui.username.value.trim();
 		if (!username) {
 			renderStatus("Username is required.", "error");
@@ -413,7 +604,7 @@
 		STATE.profileLoading = true;
 		renderProfileInfo();
 		try {
-			const response = await sendRuntimeMessage({
+			const response = await sendRuntimeMessage<PanelCheckProfileResponse>({
 				type: "check_profile",
 				payload: { username },
 			});
@@ -435,7 +626,7 @@
 		}
 	}
 
-	async function handleIngestProfile() {
+	async function handleIngestProfile(): Promise<void> {
 		const username = ui.username.value.trim();
 		if (!username) {
 			renderStatus("Username is required.", "error");
@@ -446,7 +637,7 @@
 		STATE.profileLoading = true;
 		renderProfileInfo();
 		try {
-			const response = await sendRuntimeMessage({
+			const response = await sendRuntimeMessage<PanelIngestProfileResponse>({
 				type: "ingest_profile",
 				payload: { username },
 			});
@@ -479,7 +670,7 @@
 		}
 	}
 
-	async function handleGenerate() {
+	async function handleGenerate(): Promise<void> {
 		const username = ui.username.value.trim();
 		const idea = ui.idea.value.trim();
 		if (!username) {
@@ -493,18 +684,22 @@
 		const payload = {
 			username,
 			idea,
-			draft_count: ui.draftCount.value,
+			draft_count: ui.draftCount.value || "3",
 		};
 		renderUsernameError("");
 		renderStatus("", "");
 		await runGeneration(payload);
 	}
 
-	async function runGeneration(payload) {
+	async function runGeneration(payload: {
+		username: string;
+		idea: string;
+		draft_count: string;
+	}): Promise<void> {
 		setLoading(true);
 		const startedAt = performance.now();
 		try {
-			const response = await sendRuntimeMessage({
+			const response = await sendRuntimeMessage<PanelGenerateResponse>({
 				type: "generate",
 				payload,
 			});
@@ -532,9 +727,9 @@
 		}
 	}
 
-	async function refreshComposerState() {
+	async function refreshComposerState(): Promise<void> {
 		try {
-			const response = await sendRuntimeMessage({
+			const response = await sendRuntimeMessage<PanelComposerResponse>({
 				type: "get_composer_state",
 				payload: {
 					targetWindowId: STATE.targetWindowId,
@@ -551,7 +746,7 @@
 		}
 	}
 
-	function hydrateInputs() {
+	function hydrateInputs(): void {
 		ui.username.value =
 			ui.username.value.trim() || STATE.config?.defaultUsername || "";
 		if (!ui.draftCount.value) {
@@ -559,7 +754,7 @@
 		}
 	}
 
-	function render() {
+	function render(): void {
 		renderView();
 		renderGenerateButton();
 		renderConnectionDot();
@@ -569,7 +764,7 @@
 		renderComposerState();
 	}
 
-	function renderView() {
+	function renderView(): void {
 		const isSettingsView = STATE.currentView === "settings";
 		ui.views.forEach((view) => {
 			view.classList.toggle(
@@ -604,7 +799,7 @@
 		}
 	}
 
-	function applyTheme(theme) {
+	function applyTheme(theme: StakedMediaThemeMode | null | undefined): void {
 		const requestedTheme =
 			theme || STATE.config?.theme || SETTINGS_DEFAULTS.theme;
 		const resolvedTheme =
@@ -616,15 +811,17 @@
 		document.documentElement.setAttribute("data-smc-theme", resolvedTheme);
 	}
 
-	function getOpenModeToggleLabel(hostMode) {
+	function getOpenModeToggleLabel(
+		hostMode: StakedMediaHostMode | null | undefined,
+	): string {
 		return hostMode === "popup" ? "Switch to Side Panel" : "Switch to Popup";
 	}
 
-	function getNextHostMode() {
+	function getNextHostMode(): StakedMediaHostMode {
 		return STATE.config?.hostMode === "popup" ? "sidepanel" : "popup";
 	}
 
-	function renderGenerateButton() {
+	function renderGenerateButton(): void {
 		if (!ui.generateButton) {
 			return;
 		}
@@ -638,7 +835,7 @@
 			: "Generate";
 	}
 
-	function renderConnectionDot() {
+	function renderConnectionDot(): void {
 		const dot = ui.dot;
 		const latencyEl = ui.latencyText;
 		if (!dot) return;
@@ -652,7 +849,7 @@
 		if (latencyEl) latencyEl.textContent = indicator.latencyText;
 	}
 
-	function renderUsernameError(text) {
+	function renderUsernameError(text: unknown): void {
 		STATE.usernameError = String(text || "");
 		if (!ui.usernameError) {
 			return;
@@ -661,7 +858,7 @@
 		ui.usernameError.hidden = !STATE.usernameError;
 	}
 
-	function renderProfileInfo() {
+	function renderProfileInfo(): void {
 		if (!ui.profileInfo) return;
 		if (STATE.profileLoading) {
 			ui.profileInfo.innerHTML =
@@ -743,7 +940,7 @@
     `;
 	}
 
-	function renderResults() {
+	function renderResults(): void {
 		const timingHtml =
 			STATE.lastGenerateDurationMs != null
 				? `
@@ -753,7 +950,7 @@
           </div>
         `
 				: "";
-		const drafts = extractDrafts(STATE.generated);
+		const drafts = extractDrafts(STATE.generated) as PanelDraftLike[];
 		if (!drafts.length) {
 			ui.results.innerHTML = `${timingHtml}<div class="smc-empty">No generated drafts yet.</div>`;
 			return;
@@ -779,10 +976,14 @@
 				.join("")}
     `;
 
-		ui.results.querySelectorAll("[data-copy-index]").forEach((button) => {
+		(
+			ui.results.querySelectorAll(
+				"[data-copy-index]",
+			) as NodeListOf<HTMLButtonElement>
+		).forEach((button) => {
 			button.addEventListener("click", async () => {
 				const index = Number.parseInt(
-					button.getAttribute("data-copy-index"),
+					button.getAttribute("data-copy-index") || "",
 					10,
 				);
 				const text = getDraftText(drafts, index);
@@ -796,10 +997,14 @@
 			});
 		});
 
-		ui.results.querySelectorAll("[data-insert-index]").forEach((button) => {
+		(
+			ui.results.querySelectorAll(
+				"[data-insert-index]",
+			) as NodeListOf<HTMLButtonElement>
+		).forEach((button) => {
 			button.addEventListener("click", async () => {
 				const index = Number.parseInt(
-					button.getAttribute("data-insert-index"),
+					button.getAttribute("data-insert-index") || "",
 					10,
 				);
 				const text = getDraftText(drafts, index);
@@ -824,40 +1029,42 @@
 		});
 	}
 
-	function renderComposerState() {
+	function renderComposerState(): void {
 		const className = STATE.composerAvailable
 			? "smc-pill smc-pill-good"
 			: "smc-pill smc-pill-warn";
 		ui.composer.innerHTML = `<span class="${className}">${escapeHtml(STATE.composerMessage)}</span>`;
 	}
 
-	function getDraftText(drafts, index) {
+	function getDraftText(drafts: PanelDraftLike[], index: number): string {
 		const draft = drafts[index];
 		if (!draft) return "";
 		if (typeof draft === "string") return draft;
 		return String(draft.text || "");
 	}
 
-	function setLoading(nextLoading) {
+	function setLoading(nextLoading: boolean): void {
 		STATE.loading = nextLoading;
 		if (nextLoading) {
 			startGenerationProgress();
 		} else {
 			stopGenerationProgress();
 		}
-		root.querySelectorAll("button").forEach((button) => {
-			if (
-				button.hasAttribute("data-copy-index") ||
-				button.hasAttribute("data-insert-index")
-			) {
-				return;
-			}
-			button.disabled = nextLoading;
-		});
+		(root.querySelectorAll("button") as NodeListOf<HTMLButtonElement>).forEach(
+			(button) => {
+				if (
+					button.hasAttribute("data-copy-index") ||
+					button.hasAttribute("data-insert-index")
+				) {
+					return;
+				}
+				button.disabled = nextLoading;
+			},
+		);
 		renderGenerateButton();
 	}
 
-	function startGenerationProgress() {
+	function startGenerationProgress(): void {
 		stopGenerationProgress();
 		STATE.generationStartedAt = Date.now();
 		STATE.generationProgress = {
@@ -886,7 +1093,7 @@
 		}, 120);
 	}
 
-	function stopGenerationProgress() {
+	function stopGenerationProgress(): void {
 		if (STATE.generationProgressTimer != null) {
 			window.clearInterval(STATE.generationProgressTimer);
 			STATE.generationProgressTimer = null;
@@ -895,14 +1102,14 @@
 		STATE.generationProgress = null;
 	}
 
-	function deriveProgressPercent(elapsedMs) {
+	function deriveProgressPercent(elapsedMs: number): number {
 		const progressCap = 93;
 		const eased = 1 - Math.exp(-elapsedMs / 2500);
 		const percent = Math.round(progressCap * eased);
 		return Math.max(8, Math.min(progressCap, percent));
 	}
 
-	function deriveProgressMessage(percent) {
+	function deriveProgressMessage(percent: number): string {
 		if (percent < 28) {
 			return "Preparing request...";
 		}
@@ -915,7 +1122,7 @@
 		return "Finalizing output...";
 	}
 
-	function renderGenerationProgress() {
+	function renderGenerationProgress(): void {
 		if (!STATE.loading || !STATE.generationProgress) {
 			return;
 		}
@@ -936,7 +1143,7 @@
 		}
 	}
 
-	function renderStatus(text, level) {
+	function renderStatus(text: unknown, level: string | null | undefined): void {
 		if (!text) {
 			ui.status.innerHTML = "";
 			if (ui.statusSection) {
@@ -950,27 +1157,30 @@
 		}
 	}
 
-	function formatApiError(error) {
-		if (error?.status === 404) {
+	function formatApiError(error: unknown): string {
+		const runtimeError = error as RuntimeErrorWithStatus;
+		if (runtimeError?.status === 404) {
 			return "Profile not found in the backend. Run ingest first.";
 		}
-		if (error?.status === 409) {
+		if (runtimeError?.status === 409) {
 			return "Persona is missing in the backend. Re-run ingest before generating.";
 		}
-		if (error?.status === 422) {
+		if (runtimeError?.status === 422) {
 			return "The backend rejected the request. Check your input and try again.";
 		}
-		if (error?.status === 502) {
+		if (runtimeError?.status === 502) {
 			return "The backend failed while calling upstream services. Retry once the service is healthy.";
 		}
 		return formatRuntimeError(error);
 	}
 
-	function formatRuntimeError(error) {
-		return String(error?.message || error || "Unknown error");
+	function formatRuntimeError(error: unknown): string {
+		return String(
+			(error as Error | undefined)?.message || error || "Unknown error",
+		);
 	}
 
-	async function resolvePopupTargetWindowId() {
+	async function resolvePopupTargetWindowId(): Promise<number | null> {
 		try {
 			const [activeTab] = await chrome.tabs.query({
 				active: true,
@@ -982,14 +1192,14 @@
 		}
 	}
 
-	async function openSidePanelInWindow(windowId) {
+	async function openSidePanelInWindow(windowId: number): Promise<void> {
 		if (typeof chrome.sidePanel?.open !== "function") {
 			throw new Error("Side Panel is unavailable in this browser.");
 		}
 		await chrome.sidePanel.open({ windowId });
 	}
 
-	async function closeSidePanelInWindow(windowId) {
+	async function closeSidePanelInWindow(windowId: unknown): Promise<boolean> {
 		const normalizedWindowId = coerceWindowId(windowId);
 		if (!normalizedWindowId || typeof chrome.sidePanel?.close !== "function") {
 			return false;
@@ -1002,7 +1212,7 @@
 		}
 	}
 
-	async function closeCurrentSidePanelShell() {
+	async function closeCurrentSidePanelShell(): Promise<void> {
 		const currentHostWindowId =
 			coerceWindowId(STATE.currentWindowId) ||
 			coerceWindowId(STATE.targetWindowId);
