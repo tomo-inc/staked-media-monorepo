@@ -81,12 +81,75 @@ class FakeLLMClient:
             "persona_version": "v1",
             "author_summary": f"{profile['name']} writes concise operator updates.",
             "voice_traits": ["operator-minded", "direct", "optimistic"],
-            "topic_clusters": [{"topic": "product building", "evidence": ["building", "lessons"]}],
-            "writing_patterns": {"average_length": corpus_stats["writing_stats"]["average_length"]},
+            "topic_clusters": [
+                {
+                    "topic": "product building",
+                    "evidence_terms": ["building", "lessons"],
+                    "frequency": "high",
+                }
+            ],
+            "writing_patterns": {
+                "avg_sentence_length": "medium",
+                "punctuation_habits": ["light periods"],
+                "paragraph_structure": "single-shot",
+                "code_switching_style": "mostly English, occasional proper nouns",
+                "emoji_usage": "none",
+            },
             "lexical_markers": ["building", "lessons"],
             "do_not_sound_like": ["corporate PR", "clickbait"],
             "cta_style": "Occasional direct invitation to discuss.",
+            "generation_guardrails": {
+                "preferred_openings": ["observation-first"],
+                "preferred_formats": ["short update"],
+                "compression_rules": ["one idea then stop"],
+                "anti_patterns": ["essay-like explanation"],
+                "language_notes": ["stay concise and operator-like"],
+            },
             "risk_notes": ["Derived from public posts only."],
+            "language_profile": {
+                "primary_language": "en",
+                "secondary_languages": [],
+                "mixing_pattern": "none",
+                "mixing_notes": "",
+            },
+            "domain_expertise": [
+                {
+                    "domain": "product",
+                    "depth": "expert",
+                    "jargon_examples": ["shipping", "distribution"],
+                }
+            ],
+            "emotional_baseline": {
+                "default_valence": "positive",
+                "intensity": "moderate",
+                "sarcasm_level": "none",
+                "humor_style": "",
+            },
+            "audience_profile": {
+                "primary_audience": "builders",
+                "assumed_knowledge": ["shipping", "product loops"],
+                "formality": "casual",
+            },
+            "interaction_style": {
+                "original_post_tone": "concise and operator-minded",
+                "reply_tone": "supportive",
+                "quote_tone": "adds a short take",
+                "engagement_triggers": ["product lessons", "distribution"],
+            },
+            "posting_cadence": {
+                "avg_daily_tweets": corpus_stats["cadence_stats"]["avg_daily_tweets"],
+                "posting_style": corpus_stats["cadence_stats"]["posting_style_hint"],
+                "preferred_post_length": corpus_stats["cadence_stats"]["preferred_post_length_hint"],
+                "active_windows_utc": corpus_stats["cadence_stats"]["active_windows_utc"],
+            },
+            "media_habits": {
+                "text_only_ratio": corpus_stats["media_stats"]["text_only_ratio"],
+                "link_ratio": corpus_stats["media_stats"]["link_ratio"],
+                "media_attachment_ratio": corpus_stats["media_stats"]["media_attachment_ratio"],
+                "dominant_format": corpus_stats["media_stats"]["dominant_format_hint"],
+                "notes": "mostly standalone product updates",
+            },
+            "banned_phrases": ["dear ser"],
         }
 
     def generate_drafts(
@@ -291,6 +354,10 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(ingest_payload["fetched_tweet_count"], self.settings.max_ingest_tweets)
         self.assertEqual(ingest_payload["profile"]["username"], "demo-user")
         self.assertEqual(self.upstream_client.last_max_tweets, self.settings.max_ingest_tweets)
+        self.assertEqual(ingest_payload["persona"]["language_profile"]["primary_language"], "en")
+        self.assertEqual(ingest_payload["persona"]["topic_clusters"][0]["evidence_terms"], ["building", "lessons"])
+        self.assertIn("posting_cadence", ingest_payload["persona"])
+        self.assertIn("media_habits", ingest_payload["persona"])
 
         profile_response = self.client.get("/api/v1/profiles/demo-user")
         self.assertEqual(profile_response.status_code, 200)

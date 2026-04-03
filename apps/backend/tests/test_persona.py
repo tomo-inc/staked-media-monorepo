@@ -9,6 +9,7 @@ from app.persona import (
     extract_theme_keywords,
     extract_top_theme_keywords,
     is_too_similar,
+    prompt_language_mode,
     prompt_requests_full_chinese,
     select_theme_tweets,
 )
@@ -28,6 +29,7 @@ class PersonaHelpersTestCase(unittest.TestCase):
                 "id": "1",
                 "text": "Shipping product updates with clear takeaways",
                 "created_at": "2026-03-01T00:00:00Z",
+                "lang": "en",
                 "is_retweet": False,
                 "is_reply": False,
                 "is_quote": False,
@@ -40,6 +42,7 @@ class PersonaHelpersTestCase(unittest.TestCase):
                 "id": "2",
                 "text": "RT @someone Strong point on distribution",
                 "created_at": "2026-03-02T00:00:00Z",
+                "lang": "en",
                 "is_retweet": True,
                 "is_reply": False,
                 "is_quote": False,
@@ -50,8 +53,9 @@ class PersonaHelpersTestCase(unittest.TestCase):
             },
             {
                 "id": "3",
-                "text": "@friend The shortest path is still the best one",
+                "text": "@friend 最短路径还是 the best one",
                 "created_at": "2026-03-03T00:00:00Z",
+                "lang": "zh",
                 "is_retweet": False,
                 "is_reply": True,
                 "is_quote": False,
@@ -68,6 +72,126 @@ class PersonaHelpersTestCase(unittest.TestCase):
         self.assertEqual(stats["tweet_counts"]["retweets"], 1)
         self.assertEqual(stats["tweet_counts"]["replies"], 1)
         self.assertEqual(len(stats["representative_tweets"]), 2)
+        self.assertEqual(stats["language_stats"]["primary_language"], "en")
+        self.assertEqual(stats["language_stats"]["language_distribution"], {"en": 0.667, "zh": 0.333})
+        self.assertEqual(stats["language_stats"]["bilingual_tweet_ratio"], 0.333)
+        self.assertEqual(stats["engagement_patterns"]["reply_ratio"], 0.333)
+        self.assertEqual(stats["engagement_patterns"]["avg_engagement_original"], 11.5)
+        self.assertEqual(stats["engagement_patterns"]["avg_engagement_reply"], 7)
+        self.assertEqual(stats["temporal_patterns"]["avg_daily_tweets"], 1.0)
+        self.assertEqual(stats["temporal_patterns"]["most_active_hours"], [0])
+        self.assertEqual(stats["cadence_stats"]["avg_daily_tweets"], 1.0)
+        self.assertEqual(stats["cadence_stats"]["posting_style_hint"], "steady")
+        self.assertEqual(stats["cadence_stats"]["preferred_post_length_hint"], "short")
+        self.assertEqual(stats["media_stats"]["text_only_ratio"], 1.0)
+        self.assertEqual(stats["media_stats"]["link_ratio"], 0.0)
+        self.assertEqual(stats["media_stats"]["media_attachment_ratio"], 0.0)
+        self.assertEqual(stats["media_stats"]["dominant_format_hint"], "text-only")
+
+    def test_build_corpus_stats_infers_burst_poster_and_media_led_habits(self) -> None:
+        profile = {
+            "name": "Tester",
+            "username": "tester",
+            "description": "Builder",
+            "location": "",
+            "public_metrics": {"followers_count": 50},
+        }
+        tweet_rows = [
+            {
+                "id": "1",
+                "text": "Quick screenshot drop",
+                "created_at": "2026-03-01T09:00:00Z",
+                "lang": "en",
+                "is_retweet": False,
+                "is_reply": False,
+                "is_quote": False,
+                "like_count": 1,
+                "retweet_count": 0,
+                "reply_count": 0,
+                "quote_count": 0,
+                "raw_json": {"data": {"attachments": {"media_keys": ["m1"]}}},
+            },
+            {
+                "id": "2",
+                "text": "Another quick chart",
+                "created_at": "2026-03-01T10:00:00Z",
+                "lang": "en",
+                "is_retweet": False,
+                "is_reply": False,
+                "is_quote": False,
+                "like_count": 1,
+                "retweet_count": 0,
+                "reply_count": 0,
+                "quote_count": 0,
+                "raw_json": {"data": {"attachments": {"media_keys": ["m2"]}}},
+            },
+            {
+                "id": "3",
+                "text": "One more update",
+                "created_at": "2026-03-01T09:30:00Z",
+                "lang": "en",
+                "is_retweet": False,
+                "is_reply": False,
+                "is_quote": False,
+                "like_count": 1,
+                "retweet_count": 0,
+                "reply_count": 0,
+                "quote_count": 0,
+                "raw_json": {"data": {"attachments": {"media_keys": ["m3"]}}},
+            },
+            {
+                "id": "4",
+                "text": "Keep shipping",
+                "created_at": "2026-03-01T10:15:00Z",
+                "lang": "en",
+                "is_retweet": False,
+                "is_reply": False,
+                "is_quote": False,
+                "like_count": 1,
+                "retweet_count": 0,
+                "reply_count": 0,
+                "quote_count": 0,
+                "raw_json": {"data": {"attachments": {"media_keys": ["m4"]}}},
+            },
+            {
+                "id": "5",
+                "text": "Short caption",
+                "created_at": "2026-03-01T09:45:00Z",
+                "lang": "en",
+                "is_retweet": False,
+                "is_reply": False,
+                "is_quote": False,
+                "like_count": 1,
+                "retweet_count": 0,
+                "reply_count": 0,
+                "quote_count": 0,
+                "raw_json": {"data": {"attachments": {"media_keys": ["m5"]}}},
+            },
+            {
+                "id": "6",
+                "text": "Final drop",
+                "created_at": "2026-03-01T10:30:00Z",
+                "lang": "en",
+                "is_retweet": False,
+                "is_reply": False,
+                "is_quote": False,
+                "like_count": 1,
+                "retweet_count": 0,
+                "reply_count": 0,
+                "quote_count": 0,
+                "raw_json": {"data": {"attachments": {"media_keys": ["m6"]}}},
+            },
+        ]
+
+        stats = build_corpus_stats(profile, tweet_rows, sample_size=4)
+
+        self.assertEqual(stats["cadence_stats"]["avg_daily_tweets"], 6.0)
+        self.assertEqual(stats["cadence_stats"]["posting_style_hint"], "burst-poster")
+        self.assertEqual(stats["cadence_stats"]["preferred_post_length_hint"], "short")
+        self.assertEqual(stats["media_stats"]["text_only_ratio"], 0.0)
+        self.assertEqual(stats["media_stats"]["link_ratio"], 0.0)
+        self.assertEqual(stats["media_stats"]["media_attachment_ratio"], 1.0)
+        self.assertEqual(stats["media_stats"]["dominant_format_hint"], "media-led")
 
     def test_similarity_guard_blocks_near_duplicates(self) -> None:
         source_texts = ["Shipping product updates with clear takeaways"]
@@ -171,6 +295,23 @@ class PersonaHelpersTestCase(unittest.TestCase):
             )
         )
         self.assertFalse(prompt_requests_full_chinese("写一条中英双语推文，保持轻松语气。"))
+        self.assertTrue(prompt_requests_full_chinese("写一条关于English Premier League的帖子。"))
+
+    def test_prompt_language_mode_prefers_explicit_user_instruction(self) -> None:
+        self.assertEqual(prompt_language_mode("Write one Chinese X post about WTDD"), "full_chinese")
+        self.assertEqual(prompt_language_mode("写一条中英双语推文，保持轻松语气。"), "english_or_bilingual")
+        self.assertEqual(prompt_language_mode("写一条英文帖子 about BTC"), "english_or_bilingual")
+        self.assertEqual(prompt_language_mode("用英文写一条关于BTC的帖子"), "english_or_bilingual")
+        self.assertEqual(prompt_language_mode("请用英语写一条关于BTC的推文"), "english_or_bilingual")
+        self.assertEqual(prompt_language_mode("Talk about Binance winners"), "unspecified")
+        self.assertEqual(prompt_language_mode("Write about Chinese AI stocks"), "unspecified")
+        self.assertEqual(prompt_language_mode("Write about English Premier League"), "unspecified")
+        self.assertEqual(prompt_language_mode("写一条关于PEPE反弹的帖子。"), "full_chinese")
+
+    def test_prompt_requests_full_chinese_respects_explicit_english_request_in_chinese(self) -> None:
+        self.assertFalse(prompt_requests_full_chinese("写一条英文帖子 about BTC"))
+        self.assertFalse(prompt_requests_full_chinese("用英文写一条关于BTC的帖子"))
+        self.assertFalse(prompt_requests_full_chinese("请用英语写一条关于BTC的推文"))
 
 
 if __name__ == "__main__":

@@ -93,17 +93,87 @@ class DraftGenerateResponse(BaseModel):
     created_at: str
 
 
+class TopicCluster(BaseModel):
+    topic: str = ""
+    evidence_terms: list[str] = Field(default_factory=list)
+    frequency: str = "moderate"
+
+
+class WritingPatterns(BaseModel):
+    avg_sentence_length: str = "medium"
+    punctuation_habits: list[str] = Field(default_factory=list)
+    paragraph_structure: str = "single-shot"
+    code_switching_style: str = ""
+    emoji_usage: str = "none"
+
+
+class LanguageProfile(BaseModel):
+    primary_language: str = "unknown"
+    secondary_languages: list[str] = Field(default_factory=list)
+    mixing_pattern: str = "none"
+    mixing_notes: str = ""
+
+
+class DomainExpertise(BaseModel):
+    domain: str = ""
+    depth: str = "unknown"
+    jargon_examples: list[str] = Field(default_factory=list)
+
+
+class EmotionalBaseline(BaseModel):
+    default_valence: str = "neutral"
+    intensity: str = "moderate"
+    sarcasm_level: str = "none"
+    humor_style: str = ""
+
+
+class AudienceProfile(BaseModel):
+    primary_audience: str = "unknown"
+    assumed_knowledge: list[str] = Field(default_factory=list)
+    formality: str = "casual"
+
+
+class InteractionStyle(BaseModel):
+    original_post_tone: str = "unknown"
+    reply_tone: str = ""
+    quote_tone: str = ""
+    engagement_triggers: list[str] = Field(default_factory=list)
+
+
+class PostingCadence(BaseModel):
+    avg_daily_tweets: float = 0.0
+    posting_style: str = "steady"
+    preferred_post_length: str = "medium"
+    active_windows_utc: list[int] = Field(default_factory=list)
+
+
+class MediaHabits(BaseModel):
+    text_only_ratio: float = 0.0
+    link_ratio: float = 0.0
+    media_attachment_ratio: float = 0.0
+    dominant_format: str = "text-only"
+    notes: str = ""
+
+
 class PersonaOutput(BaseModel):
     persona_version: str = "v1"
     author_summary: str
     voice_traits: list[str]
-    topic_clusters: list[dict[str, Any]]
-    writing_patterns: dict[str, Any]
+    topic_clusters: list[TopicCluster] = Field(default_factory=list)
+    writing_patterns: WritingPatterns = Field(default_factory=WritingPatterns)
     lexical_markers: list[str]
     do_not_sound_like: list[str]
     cta_style: str
     generation_guardrails: dict[str, list[str]] = Field(default_factory=dict)
     risk_notes: list[str]
+    language_profile: LanguageProfile = Field(default_factory=LanguageProfile)
+    domain_expertise: list[DomainExpertise] = Field(default_factory=list)
+    emotional_baseline: EmotionalBaseline = Field(default_factory=EmotionalBaseline)
+    audience_profile: AudienceProfile = Field(default_factory=AudienceProfile)
+    interaction_style: InteractionStyle = Field(default_factory=InteractionStyle)
+    posting_cadence: PostingCadence = Field(default_factory=PostingCadence)
+    media_habits: MediaHabits = Field(default_factory=MediaHabits)
+    banned_phrases: list[str] = Field(default_factory=list)
 
 
 class DraftsOutput(BaseModel):

@@ -20,7 +20,7 @@ from app.persona import (
     is_too_similar,
     keyword_in_text,
     phrase_frequency,
-    prompt_requests_full_chinese,
+    prompt_language_mode,
     select_theme_tweets,
 )
 from app.schemas import DraftCandidateEvaluation, DraftItem, DraftsOutput, PersonaOutput
@@ -35,6 +35,30 @@ from .utils import (
 )
 
 logger = get_logger(__name__)
+SARCASM_LITERAL_MARKERS = {
+    "yeah sure",
+    "yeah right",
+    "笑死",
+    "离谱",
+    "又来了",
+    "呵呵",
+    "真有你的",
+    "好家伙",
+    "绝了",
+}
+SARCASM_REGEX_PATTERNS = (
+    re.compile(r"\b(?:lol|lmao|lmfao|rofl)\b", flags=re.IGNORECASE),
+    re.compile(r"\b(?:sure|of course|right),\s+(?:because|as if|why not)\b", flags=re.IGNORECASE),
+    re.compile(r"\bwhat could possibly go wrong\b", flags=re.IGNORECASE),
+)
+LINK_FORWARD_MARKERS = {
+    "link below",
+    "full article",
+    "read more",
+    "点击链接",
+    "详见链接",
+    "见下方链接",
+}
 
 
 class LLMClient:
@@ -265,7 +289,9 @@ class LLMClient:
                 "Infer tone and style only from provided evidence. Do not fabricate facts. "
                 "Return strict JSON with keys: persona_version, author_summary, voice_traits, "
                 "topic_clusters, writing_patterns, lexical_markers, do_not_sound_like, cta_style, "
-                "generation_guardrails, risk_notes."
+                "generation_guardrails, risk_notes, language_profile, domain_expertise, "
+                "emotional_baseline, audience_profile, interaction_style, posting_cadence, "
+                "media_habits, banned_phrases."
             ),
             user_prompt=json.dumps(request_payload, ensure_ascii=True),
             temperature=0.4,
@@ -320,7 +346,7 @@ class LLMClient:
             source_text_count=len(source_texts),
             tweet_row_count=len(tweet_rows),
         )
-        full_chinese_mode = prompt_requests_full_chinese(prompt)
+        full_chinese_mode = prompt_language_mode(prompt) == "full_chinese"
         theme_keywords = extract_theme_keywords(prompt)
         matched_theme_tweets = select_theme_tweets(tweet_rows, theme_keywords)
         if not matched_theme_tweets:
@@ -390,6 +416,8 @@ class LLMClient:
                     "You write original X posts that sound like the provided persona. "
                     "The goal is inspired-by writing, not copying. "
                     "Treat the persona's generation_guardrails as hard style guidance. "
+                    "Use the full style_brief, including emotional_baseline, audience_profile, "
+                    "interaction_style, posting_cadence, and media_habits. "
                     "Prioritize the theme-matched historical tweets over generic persona habits. "
                     "Prefer concrete, timeline-native phrasing over polished summary language. "
                     "Return strict JSON with a top-level 'drafts' array. "
@@ -705,6 +733,12 @@ class LLMClient:
                         "voice_traits": persona.get("voice_traits", []),
                         "do_not_sound_like": persona.get("do_not_sound_like", []),
                         "generation_guardrails": persona.get("generation_guardrails", {}),
+                        "language_profile": persona.get("language_profile", {}),
+                        "emotional_baseline": persona.get("emotional_baseline", {}),
+                        "audience_profile": persona.get("audience_profile", {}),
+                        "interaction_style": persona.get("interaction_style", {}),
+                        "posting_cadence": persona.get("posting_cadence", {}),
+                        "media_habits": persona.get("media_habits", {}),
                     },
                     "prompt": prompt,
                     "candidate_text": candidate_text,
@@ -717,6 +751,11 @@ class LLMClient:
                         "Penalize generic summary language, topic drift, unnatural words, "
                         "and phrases that do not fit the matched historical tweets.",
                         "Do not reward polished completeness if the author's style is naturally compressed.",
+                        "Check whether the emotional register, sarcasm level, and humor "
+                        "feel aligned with emotional_baseline.",
+                        "Check whether the amount of polish and assumed context fit audience_profile.",
+                        "Check whether the tone feels consistent with interaction_style for the likely post type.",
+                        "Check whether the draft matches the persona's posting cadence and media habit defaults.",
                     ],
                 },
                 ensure_ascii=True,
@@ -768,6 +807,12 @@ class LLMClient:
                         "voice_traits": persona.get("voice_traits", []),
                         "do_not_sound_like": persona.get("do_not_sound_like", []),
                         "generation_guardrails": persona.get("generation_guardrails", {}),
+                        "language_profile": persona.get("language_profile", {}),
+                        "emotional_baseline": persona.get("emotional_baseline", {}),
+                        "audience_profile": persona.get("audience_profile", {}),
+                        "interaction_style": persona.get("interaction_style", {}),
+                        "posting_cadence": persona.get("posting_cadence", {}),
+                        "media_habits": persona.get("media_habits", {}),
                     },
                     "prompt": prompt,
                     "candidates": candidates_input,
@@ -780,6 +825,11 @@ class LLMClient:
                         "Penalize generic summary language, topic drift, unnatural words, "
                         "and phrases that do not fit the matched historical tweets.",
                         "Do not reward polished completeness if the author's style is naturally compressed.",
+                        "Check whether emotional register, sarcasm level, and humor "
+                        "feel aligned with emotional_baseline.",
+                        "Check whether the amount of polish and assumed context fit audience_profile.",
+                        "Check whether the tone feels consistent with interaction_style for the likely post type.",
+                        "Check whether each draft matches the persona's posting cadence and media habit defaults.",
                         "Return one score object per candidate in the same order.",
                     ],
                 },
@@ -924,6 +974,7 @@ class LLMClient:
         issues: list[str] = []
         strengths: list[str] = []
         score = 10.0
+        language_mode = prompt_language_mode(prompt)
 
         banned_phrases = _as_string_list(persona.get("banned_phrases"))
         for phrase in banned_phrases:
@@ -959,7 +1010,7 @@ class LLMClient:
             score -= 1.5
             issues.append("Misses the top keywords from matched historical tweets")
 
-        full_chinese_mode = prompt_requests_full_chinese(prompt)
+        full_chinese_mode = language_mode == "full_chinese"
         if full_chinese_mode:
             allowed_english = self._allowed_english_tokens_for_full_chinese_prompt(
                 prompt=prompt,
@@ -975,8 +1026,10 @@ class LLMClient:
             sample = ", ".join(sorted(set(word.lower() for word in disallowed_english))[:4])
             issues.append(f"Contains English despite full-Chinese prompt: {sample}")
 
+        has_summary_drift = False
         for phrase in SUMMARY_DRIFT_PHRASES:
             if phrase in candidate_text:
+                has_summary_drift = True
                 score -= 1.5
                 issues.append(f"Summary-style drift phrase detected: {phrase}")
 
@@ -992,9 +1045,36 @@ class LLMClient:
             1,
             len([part for part in re.split(r"[.!?。！？]+", candidate_text) if clean_text(part)]),
         )
-        if len(candidate_text) > 220 or sentence_count > 3:
+        reads_too_complete = len(candidate_text) > 220 or sentence_count > 3
+        if reads_too_complete:
             score -= 1.0
             issues.append("Reads too complete or essay-like for a compact timeline post")
+
+        too_polished = reads_too_complete or has_summary_drift
+        audience_formality = self._persona_audience_formality(persona)
+        if audience_formality in {"raw", "casual"} and too_polished:
+            score -= 1.0
+            issues.append("Polish level is especially misaligned for this persona's casual audience")
+
+        sarcasm_level = self._persona_sarcasm_level(persona)
+        if sarcasm_level in {"frequent", "defining"} and self._draft_sounds_earnest(candidate_text):
+            score -= 1.5
+            issues.append("Draft lacks expected sarcasm for this persona")
+
+        posting_cadence = self._normalize_posting_cadence(persona.get("posting_cadence"))
+        if (
+            posting_cadence["preferred_post_length"] == "short" or posting_cadence["posting_style"] == "burst-poster"
+        ) and reads_too_complete:
+            score -= 1.0
+            issues.append("Too complete for this persona's posting cadence")
+
+        media_habits = self._normalize_media_habits(persona.get("media_habits"))
+        if media_habits["dominant_format"] == "text-only" and self._draft_is_link_forward(candidate_text):
+            score -= 1.0
+            issues.append("Too link-forward for this persona's text-only habit")
+        if media_habits["dominant_format"] == "media-led" and reads_too_complete:
+            score -= 0.5
+            issues.append("Too self-contained for this persona's media-led habit")
 
         score = max(0.0, round(score, 1))
         return {
@@ -1060,32 +1140,26 @@ class LLMClient:
             payload = {}
         normalized = dict(payload)
 
-        normalized["persona_version"] = str(normalized.get("persona_version") or "v1")
+        normalized["persona_version"] = "v1"
         normalized["author_summary"] = clean_text(str(normalized.get("author_summary") or ""))
         normalized["voice_traits"] = _as_string_list(normalized.get("voice_traits"))
         normalized["lexical_markers"] = _as_string_list(normalized.get("lexical_markers"))
         normalized["do_not_sound_like"] = _as_string_list(normalized.get("do_not_sound_like"))
         normalized["generation_guardrails"] = _normalize_generation_guardrails(normalized.get("generation_guardrails"))
         normalized["risk_notes"] = _as_string_list(normalized.get("risk_notes"))
-
-        topic_clusters = normalized.get("topic_clusters")
-        if not isinstance(topic_clusters, list):
-            topic_clusters = [topic_clusters] if topic_clusters else []
-        normalized["topic_clusters"] = [
-            cluster if isinstance(cluster, dict) else {"topic": clean_text(str(cluster)), "evidence": []}
-            for cluster in topic_clusters
-            if cluster
-        ]
-
-        writing_patterns = normalized.get("writing_patterns")
-        if isinstance(writing_patterns, dict):
-            normalized["writing_patterns"] = writing_patterns
-        elif isinstance(writing_patterns, list):
-            normalized["writing_patterns"] = {"patterns": _as_string_list(writing_patterns)}
-        elif writing_patterns:
-            normalized["writing_patterns"] = {"summary": clean_text(str(writing_patterns))}
-        else:
-            normalized["writing_patterns"] = {}
+        normalized["topic_clusters"] = self._normalize_topic_clusters(normalized.get("topic_clusters"))
+        normalized["writing_patterns"] = self._normalize_writing_patterns(normalized.get("writing_patterns"))
+        normalized["language_profile"] = self._normalize_language_profile(
+            normalized.get("language_profile"),
+            fallback_primary_language=normalized.get("primary_language"),
+        )
+        normalized["domain_expertise"] = self._normalize_domain_expertise(normalized.get("domain_expertise"))
+        normalized["emotional_baseline"] = self._normalize_emotional_baseline(normalized.get("emotional_baseline"))
+        normalized["audience_profile"] = self._normalize_audience_profile(normalized.get("audience_profile"))
+        normalized["interaction_style"] = self._normalize_interaction_style(normalized.get("interaction_style"))
+        normalized["posting_cadence"] = self._normalize_posting_cadence(normalized.get("posting_cadence"))
+        normalized["media_habits"] = self._normalize_media_habits(normalized.get("media_habits"))
+        normalized["banned_phrases"] = _as_string_list(normalized.get("banned_phrases"))
 
         cta_style = normalized.get("cta_style")
         if isinstance(cta_style, dict):
@@ -1123,6 +1197,302 @@ class LLMClient:
             "must_fix": payload.get("must_fix", []),
         }
 
+    def _normalize_topic_clusters(self, value: Any) -> list[dict[str, Any]]:
+        items = value if isinstance(value, list) else ([value] if value else [])
+        normalized_items: list[dict[str, Any]] = []
+        for item in items:
+            if isinstance(item, dict):
+                topic = clean_text(str(item.get("topic") or item.get("name") or ""))
+                evidence_terms = _as_string_list(
+                    item.get("evidence_terms") or item.get("evidence") or item.get("keywords")
+                )
+                frequency = clean_text(str(item.get("frequency") or "moderate")).lower() or "moderate"
+            else:
+                topic = clean_text(str(item))
+                evidence_terms = []
+                frequency = "moderate"
+            if not topic:
+                continue
+            normalized_items.append(
+                {
+                    "topic": topic,
+                    "evidence_terms": evidence_terms,
+                    "frequency": frequency,
+                }
+            )
+        return normalized_items
+
+    def _normalize_writing_patterns(self, value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            source = value
+        elif isinstance(value, list):
+            source = {"patterns": _as_string_list(value)}
+        elif value:
+            source = {"patterns": [clean_text(str(value))]}
+        else:
+            source = {}
+
+        return {
+            "avg_sentence_length": clean_text(
+                str(
+                    source.get("avg_sentence_length")
+                    or self._coerce_sentence_length(source.get("average_length") or source.get("avg_length"))
+                    or "medium"
+                )
+            ).lower()
+            or "medium",
+            "punctuation_habits": _as_string_list(
+                source.get("punctuation_habits") or source.get("punctuation") or source.get("patterns")
+            ),
+            "paragraph_structure": clean_text(
+                str(source.get("paragraph_structure") or source.get("structure") or "single-shot")
+            )
+            or "single-shot",
+            "code_switching_style": clean_text(
+                str(
+                    source.get("code_switching_style")
+                    or source.get("code_switching")
+                    or source.get("language_notes")
+                    or ""
+                )
+            ),
+            "emoji_usage": (
+                clean_text(
+                    str(source.get("emoji_usage") or self._coerce_emoji_usage(source.get("emoji_ratio")) or "none")
+                ).lower()
+                or "none"
+            ),
+        }
+
+    def _normalize_language_profile(
+        self,
+        value: Any,
+        *,
+        fallback_primary_language: Any = None,
+    ) -> dict[str, Any]:
+        raw = value
+        if not isinstance(raw, dict):
+            raw = {}
+
+        primary_language = (
+            clean_text(
+                str(raw.get("primary_language") or raw.get("primary") or fallback_primary_language or "unknown")
+            ).lower()
+            or "unknown"
+        )
+        secondary_languages = [
+            clean_text(language).lower()
+            for language in _as_string_list(raw.get("secondary_languages") or raw.get("secondary"))
+            if clean_text(language)
+        ]
+        mixing_pattern = (
+            clean_text(
+                str(raw.get("mixing_pattern") or raw.get("mix") or raw.get("code_switch_style") or "none")
+            ).lower()
+            or "none"
+        )
+        mixing_notes = clean_text(
+            str(raw.get("mixing_notes") or raw.get("notes") or raw.get("code_switching_style") or "")
+        )
+
+        return {
+            "primary_language": primary_language,
+            "secondary_languages": secondary_languages,
+            "mixing_pattern": mixing_pattern,
+            "mixing_notes": mixing_notes,
+        }
+
+    def _normalize_domain_expertise(self, value: Any) -> list[dict[str, Any]]:
+        items = value if isinstance(value, list) else ([value] if value else [])
+        normalized_items: list[dict[str, Any]] = []
+        for item in items:
+            if isinstance(item, dict):
+                domain = clean_text(str(item.get("domain") or item.get("industry") or item.get("topic") or ""))
+                depth = clean_text(str(item.get("depth") or item.get("level") or "unknown")).lower() or "unknown"
+                jargon_examples = _as_string_list(
+                    item.get("jargon_examples") or item.get("jargon") or item.get("examples")
+                )
+            else:
+                domain = clean_text(str(item))
+                depth = "unknown"
+                jargon_examples = []
+            if not domain:
+                continue
+            normalized_items.append(
+                {
+                    "domain": domain,
+                    "depth": depth,
+                    "jargon_examples": jargon_examples,
+                }
+            )
+        return normalized_items
+
+    def _normalize_emotional_baseline(self, value: Any) -> dict[str, Any]:
+        raw = value if isinstance(value, dict) else {}
+        return {
+            "default_valence": clean_text(
+                str(raw.get("default_valence") or raw.get("valence") or raw.get("dominant") or "neutral")
+            ).lower()
+            or "neutral",
+            "intensity": clean_text(str(raw.get("intensity") or "moderate")).lower() or "moderate",
+            "sarcasm_level": clean_text(str(raw.get("sarcasm_level") or raw.get("sarcasm") or "none")).lower()
+            or "none",
+            "humor_style": clean_text(str(raw.get("humor_style") or raw.get("humor") or "")),
+        }
+
+    def _normalize_audience_profile(self, value: Any) -> dict[str, Any]:
+        raw = value if isinstance(value, dict) else {}
+        return {
+            "primary_audience": clean_text(str(raw.get("primary_audience") or raw.get("type") or "unknown"))
+            or "unknown",
+            "assumed_knowledge": _as_string_list(raw.get("assumed_knowledge") or raw.get("knowledge")),
+            "formality": clean_text(str(raw.get("formality") or "casual")).lower() or "casual",
+        }
+
+    def _normalize_interaction_style(self, value: Any) -> dict[str, Any]:
+        raw = value if isinstance(value, dict) else {}
+        return {
+            "original_post_tone": clean_text(
+                str(raw.get("original_post_tone") or raw.get("original_tone") or "unknown")
+            )
+            or "unknown",
+            "reply_tone": clean_text(str(raw.get("reply_tone") or "")),
+            "quote_tone": clean_text(str(raw.get("quote_tone") or "")),
+            "engagement_triggers": _as_string_list(
+                raw.get("engagement_triggers") or raw.get("triggers") or raw.get("topics")
+            ),
+        }
+
+    def _normalize_posting_cadence(self, value: Any) -> dict[str, Any]:
+        raw = value if isinstance(value, dict) else {}
+        avg_daily_tweets = self._coerce_float(raw.get("avg_daily_tweets"), default=0.0)
+        active_windows = self._coerce_int_list(raw.get("active_windows_utc") or raw.get("active_hours"))
+        posting_style = clean_text(str(raw.get("posting_style") or raw.get("style") or "steady")).lower() or "steady"
+        preferred_post_length = (
+            clean_text(str(raw.get("preferred_post_length") or raw.get("length_preference") or "medium")).lower()
+            or "medium"
+        )
+        return {
+            "avg_daily_tweets": avg_daily_tweets,
+            "posting_style": posting_style,
+            "preferred_post_length": preferred_post_length,
+            "active_windows_utc": active_windows,
+        }
+
+    def _normalize_media_habits(self, value: Any) -> dict[str, Any]:
+        raw = value if isinstance(value, dict) else {}
+        return {
+            "text_only_ratio": self._coerce_float(raw.get("text_only_ratio"), default=0.0),
+            "link_ratio": self._coerce_float(raw.get("link_ratio"), default=0.0),
+            "media_attachment_ratio": self._coerce_float(raw.get("media_attachment_ratio"), default=0.0),
+            "dominant_format": (
+                clean_text(str(raw.get("dominant_format") or raw.get("format") or "text-only")).lower() or "text-only"
+            ),
+            "notes": clean_text(str(raw.get("notes") or "")),
+        }
+
+    def _coerce_sentence_length(self, value: Any) -> str | None:
+        if isinstance(value, str):
+            normalized = clean_text(value).lower()
+            if normalized in {"short", "medium", "long"}:
+                return normalized
+            try:
+                value = float(normalized)
+            except ValueError:
+                return None
+        if isinstance(value, (int, float)):
+            if value <= 80:
+                return "short"
+            if value <= 180:
+                return "medium"
+            return "long"
+        return None
+
+    def _coerce_emoji_usage(self, value: Any) -> str | None:
+        if isinstance(value, str):
+            normalized = clean_text(value).lower()
+            if normalized in {"none", "light", "heavy"}:
+                return normalized
+            try:
+                value = float(normalized)
+            except ValueError:
+                return None
+        if isinstance(value, (int, float)):
+            if value <= 0:
+                return "none"
+            if value < 0.08:
+                return "light"
+            return "heavy"
+        return None
+
+    def _coerce_float(self, value: Any, *, default: float) -> float:
+        try:
+            return round(float(value), 3)
+        except (TypeError, ValueError):
+            return default
+
+    def _coerce_int_list(self, value: Any) -> list[int]:
+        if not isinstance(value, list):
+            return []
+        results: list[int] = []
+        for item in value:
+            try:
+                results.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return results
+
+    def _persona_language_guidance(self, persona: dict[str, Any]) -> str:
+        language_profile = self._normalize_language_profile(persona.get("language_profile"))
+        primary_language = language_profile["primary_language"]
+        if primary_language == "unknown":
+            return (
+                "Match the user's requested language. "
+                "If the prompt does not specify one, stay close to the persona's historical language texture."
+            )
+
+        guidance = f"Default to {primary_language}"
+        secondary_languages = language_profile["secondary_languages"]
+        if secondary_languages:
+            guidance += f", with optional support from {', '.join(secondary_languages[:2])}"
+
+        mixing_pattern = language_profile["mixing_pattern"]
+        if mixing_pattern != "none":
+            guidance += f". Mixing pattern: {mixing_pattern}"
+        else:
+            guidance += "."
+
+        mixing_notes = language_profile["mixing_notes"]
+        if mixing_notes:
+            guidance += f" Notes: {mixing_notes}"
+        return guidance
+
+    def _persona_audience_formality(self, persona: dict[str, Any]) -> str:
+        audience_profile = persona.get("audience_profile")
+        if not isinstance(audience_profile, dict):
+            return "casual"
+        return clean_text(str(audience_profile.get("formality") or "casual")).lower() or "casual"
+
+    def _persona_sarcasm_level(self, persona: dict[str, Any]) -> str:
+        emotional_baseline = persona.get("emotional_baseline")
+        if not isinstance(emotional_baseline, dict):
+            return "none"
+        return clean_text(str(emotional_baseline.get("sarcasm_level") or "none")).lower() or "none"
+
+    def _draft_sounds_earnest(self, candidate_text: str) -> bool:
+        lowered_text = candidate_text.lower()
+        if any(marker in lowered_text for marker in SARCASM_LITERAL_MARKERS):
+            return False
+        if any(pattern.search(candidate_text) for pattern in SARCASM_REGEX_PATTERNS):
+            return False
+        return True
+
+    def _draft_is_link_forward(self, candidate_text: str) -> bool:
+        lowered_text = candidate_text.lower()
+        if "http://" in lowered_text or "https://" in lowered_text:
+            return True
+        return any(marker in lowered_text or marker in candidate_text for marker in LINK_FORWARD_MARKERS)
+
     def _build_persona_request_payload(
         self,
         *,
@@ -1142,9 +1512,12 @@ class LLMClient:
             "corpus_stats": corpus_stats,
             "representative_tweets": representative_tweets,
             "instructions": [
+                'persona_version must always be "v1".',
                 "Keep author_summary to 3 sentences max.",
                 "voice_traits should be 4 to 8 short traits.",
-                "topic_clusters should be 3 to 6 clusters with topic and evidence terms.",
+                "topic_clusters should be 3 to 6 clusters with topic, evidence_terms, and frequency.",
+                "writing_patterns must be a structured object with avg_sentence_length, punctuation_habits, "
+                "paragraph_structure, code_switching_style, and emoji_usage.",
                 "do_not_sound_like should capture style drift risks.",
                 "generation_guardrails should translate the style into concrete writing rules for generation.",
                 "generation_guardrails.preferred_openings should capture native ways this author often starts posts.",
@@ -1156,6 +1529,18 @@ class LLMClient:
                 "that would sound too polished, too abstract, too symmetrical, or too essay-like.",
                 "generation_guardrails.language_notes should explain "
                 "how to handle bilingual texture or code-switching naturally.",
+                "language_profile must identify the primary language using ISO 639-1 when possible and describe "
+                "code-switching patterns with concrete evidence from the tweets.",
+                "domain_expertise should list 1 to 3 domains with depth level and jargon_examples.",
+                "emotional_baseline should capture default_valence, intensity, sarcasm_level, and humor_style.",
+                "audience_profile should infer primary_audience, assumed_knowledge, and formality.",
+                "interaction_style should differentiate original posts, replies, and quote tweets, and list "
+                "engagement_triggers.",
+                "posting_cadence should use avg_daily_tweets, active_windows_utc, and posting_style to describe "
+                "whether this author is bursty, steady, or sporadic, and infer preferred_post_length.",
+                "media_habits should capture text_only_ratio, link_ratio, media_attachment_ratio, dominant_format, "
+                "and notes. Use only tweet evidence; do not invent off-platform habits.",
+                "banned_phrases should list internet cliches or phrases this author would not naturally use.",
                 "risk_notes should mention limits of inference and sensitive content caution.",
             ],
         }
@@ -1174,10 +1559,23 @@ class LLMClient:
         draft_count: int,
     ) -> dict[str, Any]:
         guardrails = _normalize_generation_guardrails(persona.get("generation_guardrails"))
-        full_chinese_mode = prompt_requests_full_chinese(prompt)
-        allowed_english_tokens_set = self._allowed_english_tokens_for_full_chinese_prompt(
-            prompt=prompt,
-            theme_keywords=theme_keywords,
+        writing_patterns = self._normalize_writing_patterns(persona.get("writing_patterns"))
+        language_profile = self._normalize_language_profile(persona.get("language_profile"))
+        emotional_baseline = self._normalize_emotional_baseline(persona.get("emotional_baseline"))
+        audience_profile = self._normalize_audience_profile(persona.get("audience_profile"))
+        interaction_style = self._normalize_interaction_style(persona.get("interaction_style"))
+        posting_cadence = self._normalize_posting_cadence(persona.get("posting_cadence"))
+        media_habits = self._normalize_media_habits(persona.get("media_habits"))
+
+        language_mode = prompt_language_mode(prompt)
+        full_chinese_mode = language_mode == "full_chinese"
+        allowed_english_tokens_set = (
+            self._allowed_english_tokens_for_full_chinese_prompt(
+                prompt=prompt,
+                theme_keywords=theme_keywords,
+            )
+            if full_chinese_mode
+            else set()
         )
         prompt_for_generation = (
             self._sanitize_prompt_for_full_chinese_mode(
@@ -1205,6 +1603,41 @@ class LLMClient:
                 "Full-Chinese mode is required: keep the draft in Chinese. "
                 "Use English only for exact tokens that already exist in user_prompt/theme_keywords."
             )
+        elif language_mode == "english_or_bilingual":
+            drafting_rules.append(
+                "The user explicitly asked for English or bilingual output. Follow that first, "
+                "while keeping the persona's natural code-switching texture."
+            )
+        else:
+            drafting_rules.append(
+                "When the prompt does not force a language, default to the persona's primary language profile."
+            )
+        if posting_cadence["posting_style"] == "burst-poster" or posting_cadence["preferred_post_length"] == "short":
+            drafting_rules.append(
+                "This persona posts in short bursts. Prefer compressed, single-point drafts over complete arguments."
+            )
+        if media_habits["dominant_format"] == "text-only":
+            drafting_rules.append(
+                "This persona is mostly text-only. Do not add links or image-style framing unless the prompt needs it."
+            )
+        elif media_habits["dominant_format"] == "link-led":
+            drafting_rules.append(
+                "This persona often uses links. Reference a source naturally if needed, but do not force a real URL."
+            )
+        elif media_habits["dominant_format"] == "media-led":
+            drafting_rules.append(
+                "This persona often posts around media attachments. A short caption-like draft is acceptable."
+            )
+
+        if full_chinese_mode:
+            language_constraint = "Full-Chinese only (unless exact user-provided English tokens are necessary)."
+        elif language_mode == "english_or_bilingual":
+            language_constraint = (
+                "Follow the user's explicit English or bilingual request first, "
+                "while keeping the persona's natural language texture."
+            )
+        else:
+            language_constraint = self._persona_language_guidance(persona)
         return {
             "persona": persona,
             "style_brief": {
@@ -1212,6 +1645,13 @@ class LLMClient:
                 "voice_traits": _as_string_list(persona.get("voice_traits")),
                 "lexical_markers": _as_string_list(persona.get("lexical_markers"))[:20],
                 "do_not_sound_like": _as_string_list(persona.get("do_not_sound_like")),
+                "writing_patterns": writing_patterns,
+                "language_profile": language_profile,
+                "emotional_baseline": emotional_baseline,
+                "audience_profile": audience_profile,
+                "interaction_style": interaction_style,
+                "posting_cadence": posting_cadence,
+                "media_habits": media_habits,
                 "generation_guardrails": guardrails,
             },
             "user_prompt": prompt_for_generation,
@@ -1225,11 +1665,7 @@ class LLMClient:
             "constraints": {
                 "draft_count": draft_count,
                 "max_chars": 280,
-                "language_mode": (
-                    "Full-Chinese only (unless exact user-provided English tokens are necessary)."
-                    if full_chinese_mode
-                    else "Match the user's requested language and the persona's natural language texture."
-                ),
+                "language_mode": language_constraint,
                 "full_chinese_only": full_chinese_mode,
                 "allowed_english_tokens": allowed_english_tokens,
                 "no_threads": True,
