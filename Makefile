@@ -3,7 +3,7 @@ FE_DIR := apps/browser-extension
 BE_CONFIG ?= config.json
 
 .PHONY: lint format typecheck check test build \
-        be-lint be-format be-typecheck be-check be-test be-run \
+        be-lint be-format be-format-check be-typecheck be-check be-test be-run \
         fe-lint fe-format fe-typecheck fe-check fe-build fe-test \
         fe-install
 
@@ -15,10 +15,13 @@ be-lint:
 be-format:
 	cd $(BE_DIR) && ruff format app/ tests/
 
+be-format-check:
+	cd $(BE_DIR) && ruff format --check app/ tests/
+
 be-typecheck:
 	cd $(BE_DIR) && pyright app/
 
-be-check: be-lint be-format be-typecheck
+be-check: be-lint be-format-check be-typecheck
 
 be-test:
 	cd $(BE_DIR) && python -m pytest tests/ -q
