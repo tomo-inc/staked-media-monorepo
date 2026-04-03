@@ -1,8 +1,9 @@
 BE_DIR := apps/backend
 FE_DIR := apps/browser-extension
+BE_CONFIG ?= config.json
 
 .PHONY: lint format typecheck check test build \
-        be-lint be-format be-typecheck be-check be-test \
+        be-lint be-format be-typecheck be-check be-test be-run \
         fe-lint fe-format fe-typecheck fe-check fe-build fe-test \
         fe-install
 
@@ -21,6 +22,9 @@ be-check: be-lint be-format be-typecheck
 
 be-test:
 	cd $(BE_DIR) && python -m pytest tests/ -q
+
+be-run:
+	cd $(BE_DIR) && python -m app.run -c $(abspath $(BE_CONFIG)) --reload
 
 # ── Frontend ─────────────────────────────────────────────
 
