@@ -29,6 +29,7 @@ test("routeMessage rejects unsupported handlers", async () => {
 
 test("default config uses the hosted backend URL", () => {
 	assert.equal(DEFAULT_CONFIG.backendBaseUrl, "https://api.sayviner.top:8443");
+	assert.equal(DEFAULT_CONFIG.apiMode, "drafts");
 });
 
 test("sanitizeConfig normalizes and trims persisted settings", () => {

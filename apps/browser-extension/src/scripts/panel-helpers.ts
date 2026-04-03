@@ -1,3 +1,7 @@
+interface StakedMediaPanelHelpersHost {
+	StakedMediaPanelHelpers?: unknown;
+}
+
 (function (globalRoot, factory) {
 	const api = factory();
 	globalRoot.StakedMediaPanelHelpers = api;
@@ -5,8 +9,20 @@
 		module.exports = api;
 	}
 })(
-	typeof globalThis !== "undefined" ? (globalThis as any) : (this as any),
+	typeof globalThis !== "undefined"
+		? (globalThis as StakedMediaPanelHelpersHost)
+		: (this as StakedMediaPanelHelpersHost),
 	function () {
+		interface PanelHelpersApi {
+			isWhitelistDeniedError(
+				error: { status?: number } | null | undefined,
+			): boolean;
+			deriveConnectionIndicator(
+				input: ConnectionIndicatorInput,
+			): ConnectionIndicatorOutput;
+			buildPanelShell(): string;
+		}
+
 		interface ConnectionIndicatorInput {
 			health?: { status?: string } | null;
 			latencyMs?: number | null;
@@ -197,11 +213,11 @@
                 </label>
                 <div class="smc-radio-group">
                   <label class="smc-radio-option">
-                    <input type="radio" name="s-apiMode" data-field="s-apiModeDrafts" value="drafts">
+                    <input type="radio" name="s-apiMode" data-field="s-apiModeDrafts" value="drafts" checked>
                     Drafts API (/api/v1/drafts/generate)
                   </label>
                   <label class="smc-radio-option">
-                    <input type="radio" name="s-apiMode" data-field="s-apiModeContent" value="content" checked>
+                    <input type="radio" name="s-apiMode" data-field="s-apiModeContent" value="content">
                     Content API (/api/v1/content/generate)
                   </label>
                 </div>
@@ -218,10 +234,11 @@
     `;
 		}
 
-		return {
+		const api: PanelHelpersApi = {
 			buildPanelShell,
 			deriveConnectionIndicator,
 			isWhitelistDeniedError,
 		};
+		return api;
 	},
 );
