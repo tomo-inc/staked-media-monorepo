@@ -178,7 +178,7 @@ python -m pytest -q
 
 ## Browser Extension MVP
 
-This repository now includes a Chrome/Edge Manifest V3 extension under [extension/README.md](/workspace/staked-media-monorepo/extension/README.md).
+This repository now includes a Chrome/Edge Manifest V3 extension under [apps/browser-extension/README.md](apps/browser-extension/README.md).
 
 What it does:
 - checks whether a profile/persona already exists,
@@ -189,13 +189,14 @@ What it does:
 
 Load it locally:
 1. Start the backend with `python -m app.run -c config.json --reload`
-2. Open `chrome://extensions`
-3. Enable `Developer mode`
-4. Click `Load unpacked`
-5. Select the [extension](/workspace/staked-media-monorepo/extension) directory
-6. Open `https://x.com` and click the extension icon to launch the side panel
+2. Build extension assets with `cd apps/browser-extension && npm install && npm run build`
+3. Open `chrome://extensions`
+4. Enable `Developer mode`
+5. Click `Load unpacked`
+6. Select the `apps/browser-extension/dist` directory
+7. Open `https://x.com` and click the extension icon to launch the side panel
 
 Notes:
-- The extension is intentionally no-build and uses plain `HTML/CSS/JS`.
+- Extension source and runtime output are separated as `src/`, `public/`, and `dist/`.
 - It assumes the local Python backend is running at `http://127.0.0.1:8000`; there is still no plugin-specific auth layer.
 - Ingest is still mandatory before generation.
