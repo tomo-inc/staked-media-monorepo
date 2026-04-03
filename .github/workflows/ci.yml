@@ -9,17 +9,25 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/backend
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/ruff-action@v3
         with:
           args: check app/ tests/
+          src: apps/backend
       - uses: astral-sh/ruff-action@v3
         with:
           args: format --check app/ tests/
+          src: apps/backend
 
   typecheck:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,6 +39,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     needs: [lint, typecheck]
+    defaults:
+      run:
+        working-directory: apps/backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

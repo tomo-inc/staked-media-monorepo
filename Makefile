@@ -1,16 +1,16 @@
 .PHONY: lint format typecheck check test
 
 lint:
-	ruff check app/ tests/
+	cd apps/backend && ruff check app/ tests/
 
 format:
-	ruff format app/ tests/
+	cd apps/backend && ruff format app/ tests/
 
 typecheck:
-	pyright app/
+	cd apps/backend && pyright app/
 
 check: lint typecheck
-	ruff format --check app/ tests/
+	cd apps/backend && ruff format --check app/ tests/
 
 test:
-	python -m pytest tests/ -q
+	cd apps/backend && python -m pytest tests/ -q
