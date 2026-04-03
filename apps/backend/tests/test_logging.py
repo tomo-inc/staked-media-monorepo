@@ -99,30 +99,23 @@ class LoggingTestCase(unittest.TestCase):
                 handler.flush()
 
             contents = log_path.read_text(encoding="utf-8")
-            self.assertRegex(contents, r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} INFO uvicorn\.error uvicorn error entry")
+            self.assertRegex(
+                contents, r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} INFO uvicorn\.error uvicorn error entry"
+            )
             self.assertRegex(
                 contents,
-                r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} INFO uvicorn\.access 127\.0\.0\.1 - "GET /healthz HTTP/1\.1" 200',
+                r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} "
+                r'INFO uvicorn\.access 127\.0\.0\.1 - "GET /healthz HTTP/1\.1" 200',
             )
-            self.assertRegex(contents, r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} WARNING fastapi fastapi warning entry")
+            self.assertRegex(
+                contents, r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} WARNING fastapi fastapi warning entry"
+            )
             self.assertEqual(contents.count("uvicorn error entry"), 1)
             self.assertEqual(contents.count("fastapi warning entry"), 1)
 
     @patch("app.llm.base_client.requests.post")
     def test_invalid_json_logs_redacted_snippet_without_api_key(self, mock_post) -> None:
-        mock_post.return_value = FakeResponse(
-            json_body={
-                "candidates": [
-                    {
-                        "content": {
-                            "parts": [
-                                {"text": "x" * 200}
-                            ]
-                        }
-                    }
-                ]
-            }
-        )
+        mock_post.return_value = FakeResponse(json_body={"candidates": [{"content": {"parts": [{"text": "x" * 200}]}}]})
         client = GeminiClient(
             Settings(
                 llm_provider="gemini",

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-from typing import Sequence
+from collections.abc import Sequence
 
-from pydantic import ValidationError
 import uvicorn
+from pydantic import ValidationError
 
 from app.config import clear_config_cache, load_config_file, set_runtime_config_path
 

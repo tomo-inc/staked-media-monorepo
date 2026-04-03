@@ -9,7 +9,7 @@ from app.llm import GeminiClient, LLMError, OpenAIClient, create_llm_client
 
 
 class FakeResponse:
-    def __init__(self, *, status_code: int = 200, json_body: dict | None = None, text: str = "") -> None:
+    def __init__(self, *, status_code: int = 200, json_body=None, text: str = "") -> None:
         self.status_code = status_code
         self._json_body = json_body or {}
         self.text = text
@@ -22,8 +22,18 @@ class FakeResponse:
             error.response = self
             raise error
 
-    def json(self) -> dict:
+    def json(self):
         return self._json_body
+
+
+# Reusable JSON fixture strings for mock LLM responses
+_SCORE_STRONG_FIT = '{"score": 9.1, "verdict": "strong_fit", "strengths": ["native"], "issues": [], "must_fix": []}'
+_SCORE_FIT_88 = '{"score": 8.8, "verdict": "fit", "strengths": [], "issues": [], "must_fix": []}'
+_SCORE_FIT_86 = '{"score": 8.6, "verdict": "fit", "strengths": [], "issues": [], "must_fix": []}'
+_SCORE_FIT_91 = '{"score": 9.1, "verdict": "fit", "strengths": [], "issues": [], "must_fix": []}'
+_SCORE_OK_90 = '{"score": 9.0, "verdict": "ok", "strengths": [], "issues": [], "must_fix": []}'
+_SCORE_FIT_94_LIST = '[{"score": 9.4, "verdict": "fit", "strengths": ["native"], "issues": [], "must_fix": []}]'
+_DRAFTS_WTDD = '{"drafts": [{"text": "WTDD 今天很强", "tone_tags": ["direct"], "rationale": "ok"}]}'
 
 
 class LlmNormalizationTestCase(unittest.TestCase):
@@ -88,6 +98,13 @@ class LlmNormalizationTestCase(unittest.TestCase):
         self.assertEqual(len(normalized["drafts"]), 2)
         self.assertEqual(normalized["drafts"][0]["text"], "One clear post")
         self.assertEqual(normalized["drafts"][1]["tone_tags"], ["direct"])
+
+    def test_normalize_score_payload_rejects_top_level_list(self) -> None:
+        with self.assertRaisesRegex(LLMError, "Score schema validation failed"):
+            self.client._normalize_score_payload(
+                [{"score": 9.0, "verdict": "fit"}],
+                request_id="score-list",
+            )
 
     def test_build_draft_request_payload_uses_guardrails_and_language_matching(self) -> None:
         payload = self.client._build_draft_request_payload(
@@ -182,10 +199,7 @@ class LlmNormalizationTestCase(unittest.TestCase):
 
         self.assertLess(evaluation["score"], 6.0)
         self.assertTrue(
-            any(
-                issue.startswith("Contains English despite full-Chinese prompt")
-                for issue in evaluation["issues"]
-            )
+            any(issue.startswith("Contains English despite full-Chinese prompt") for issue in evaluation["issues"])
         )
 
     def test_generate_drafts_full_chinese_falls_back_to_best_available_candidate(self) -> None:
@@ -303,12 +317,24 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
         batch_response = {
             "scores": [
                 {"index": 0, "score": 9.0, "verdict": "good", "strengths": ["natural"], "issues": [], "must_fix": []},
-                {"index": 1, "score": 7.5, "verdict": "weak", "strengths": [], "issues": ["drift"], "must_fix": ["fix"]},
+                {
+                    "index": 1,
+                    "score": 7.5,
+                    "verdict": "weak",
+                    "strengths": [],
+                    "issues": ["drift"],
+                    "must_fix": ["fix"],
+                },
             ]
         }
         with patch.object(self.client, "_chat_completion_json", return_value=batch_response):
             results = self.client.score_drafts_batch(
-                persona={"author_summary": "", "voice_traits": [], "do_not_sound_like": [], "generation_guardrails": {}},
+                persona={
+                    "author_summary": "",
+                    "voice_traits": [],
+                    "do_not_sound_like": [],
+                    "generation_guardrails": {},
+                },
                 prompt="test",
                 candidate_texts=["候选A", "候选B"],
                 matched_theme_tweets=[],
@@ -328,7 +354,12 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
         }
         with patch.object(self.client, "_chat_completion_json", return_value=batch_response):
             results = self.client.score_drafts_batch(
-                persona={"author_summary": "", "voice_traits": [], "do_not_sound_like": [], "generation_guardrails": {}},
+                persona={
+                    "author_summary": "",
+                    "voice_traits": [],
+                    "do_not_sound_like": [],
+                    "generation_guardrails": {},
+                },
                 prompt="test",
                 candidate_texts=["候选A", "候选B", "候选C"],
                 matched_theme_tweets=[],
@@ -355,7 +386,12 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
     def test_batch_handles_malformed_llm_response(self) -> None:
         with patch.object(self.client, "_chat_completion_json", return_value={"unexpected": "shape"}):
             results = self.client.score_drafts_batch(
-                persona={"author_summary": "", "voice_traits": [], "do_not_sound_like": [], "generation_guardrails": {}},
+                persona={
+                    "author_summary": "",
+                    "voice_traits": [],
+                    "do_not_sound_like": [],
+                    "generation_guardrails": {},
+                },
                 prompt="test",
                 candidate_texts=["候选A"],
                 matched_theme_tweets=[],
@@ -372,7 +408,12 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
         ]
         with patch.object(self.client, "_chat_completion_json", return_value=list_response):
             results = self.client.score_drafts_batch(
-                persona={"author_summary": "", "voice_traits": [], "do_not_sound_like": [], "generation_guardrails": {}},
+                persona={
+                    "author_summary": "",
+                    "voice_traits": [],
+                    "do_not_sound_like": [],
+                    "generation_guardrails": {},
+                },
                 prompt="test",
                 candidate_texts=["候选A"],
                 matched_theme_tweets=[],
@@ -391,7 +432,12 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
         }
         with patch.object(self.client, "_chat_completion_json", return_value=batch_response):
             results = self.client.score_drafts_batch(
-                persona={"author_summary": "", "voice_traits": [], "do_not_sound_like": [], "generation_guardrails": {}},
+                persona={
+                    "author_summary": "",
+                    "voice_traits": [],
+                    "do_not_sound_like": [],
+                    "generation_guardrails": {},
+                },
                 prompt="test",
                 candidate_texts=["A", "B", "C"],
                 matched_theme_tweets=[],
@@ -468,19 +514,7 @@ class LlmProviderTestCase(unittest.TestCase):
     @patch("app.llm.base_client.requests.post")
     def test_gemini_parses_json_response(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
-            json_body={
-                "candidates": [
-                    {
-                        "content": {
-                            "parts": [
-                                {
-                                    "text": '{"score": 9.1, "verdict": "strong_fit", "strengths": ["native"], "issues": [], "must_fix": []}'
-                                }
-                            ]
-                        }
-                    }
-                ]
-            }
+            json_body={"candidates": [{"content": {"parts": [{"text": _SCORE_STRONG_FIT}]}}]}
         )
         client = GeminiClient(
             Settings(
@@ -545,19 +579,7 @@ class LlmProviderTestCase(unittest.TestCase):
     @patch("app.llm.base_client.requests.post")
     def test_gemini_rejects_invalid_json_response(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
-            json_body={
-                "candidates": [
-                    {
-                        "content": {
-                            "parts": [
-                                {
-                                    "text": "not-json"
-                                }
-                            ]
-                        }
-                    }
-                ]
-            }
+            json_body={"candidates": [{"content": {"parts": [{"text": "not-json"}]}}]}
         )
         client = GeminiClient(
             Settings(
@@ -576,19 +598,7 @@ class LlmProviderTestCase(unittest.TestCase):
     @patch("app.llm.base_client.requests.post")
     def test_gemini_parses_fenced_json_response(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
-            json_body={
-                "candidates": [
-                    {
-                        "content": {
-                            "parts": [
-                                {
-                                    "text": '```json\n{"score": 8.8, "verdict": "fit", "strengths": [], "issues": [], "must_fix": []}\n```'
-                                }
-                            ]
-                        }
-                    }
-                ]
-            }
+            json_body={"candidates": [{"content": {"parts": [{"text": "```json\n" + _SCORE_FIT_88 + "\n```"}]}}]}
         )
         client = GeminiClient(Settings(llm_provider="gemini", gemini_api_key="gemini-key"))
 
@@ -605,15 +615,7 @@ class LlmProviderTestCase(unittest.TestCase):
         mock_post.return_value = FakeResponse(
             json_body={
                 "candidates": [
-                    {
-                        "content": {
-                            "parts": [
-                                {
-                                    "text": 'Here is the result:\n{"score": 8.6, "verdict": "fit", "strengths": [], "issues": [], "must_fix": []}\nThanks.'
-                                }
-                            ]
-                        }
-                    }
+                    {"content": {"parts": [{"text": "Here is the result:\n" + _SCORE_FIT_86 + "\nThanks."}]}}
                 ]
             }
         )
@@ -633,21 +635,7 @@ class LlmProviderTestCase(unittest.TestCase):
 
         mock_post.side_effect = [
             requests.ReadTimeout("timed out"),
-            FakeResponse(
-                json_body={
-                    "candidates": [
-                        {
-                            "content": {
-                                "parts": [
-                                    {
-                                        "text": '{"score": 9.1, "verdict": "fit", "strengths": [], "issues": [], "must_fix": []}'
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                }
-            ),
+            FakeResponse(json_body={"candidates": [{"content": {"parts": [{"text": _SCORE_FIT_91}]}}]}),
         ]
         client = GeminiClient(
             Settings(
@@ -671,17 +659,7 @@ class LlmProviderTestCase(unittest.TestCase):
     def test_openai_retries_http_5xx_then_succeeds(self, mock_post) -> None:
         mock_post.side_effect = [
             FakeResponse(status_code=503, text="temporary outage"),
-            FakeResponse(
-                json_body={
-                    "choices": [
-                        {
-                            "message": {
-                                "content": '{"score": 9.0, "verdict": "ok", "strengths": [], "issues": [], "must_fix": []}'
-                            }
-                        }
-                    ]
-                }
-            ),
+            FakeResponse(json_body={"choices": [{"message": {"content": _SCORE_OK_90}}]}),
         ]
         client = OpenAIClient(
             Settings(
@@ -702,17 +680,7 @@ class LlmProviderTestCase(unittest.TestCase):
 
     @patch("app.llm.base_client.requests.post")
     def test_openai_request_shape_and_parsing(self, mock_post) -> None:
-        mock_post.return_value = FakeResponse(
-            json_body={
-                "choices": [
-                    {
-                        "message": {
-                            "content": '{"score": 9.0, "verdict": "ok", "strengths": [], "issues": [], "must_fix": []}'
-                        }
-                    }
-                ]
-            }
-        )
+        mock_post.return_value = FakeResponse(json_body={"choices": [{"message": {"content": _SCORE_OK_90}}]})
         client = OpenAIClient(
             Settings(
                 openai_api_key="openai-key",
@@ -747,8 +715,7 @@ class LlmProviderTestCase(unittest.TestCase):
                     {
                         "message": {
                             "content": (
-                                "1. 天气不是背景板，它已经在接管情绪。\n\n"
-                                "2. 当季节秩序开始漂移，日常就会变成风险管理。"
+                                "1. 天气不是背景板，它已经在接管情绪。\n\n2. 当季节秩序开始漂移，日常就会变成风险管理。"
                             )
                         }
                     }
@@ -772,15 +739,7 @@ class LlmProviderTestCase(unittest.TestCase):
     @patch("app.llm.base_client.requests.post")
     def test_openai_plaintext_response_still_fails_for_non_draft_purpose(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
-            json_body={
-                "choices": [
-                    {
-                        "message": {
-                            "content": "这不是 JSON，只是普通文本。"
-                        }
-                    }
-                ]
-            }
+            json_body={"choices": [{"message": {"content": "这不是 JSON，只是普通文本。"}}]}
         )
         client = OpenAIClient(Settings(openai_api_key="openai-key"))
 
@@ -807,17 +766,7 @@ class LlmProviderTestCase(unittest.TestCase):
 
     @patch("app.llm.base_client.requests.post")
     def test_openai_uses_no_proxy_when_unconfigured(self, mock_post) -> None:
-        mock_post.return_value = FakeResponse(
-            json_body={
-                "choices": [
-                    {
-                        "message": {
-                            "content": '{"score": 9.0, "verdict": "ok", "strengths": [], "issues": [], "must_fix": []}'
-                        }
-                    }
-                ]
-            }
-        )
+        mock_post.return_value = FakeResponse(json_body={"choices": [{"message": {"content": _SCORE_OK_90}}]})
         client = OpenAIClient(Settings(openai_api_key="openai-key", llm_http_proxy=""))
 
         client._chat_completion_json(
@@ -832,19 +781,7 @@ class LlmProviderTestCase(unittest.TestCase):
     @patch("app.llm.base_client.requests.post")
     def test_gemini_uses_no_proxy_when_unconfigured(self, mock_post) -> None:
         mock_post.return_value = FakeResponse(
-            json_body={
-                "candidates": [
-                    {
-                        "content": {
-                            "parts": [
-                                {
-                                    "text": '{"score": 9.1, "verdict": "strong_fit", "strengths": ["native"], "issues": [], "must_fix": []}'
-                                }
-                            ]
-                        }
-                    }
-                ]
-            }
+            json_body={"candidates": [{"content": {"parts": [{"text": _SCORE_STRONG_FIT}]}}]}
         )
         client = GeminiClient(Settings(llm_provider="gemini", gemini_api_key="gemini-key", llm_http_proxy=""))
 
@@ -862,17 +799,7 @@ class LlmProviderTestCase(unittest.TestCase):
         import requests
 
         mock_post.side_effect = [
-            FakeResponse(
-                json_body={
-                    "choices": [
-                        {
-                            "message": {
-                                "content": '{"drafts": [{"text": "WTDD 今天很强", "tone_tags": ["direct"], "rationale": "ok"}]}'
-                            }
-                        }
-                    ]
-                }
-            ),
+            FakeResponse(json_body={"choices": [{"message": {"content": _DRAFTS_WTDD}}]}),
             requests.ReadTimeout("timed out"),
             requests.ReadTimeout("timed out"),
         ]
@@ -921,6 +848,58 @@ class LlmProviderTestCase(unittest.TestCase):
         self.assertEqual(candidate["final_score"], 9.2)
         self.assertTrue(candidate["passed"])
         self.assertEqual(mock_post.call_count, 3)
+
+    @patch("app.llm.base_client.requests.post")
+    def test_generate_drafts_falls_back_when_score_payload_is_list(self, mock_post) -> None:
+        mock_post.side_effect = [
+            FakeResponse(json_body={"choices": [{"message": {"content": _DRAFTS_WTDD}}]}),
+            FakeResponse(json_body={"choices": [{"message": {"content": _SCORE_FIT_94_LIST}}]}),
+        ]
+        client = OpenAIClient(
+            Settings(
+                openai_api_key="openai-key",
+                llm_max_retries=1,
+                llm_retry_backoff_seconds=0.0,
+                llm_score_timeout_seconds=1,
+            )
+        )
+
+        with patch.object(
+            client,
+            "_rule_score_draft",
+            return_value={
+                "score": 9.2,
+                "passed": True,
+                "hard_fail": False,
+                "issues": [],
+                "strengths": ["Theme keyword hits: WTDD"],
+            },
+        ):
+            result = client.generate_drafts(
+                persona={"generation_guardrails": {}, "lexical_markers": [], "do_not_sound_like": []},
+                prompt="WTDD 今天很强",
+                representative_tweets=[{"text": "WTDD meme"}],
+                source_texts=["WTDD meme"],
+                tweet_rows=[
+                    {
+                        "id": "tweet-1",
+                        "text": "WTDD meme",
+                        "created_at": "2026-03-30T00:00:00Z",
+                        "is_retweet": False,
+                        "retweet_count": 0,
+                        "reply_count": 0,
+                        "like_count": 0,
+                        "quote_count": 0,
+                    }
+                ],
+                draft_count=1,
+            )
+
+        candidate = result["attempts"][0]["candidates"][0]
+        self.assertEqual(candidate["llm_score"], 9.4)
+        self.assertEqual(candidate["final_score"], 9.3)
+        self.assertTrue(candidate["passed"])
+        self.assertEqual(mock_post.call_count, 2)
 
 
 if __name__ == "__main__":

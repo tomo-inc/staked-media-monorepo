@@ -11,7 +11,6 @@ from .base_client import LLMClient
 from .errors import LLMError
 from .utils import _coerce_content_text, _parse_json_response
 
-
 logger = get_logger(__name__)
 
 
@@ -28,7 +27,7 @@ class OpenAIClient(LLMClient):
         request_id: str | None = None,
         purpose: str = "generation",
         timeout_seconds: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         if not self.settings.openai_api_key:
             raise LLMError("OpenAI API key is not configured")
 

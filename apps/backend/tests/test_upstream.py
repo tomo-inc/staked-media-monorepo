@@ -41,9 +41,7 @@ class DummySession:
                 {
                     "code": 200,
                     "data": {
-                        "data": [
-                            {"data": {"id": "3", "text": "third", "created_at": "2026-03-03T00:00:00Z"}}
-                        ],
+                        "data": [{"data": {"id": "3", "text": "third", "created_at": "2026-03-03T00:00:00Z"}}],
                         "next_cursor": None,
                     },
                 }
@@ -148,9 +146,7 @@ class RepeatingCursorSession:
                 {
                     "code": 200,
                     "data": {
-                        "data": [
-                            {"data": {"id": "2", "text": "second", "created_at": "2026-03-02T00:00:00Z"}}
-                        ],
+                        "data": [{"data": {"id": "2", "text": "second", "created_at": "2026-03-02T00:00:00Z"}}],
                         "next_cursor": "cursor-1",
                     },
                 }
@@ -159,9 +155,7 @@ class RepeatingCursorSession:
             {
                 "code": 200,
                 "data": {
-                    "data": [
-                        {"data": {"id": "1", "text": "first", "created_at": "2026-03-01T00:00:00Z"}}
-                    ],
+                    "data": [{"data": {"id": "1", "text": "first", "created_at": "2026-03-01T00:00:00Z"}}],
                     "next_cursor": "cursor-1",
                 },
             }
@@ -196,9 +190,7 @@ class EmptyPageSession:
             {
                 "code": 200,
                 "data": {
-                    "data": [
-                        {"data": {"id": "1", "text": "first", "created_at": "2026-03-01T00:00:00Z"}}
-                    ],
+                    "data": [{"data": {"id": "1", "text": "first", "created_at": "2026-03-01T00:00:00Z"}}],
                     "next_cursor": "cursor-1",
                 },
             }

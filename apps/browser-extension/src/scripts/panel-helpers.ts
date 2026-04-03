@@ -1,52 +1,60 @@
 (function (globalRoot, factory) {
-  const api = factory();
-  globalRoot.StakedMediaPanelHelpers = api;
-  if (typeof module !== "undefined" && module.exports) {
-    module.exports = api;
-  }
-})(typeof globalThis !== "undefined" ? (globalThis as any) : (this as any), function () {
-  interface ConnectionIndicatorInput {
-    health?: { status?: string } | null;
-    latencyMs?: number | null;
-    healthState?: string;
-  }
+	const api = factory();
+	globalRoot.StakedMediaPanelHelpers = api;
+	if (typeof module !== "undefined" && module.exports) {
+		module.exports = api;
+	}
+})(
+	typeof globalThis !== "undefined" ? (globalThis as any) : (this as any),
+	function () {
+		interface ConnectionIndicatorInput {
+			health?: { status?: string } | null;
+			latencyMs?: number | null;
+			healthState?: string;
+		}
 
-  interface ConnectionIndicatorOutput {
-    className: string;
-    title: string;
-    latencyText: string;
-  }
+		interface ConnectionIndicatorOutput {
+			className: string;
+			title: string;
+			latencyText: string;
+		}
 
-  function isWhitelistDeniedError(error: { status?: number } | null | undefined): boolean {
-    return Number(error?.status) === 403;
-  }
+		function isWhitelistDeniedError(
+			error: { status?: number } | null | undefined,
+		): boolean {
+			return Number(error?.status) === 403;
+		}
 
-  function deriveConnectionIndicator({ health, latencyMs, healthState }: ConnectionIndicatorInput): ConnectionIndicatorOutput {
-    if (healthState === "ready" && health?.status === "ok") {
-      return {
-        className: "smc-status-dot smc-dot-ok",
-        title: latencyMs != null ? `Connected ${latencyMs}ms` : "Connected",
-        latencyText: latencyMs != null ? `${latencyMs}ms` : ""
-      };
-    }
+		function deriveConnectionIndicator({
+			health,
+			latencyMs,
+			healthState,
+		}: ConnectionIndicatorInput): ConnectionIndicatorOutput {
+			if (healthState === "ready" && health?.status === "ok") {
+				return {
+					className: "smc-status-dot smc-dot-ok",
+					title: latencyMs != null ? `Connected ${latencyMs}ms` : "Connected",
+					latencyText: latencyMs != null ? `${latencyMs}ms` : "",
+				};
+			}
 
-    if (healthState === "error") {
-      return {
-        className: "smc-status-dot smc-dot-err",
-        title: "Disconnected",
-        latencyText: ""
-      };
-    }
+			if (healthState === "error") {
+				return {
+					className: "smc-status-dot smc-dot-err",
+					title: "Disconnected",
+					latencyText: "",
+				};
+			}
 
-    return {
-      className: "smc-status-dot smc-dot-warn",
-      title: "Checking...",
-      latencyText: "--"
-    };
-  }
+			return {
+				className: "smc-status-dot smc-dot-warn",
+				title: "Checking...",
+				latencyText: "--",
+			};
+		}
 
-  function buildPanelShell(): string {
-    return `
+		function buildPanelShell(): string {
+			return `
       <div class="smc-shell">
         <aside class="smc-panel">
           <header class="smc-header">
@@ -208,11 +216,12 @@
         </aside>
       </div>
     `;
-  }
+		}
 
-  return {
-    buildPanelShell,
-    deriveConnectionIndicator,
-    isWhitelistDeniedError
-  };
-});
+		return {
+			buildPanelShell,
+			deriveConnectionIndicator,
+			isWhitelistDeniedError,
+		};
+	},
+);

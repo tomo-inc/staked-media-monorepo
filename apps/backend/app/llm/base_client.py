@@ -34,7 +34,6 @@ from .utils import (
     _normalize_generation_guardrails,
 )
 
-
 logger = get_logger(__name__)
 
 
@@ -61,7 +60,7 @@ class LLMClient:
         purpose: str,
         timeout_seconds: float | None,
         params: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         resolved_timeout = self._resolve_timeout_seconds(
             purpose=purpose,
             timeout_seconds=timeout_seconds,
@@ -82,10 +81,22 @@ class LLMClient:
                 or (json_payload.get("generationConfig") or {}).get("temperature"),
                 system_prompt_len=len(str((json_payload.get("messages") or [{"content": ""}])[0].get("content", "")))
                 if "messages" in json_payload
-                else len(str((((json_payload.get("system_instruction") or {}).get("parts") or [{"text": ""}])[0]).get("text", ""))),
+                else len(
+                    str(
+                        (((json_payload.get("system_instruction") or {}).get("parts") or [{"text": ""}])[0]).get(
+                            "text", ""
+                        )
+                    )
+                ),
                 user_prompt_len=len(str((json_payload.get("messages") or [{}, {"content": ""}])[-1].get("content", "")))
                 if "messages" in json_payload
-                else len(str(((((json_payload.get("contents") or [{}])[0]).get("parts") or [{"text": ""}])[0]).get("text", ""))),
+                else len(
+                    str(
+                        ((((json_payload.get("contents") or [{}])[0]).get("parts") or [{"text": ""}])[0]).get(
+                            "text", ""
+                        )
+                    )
+                ),
                 proxy_enabled=bool(self.settings.llm_proxies),
                 attempt=attempt,
                 max_attempts=max_attempts,
@@ -349,9 +360,7 @@ class LLMClient:
         attempt_feedback: list[str] = []
 
         for round_index in range(1, max_rounds + 1):
-            accepted_count = sum(
-                1 for c in all_candidates if c["evaluation"]["final_score"] >= TARGET_DRAFT_SCORE
-            )
+            accepted_count = sum(1 for c in all_candidates if c["evaluation"]["final_score"] >= TARGET_DRAFT_SCORE)
             needed_count = draft_count - accepted_count
             log_event(
                 logger,
@@ -446,8 +455,7 @@ class LLMClient:
                 rule_results.append(rule_eval)
 
             llm_eligible_indices = [
-                i for i, rule_eval in enumerate(rule_results)
-                if rule_eval["passed"] and not rule_eval["hard_fail"]
+                i for i, rule_eval in enumerate(rule_results) if rule_eval["passed"] and not rule_eval["hard_fail"]
             ]
 
             llm_batch_results: list[dict[str, Any]] = []
@@ -491,13 +499,16 @@ class LLMClient:
 
             for i, (text, eval_item) in enumerate(to_evaluate):
                 rule_eval = rule_results[i]
-                llm_eval = llm_result_map.get(i, {
-                    "score": round(rule_eval["score"], 1),
-                    "verdict": "Skipped due to rule score gate",
-                    "strengths": [],
-                    "issues": [],
-                    "must_fix": rule_eval["issues"][:4],
-                })
+                llm_eval = llm_result_map.get(
+                    i,
+                    {
+                        "score": round(rule_eval["score"], 1),
+                        "verdict": "Skipped due to rule score gate",
+                        "strengths": [],
+                        "issues": [],
+                        "must_fix": rule_eval["issues"][:4],
+                    },
+                )
                 final_score = self._compute_final_score(rule_eval["score"], llm_eval["score"])
                 failure_reasons = []
                 if final_score < TARGET_DRAFT_SCORE:
@@ -573,9 +584,7 @@ class LLMClient:
                 feedback=attempt_feedback,
             )
 
-            passed_count = sum(
-                1 for c in all_candidates if c["evaluation"]["final_score"] >= TARGET_DRAFT_SCORE
-            )
+            passed_count = sum(1 for c in all_candidates if c["evaluation"]["final_score"] >= TARGET_DRAFT_SCORE)
             if passed_count >= draft_count:
                 break
 
@@ -625,9 +634,8 @@ class LLMClient:
             for item in selected_candidates
         ]
         best_candidate = selected_candidates[0]
-        target_score_met = (
-            len(selected_candidates) >= draft_count
-            and all(item["evaluation"]["final_score"] >= TARGET_DRAFT_SCORE for item in selected_candidates)
+        target_score_met = len(selected_candidates) >= draft_count and all(
+            item["evaluation"]["final_score"] >= TARGET_DRAFT_SCORE for item in selected_candidates
         )
         log_event(
             logger,
@@ -704,8 +712,10 @@ class LLMClient:
                     "theme_top_keywords": theme_top_keywords,
                     "matched_theme_tweets": matched_theme_tweets[:8],
                     "instructions": [
-                        "Score whether this post sounds like the same author on this topic, not whether it is generally well-written.",
-                        "Penalize generic summary language, topic drift, unnatural words, and phrases that do not fit the matched historical tweets.",
+                        "Score whether this post sounds like the same author on this topic, "
+                        "not whether it is generally well-written.",
+                        "Penalize generic summary language, topic drift, unnatural words, "
+                        "and phrases that do not fit the matched historical tweets.",
                         "Do not reward polished completeness if the author's style is naturally compressed.",
                     ],
                 },
@@ -716,17 +726,18 @@ class LLMClient:
             purpose="score",
             timeout_seconds=float(self.settings.llm_score_timeout_seconds),
         )
-        score = payload.get("score", 0)
+        normalized_payload = self._normalize_score_payload(payload, request_id=request_id)
+        score = normalized_payload.get("score", 0)
         try:
             score_value = max(0.0, min(10.0, round(float(score), 1)))
         except (TypeError, ValueError):
             score_value = 0.0
         return {
             "score": score_value,
-            "verdict": clean_text(str(payload.get("verdict") or "")),
-            "strengths": _as_string_list(payload.get("strengths")),
-            "issues": _as_string_list(payload.get("issues")),
-            "must_fix": _as_string_list(payload.get("must_fix")),
+            "verdict": clean_text(str(normalized_payload.get("verdict") or "")),
+            "strengths": _as_string_list(normalized_payload.get("strengths")),
+            "issues": _as_string_list(normalized_payload.get("issues")),
+            "must_fix": _as_string_list(normalized_payload.get("must_fix")),
         }
 
     def score_drafts_batch(
@@ -742,10 +753,7 @@ class LLMClient:
     ) -> list[dict[str, Any]]:
         if not candidate_texts:
             return []
-        candidates_input = [
-            {"index": i, "text": text}
-            for i, text in enumerate(candidate_texts)
-        ]
+        candidates_input = [{"index": i, "text": text} for i, text in enumerate(candidate_texts)]
         payload = self._chat_completion_json(
             system_prompt=(
                 "You are a strict evaluator for whether generated X posts sound like the same author "
@@ -767,8 +775,10 @@ class LLMClient:
                     "theme_top_keywords": theme_top_keywords,
                     "matched_theme_tweets": matched_theme_tweets[:8],
                     "instructions": [
-                        "Score whether each post sounds like the same author on this topic, not whether it is generally well-written.",
-                        "Penalize generic summary language, topic drift, unnatural words, and phrases that do not fit the matched historical tweets.",
+                        "Score whether each post sounds like the same author on this topic, "
+                        "not whether it is generally well-written.",
+                        "Penalize generic summary language, topic drift, unnatural words, "
+                        "and phrases that do not fit the matched historical tweets.",
                         "Do not reward polished completeness if the author's style is naturally compressed.",
                         "Return one score object per candidate in the same order.",
                     ],
@@ -788,19 +798,18 @@ class LLMClient:
                 scores_raw = []
 
         results: list[dict[str, Any]] = [
-            {"score": 0.0, "verdict": "missing", "strengths": [], "issues": [], "must_fix": []}
-            for _ in candidate_texts
+            {"score": 0.0, "verdict": "missing", "strengths": [], "issues": [], "must_fix": []} for _ in candidate_texts
         ]
-        for item in scores_raw:
+        for position, item in enumerate(scores_raw):
             if not isinstance(item, dict):
                 continue
             idx = item.get("index")
             if idx is None:
-                continue
+                idx = position
             try:
                 idx = int(idx)
             except (TypeError, ValueError):
-                continue
+                idx = position
             if 0 <= idx < len(candidate_texts):
                 score_val = item.get("score", 0)
                 try:
@@ -859,12 +868,16 @@ class LLMClient:
                     theme_top_keywords=theme_top_keywords,
                     request_id=request_id,
                 )
-            except LLMTransportError as exc:
+            except LLMError as exc:
+                error_category = getattr(exc, "category", "response_schema")
+                fallback_verdict = (
+                    "provider_timeout_fallback" if isinstance(exc, LLMTransportError) else "provider_response_fallback"
+                )
                 llm_evaluation = {
                     "score": round(rule_evaluation["score"], 1),
-                    "verdict": "provider_timeout_fallback",
+                    "verdict": fallback_verdict,
                     "strengths": [],
-                    "issues": [f"LLM scoring skipped after transient provider failure: {exc.category}"],
+                    "issues": [f"LLM scoring skipped after provider failure: {error_category}"],
                     "must_fix": [],
                 }
                 log_event(
@@ -874,7 +887,7 @@ class LLMClient:
                     request_id=request_id,
                     provider=self.provider_name,
                     fallback_score=llm_evaluation["score"],
-                    error_category=exc.category,
+                    error_category=error_category,
                     text_snippet=redact_for_log(candidate_text, 160),
                 )
         final_score = self._compute_final_score(rule_evaluation["score"], llm_evaluation["score"])
@@ -953,9 +966,7 @@ class LLMClient:
                 theme_keywords=theme_keywords,
             )
             disallowed_english = [
-                word
-                for word in extract_english_words(candidate_text)
-                if word.lower() not in allowed_english
+                word for word in extract_english_words(candidate_text) if word.lower() not in allowed_english
             ]
         else:
             disallowed_english = []
@@ -1039,7 +1050,7 @@ class LLMClient:
         request_id: str | None = None,
         purpose: str = "generation",
         timeout_seconds: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         raise NotImplementedError
 
     def _normalize_persona_payload(self, payload: Any) -> dict[str, Any]:
@@ -1054,9 +1065,7 @@ class LLMClient:
         normalized["voice_traits"] = _as_string_list(normalized.get("voice_traits"))
         normalized["lexical_markers"] = _as_string_list(normalized.get("lexical_markers"))
         normalized["do_not_sound_like"] = _as_string_list(normalized.get("do_not_sound_like"))
-        normalized["generation_guardrails"] = _normalize_generation_guardrails(
-            normalized.get("generation_guardrails")
-        )
+        normalized["generation_guardrails"] = _normalize_generation_guardrails(normalized.get("generation_guardrails"))
         normalized["risk_notes"] = _as_string_list(normalized.get("risk_notes"))
 
         topic_clusters = normalized.get("topic_clusters")
@@ -1093,6 +1102,27 @@ class LLMClient:
 
         return normalized
 
+    def _normalize_score_payload(self, payload: Any, *, request_id: str | None = None) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            log_event(
+                logger,
+                logging.ERROR,
+                "draft_score_schema_failed",
+                request_id=request_id,
+                provider=self.provider_name,
+                payload_type=type(payload).__name__,
+                payload_snippet=redact_for_log(payload, self.settings.log_max_body_chars),
+            )
+            raise LLMError(f"Score schema validation failed: expected object, got {type(payload).__name__}")
+
+        return {
+            "score": payload.get("score", 0),
+            "verdict": payload.get("verdict", ""),
+            "strengths": payload.get("strengths", []),
+            "issues": payload.get("issues", []),
+            "must_fix": payload.get("must_fix", []),
+        }
+
     def _build_persona_request_payload(
         self,
         *,
@@ -1118,10 +1148,14 @@ class LLMClient:
                 "do_not_sound_like should capture style drift risks.",
                 "generation_guardrails should translate the style into concrete writing rules for generation.",
                 "generation_guardrails.preferred_openings should capture native ways this author often starts posts.",
-                "generation_guardrails.preferred_formats should describe post shapes such as reaction, observation, link drop, thesis-lite, or scene-first.",
-                "generation_guardrails.compression_rules should explain how much the author usually leaves implied instead of fully explained.",
-                "generation_guardrails.anti_patterns should list the specific failure modes that would sound too polished, too abstract, too symmetrical, or too essay-like.",
-                "generation_guardrails.language_notes should explain how to handle bilingual texture or code-switching naturally.",
+                "generation_guardrails.preferred_formats should describe post shapes "
+                "such as reaction, observation, link drop, thesis-lite, or scene-first.",
+                "generation_guardrails.compression_rules should explain how much "
+                "the author usually leaves implied instead of fully explained.",
+                "generation_guardrails.anti_patterns should list the specific failure modes "
+                "that would sound too polished, too abstract, too symmetrical, or too essay-like.",
+                "generation_guardrails.language_notes should explain "
+                "how to handle bilingual texture or code-switching naturally.",
                 "risk_notes should mention limits of inference and sensitive content caution.",
             ],
         }
@@ -1158,10 +1192,13 @@ class LLMClient:
         drafting_rules = [
             "Prefer the persona's native opening moves and post formats over generic summary framing.",
             "Prioritize the matched theme tweets and their keyword patterns over unrelated global persona habits.",
-            "If compression_rules are present, follow them closely: one sharp observation is better than a fully explained argument.",
+            "If compression_rules are present, follow them closely: "
+            "one sharp observation is better than a fully explained argument.",
             "Do not use anti_patterns even if they make the writing sound more polished.",
-            "Keep the draft timeline-native. Fragments, incompleteness, or media-friendly endings are allowed when they fit the persona.",
-            "Match the language requested by the user prompt. If the persona is bilingual, code-switch only when it feels native rather than decorative.",
+            "Keep the draft timeline-native. Fragments, incompleteness, "
+            "or media-friendly endings are allowed when they fit the persona.",
+            "Match the language requested by the user prompt. If the persona is bilingual, "
+            "code-switch only when it feels native rather than decorative.",
         ]
         if full_chinese_mode:
             drafting_rules.append(
@@ -1254,10 +1291,8 @@ class LLMClient:
         else:
             drafts = payload.get("drafts")
         if not isinstance(drafts, list):
-            if isinstance(payload, dict) and isinstance(payload.get("items"), list):
-                drafts = payload.get("items")
-            else:
-                drafts = []
+            items = payload.get("items") if isinstance(payload, dict) else None
+            drafts = items if isinstance(items, list) else []
 
         normalized_drafts = []
         for item in drafts:

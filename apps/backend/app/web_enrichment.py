@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import quote_plus
 from xml.etree import ElementTree
 
+import defusedxml.ElementTree as DefusedET
 import requests
-
 
 TOKEN_RE = re.compile(r"[$]?[A-Za-z][A-Za-z0-9_']+|[\u4e00-\u9fff]{2,12}")
 
@@ -61,10 +61,7 @@ class WebEnricher:
         }
 
     def _fetch_google_news_rss(self, query: str) -> list[WebItem]:
-        url = (
-            "https://news.google.com/rss/search?q="
-            f"{quote_plus(query)}+when:1d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-        )
+        url = f"https://news.google.com/rss/search?q={quote_plus(query)}+when:1d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
         try:
             response = requests.get(url, timeout=self.timeout_seconds)
             response.raise_for_status()
@@ -72,11 +69,11 @@ class WebEnricher:
             return []
 
         try:
-            root = ElementTree.fromstring(response.content)
+            root = DefusedET.fromstring(response.content)
         except ElementTree.ParseError:
             return []
 
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=self.recency_hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=self.recency_hours)
         results: list[WebItem] = []
         for item in root.findall("./channel/item"):
             title = (item.findtext("title") or "").strip()
@@ -89,7 +86,7 @@ class WebEnricher:
             published_at = ""
             if pub_date_raw:
                 try:
-                    parsed = parsedate_to_datetime(pub_date_raw).astimezone(timezone.utc)
+                    parsed = parsedate_to_datetime(pub_date_raw).astimezone(UTC)
                     if parsed < cutoff:
                         continue
                     published_at = parsed.replace(microsecond=0).isoformat()
@@ -136,4 +133,3 @@ class WebEnricher:
 def _strip_html(text: str) -> str:
     without_tags = re.sub(r"<[^>]+>", " ", text or "")
     return re.sub(r"\s+", " ", without_tags).strip()
-

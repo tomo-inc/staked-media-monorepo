@@ -8,7 +8,6 @@ from typing import Any
 
 from app.config import Settings
 
-
 _LOGGER_SIGNATURE: tuple[str, str, bool] | None = None
 _MANAGED_LOGGER_NAMES = (
     "app",
@@ -124,9 +123,9 @@ def _build_handlers(level: int, settings: Settings) -> list[logging.Handler]:
 
 
 def _coerce_log_value(value: Any) -> Any:
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if isinstance(value, str | int | float | bool) or value is None:
         return value
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_coerce_log_value(item) for item in value]
     if isinstance(value, dict):
         return {str(key): _coerce_log_value(item) for key, item in value.items()}

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
 from app.config import Settings
 from app.logging_utils import get_logger, log_event, redact_for_log
-
 
 logger = get_logger(__name__)
 
@@ -17,7 +16,7 @@ class UpstreamError(RuntimeError):
 
 
 class UpstreamClient:
-    def __init__(self, settings: Settings, session: Optional[requests.Session] = None):
+    def __init__(self, settings: Settings, session: requests.Session | None = None):
         self.settings = settings
         self.session = session or requests.Session()
 
@@ -53,7 +52,7 @@ class UpstreamClient:
     def fetch_user_tweets(
         self,
         user_id: str,
-        max_tweets: Optional[int] = None,
+        max_tweets: int | None = None,
         *,
         request_id: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -67,7 +66,7 @@ class UpstreamClient:
             max_tweets=max_tweets,
         )
         items: list[dict[str, Any]] = []
-        cursor: Optional[str] = None
+        cursor: str | None = None
         seen_tweet_ids: set[str] = set()
         seen_cursors: set[str] = set()
         page_count = 0
@@ -131,11 +130,11 @@ class UpstreamClient:
     def _get_json(
         self,
         path: str,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         *,
         request_id: str | None = None,
     ) -> dict[str, Any]:
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
         response = None
         for attempt in range(3):
             if hasattr(self.session, "cookies"):

@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.config import (
+    _DEFAULT_BIND_HOST,
     clear_config_cache,
     get_runtime_config_path,
     load_config_file,
@@ -68,7 +69,7 @@ class ConfigTestCase(unittest.TestCase):
 
             loaded = load_config_file(config_path)
 
-            self.assertEqual(loaded.server.host, "0.0.0.0")
+            self.assertEqual(loaded.server.host, _DEFAULT_BIND_HOST)
             self.assertEqual(loaded.server.port, 8000)
             self.assertFalse(loaded.server.reload)
             self.assertEqual(loaded.app.openai_api_key, "openai-key")

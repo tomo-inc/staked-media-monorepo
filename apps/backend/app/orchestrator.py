@@ -22,7 +22,6 @@ from app.persona import (
 from app.schemas import ContentGenerateRequest, ContentVariantType
 from app.web_enrichment import WebEnricher
 
-
 logger = get_logger(__name__)
 
 
@@ -124,7 +123,9 @@ class ContentOrchestrator:
         themed_tweets = select_theme_tweets(tweet_rows, used_keywords) if used_keywords else matched
         if not themed_tweets:
             themed_tweets = matched
-        theme_top_keywords = extract_top_theme_keywords(themed_tweets, used_keywords, prompt=payload.idea or topic, limit=5)
+        theme_top_keywords = extract_top_theme_keywords(
+            themed_tweets, used_keywords, prompt=payload.idea or topic, limit=5
+        )
 
         variants: list[dict[str, Any]] = []
         variant_debug: list[dict[str, Any]] = []
@@ -167,7 +168,8 @@ class ContentOrchestrator:
         if not quality_gate_met:
             quality_gate_reason = (
                 "No variant reached score >= 9.0 after retries. "
-                "Web enrichment was applied when available; consider refining topic/idea or increasing history coverage."
+                "Web enrichment was applied when available; "
+                "consider refining topic/idea or increasing history coverage."
             )
         response = {
             "request_id": request_id,
@@ -188,7 +190,9 @@ class ContentOrchestrator:
             "web_keywords": web_keywords,
             "personal_phrases": personal_phrases,
             "source_facts": source_facts[:8],
-            "debug_summary": self._debug_summary(len(matched), overall_web_enrichment_used, float(recommended["score"]["final_score"])),
+            "debug_summary": self._debug_summary(
+                len(matched), overall_web_enrichment_used, float(recommended["score"]["final_score"])
+            ),
         }
 
         self._debug_runs[request_id] = {
@@ -301,7 +305,9 @@ class ContentOrchestrator:
                     local_web_used = True
                     local_web_keywords = expand_related_keywords(local_web_keywords, extra_keywords, [], limit=30)
                     local_source_facts = local_source_facts + extra_facts
-                    local_used_keywords = expand_related_keywords(local_used_keywords, local_web_keywords, personal_phrases, limit=30)
+                    local_used_keywords = expand_related_keywords(
+                        local_used_keywords, local_web_keywords, personal_phrases, limit=30
+                    )
 
         if best_result is None or best_score is None:
             raise LookupError("Content generation could not produce any draft candidates")
@@ -473,7 +479,10 @@ class ContentOrchestrator:
         return ",".join(reasons)
 
     def _debug_summary(self, history_match_count: int, web_enrichment_used: bool, final_score: float) -> str:
-        return f"history_match_count={history_match_count}, web_enrichment_used={web_enrichment_used}, final_score={final_score}"
+        return (
+            f"history_match_count={history_match_count}, "
+            f"web_enrichment_used={web_enrichment_used}, final_score={final_score}"
+        )
 
     def _best_posting_windows(self, username: str) -> list[str]:
         fallback = ["09:00-10:00", "12:00-13:00", "20:00-22:00"]
@@ -492,7 +501,7 @@ class ContentOrchestrator:
             try:
                 parsed = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
                 hour = parsed.hour
-            except Exception:
+            except (ValueError, TypeError):
                 continue
             score = (
                 int(row.get("like_count", 0))

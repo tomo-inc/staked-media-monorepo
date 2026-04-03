@@ -9,10 +9,15 @@
     "build:styles": "tailwindcss -c tailwind.config.cjs -i src/styles/panel.tailwind.css -o dist/panel.css --minify",
     "copy:static": "cp public/manifest.json public/panel.html public/options.html dist/",
     "build": "npm run clean && npm run build:scripts && npm run build:styles && npm run copy:static",
+    "lint": "biome check src/ tests/",
+    "lint:fix": "biome check --write src/ tests/",
+    "format": "biome format --write src/ tests/",
+    "format:check": "biome format src/ tests/",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run build && node --test tests/*.test.js"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.10",
     "esbuild": "^0.25.5",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3"
