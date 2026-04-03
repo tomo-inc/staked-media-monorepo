@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
-from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-
 SUPPORTED_LLM_PROVIDERS = {"openai", "gemini"}
 RUNTIME_CONFIG_POINTER_PATH = Path("data/runtime-config-path.json")
+_DEFAULT_BIND_HOST = "0.0.0.0"  # noqa: S104
 
 
 class _StrictConfigModel(BaseModel):
@@ -19,7 +18,7 @@ class _StrictConfigModel(BaseModel):
 
 
 class _ServerConfigModel(_StrictConfigModel):
-    host: str = "0.0.0.0"
+    host: str = _DEFAULT_BIND_HOST
     port: int = 8000
     reload: bool = False
 
@@ -94,7 +93,7 @@ def _resolve_sqlite_url(database_url: str, *, base_dir: Path) -> str:
 
 @dataclass(frozen=True)
 class ServerSettings:
-    host: str = "0.0.0.0"
+    host: str = _DEFAULT_BIND_HOST
     port: int = 8000
     reload: bool = False
 
@@ -141,13 +140,13 @@ class Settings:
         return _parse_sqlite_path(self.database_url)
 
     @property
-    def twitter_data_proxies(self) -> Optional[dict[str, str]]:
+    def twitter_data_proxies(self) -> dict[str, str] | None:
         if not self.twitter_data_proxy:
             return None
         return {"http": self.twitter_data_proxy, "https": self.twitter_data_proxy}
 
     @property
-    def llm_proxies(self) -> Optional[dict[str, str]]:
+    def llm_proxies(self) -> dict[str, str] | None:
         if not self.llm_http_proxy:
             return None
         return {"http": self.llm_http_proxy, "https": self.llm_http_proxy}
@@ -160,7 +159,7 @@ class LoadedConfig:
     app: Settings
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load_config_file_cached(config_path: str) -> LoadedConfig:
     resolved_path = Path(config_path).expanduser().resolve()
     if not resolved_path.exists():

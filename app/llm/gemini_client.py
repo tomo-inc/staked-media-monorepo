@@ -10,7 +10,6 @@ from .base_client import LLMClient
 from .errors import LLMError
 from .utils import _coerce_content_text, _parse_json_response
 
-
 logger = get_logger(__name__)
 
 
@@ -27,14 +26,11 @@ class GeminiClient(LLMClient):
         request_id: str | None = None,
         purpose: str = "generation",
         timeout_seconds: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         if not self.settings.gemini_api_key:
             raise LLMError("Gemini API key is not configured")
 
-        endpoint = (
-            f"{self.settings.gemini_base_url.rstrip('/')}/models/"
-            f"{self.settings.gemini_model}:generateContent"
-        )
+        endpoint = f"{self.settings.gemini_base_url.rstrip('/')}/models/{self.settings.gemini_model}:generateContent"
         body = self._post_json_with_retries(
             endpoint=endpoint,
             params={"key": self.settings.gemini_api_key},

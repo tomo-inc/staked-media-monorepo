@@ -10,7 +10,6 @@ from app.persona import clean_text
 
 from .errors import LLMError
 
-
 GENERATION_GUARDRAIL_KEYS = (
     "preferred_openings",
     "preferred_formats",
@@ -83,7 +82,7 @@ def _parse_json_response(
     provider_name: str,
     request_id: str | None = None,
     max_body_chars: int = 500,
-) -> dict[str, Any]:
+) -> Any:
     candidates: list[tuple[str, str]] = [("raw", content)]
     fenced_content = _strip_json_fence(content)
     if fenced_content and fenced_content != content:

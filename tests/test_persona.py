@@ -87,9 +87,7 @@ class PersonaHelpersTestCase(unittest.TestCase):
         )
 
     def test_extract_theme_keywords_prefers_signal_terms(self) -> None:
-        keywords = extract_theme_keywords(
-            "Write a Chinese post about PEPE pumping 20% and focus on market narrative."
-        )
+        keywords = extract_theme_keywords("Write a Chinese post about PEPE pumping 20% and focus on market narrative.")
         self.assertIn("PEPE", keywords)
         self.assertIn("20%", keywords)
 
@@ -138,7 +136,9 @@ class PersonaHelpersTestCase(unittest.TestCase):
 
         self.assertEqual(len(matched), 2)
         self.assertIn("PEPE", matched[0]["match_terms"])
-        self.assertTrue(any(keyword.lower() in ("momentum", "leadership", "rotation", "sentiment") for keyword in top_keywords))
+        self.assertTrue(
+            any(keyword.lower() in ("momentum", "leadership", "rotation", "sentiment") for keyword in top_keywords)
+        )
 
     def test_expand_related_keywords_dedupes_and_prioritizes_seed(self) -> None:
         expanded = expand_related_keywords(
@@ -164,17 +164,13 @@ class PersonaHelpersTestCase(unittest.TestCase):
         self.assertIn("community", lowered)
 
     def test_prompt_requests_full_chinese_detects_common_user_wording(self) -> None:
-        self.assertTrue(
-            prompt_requests_full_chinese("写一条推文，中文全部，不要一下中文一下英文。")
-        )
+        self.assertTrue(prompt_requests_full_chinese("写一条推文，中文全部，不要一下中文一下英文。"))
         self.assertTrue(
             prompt_requests_full_chinese(
                 "写一条X推文，主题是：Claude Code 泄露了全部源码。观点：这是标题党，风格直接。"
             )
         )
-        self.assertFalse(
-            prompt_requests_full_chinese("写一条中英双语推文，保持轻松语气。")
-        )
+        self.assertFalse(prompt_requests_full_chinese("写一条中英双语推文，保持轻松语气。"))
 
 
 if __name__ == "__main__":

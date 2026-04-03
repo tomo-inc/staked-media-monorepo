@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Optional
-
+from typing import Any
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -191,8 +191,8 @@ class Database:
         username: str,
         source_tweet_count: int,
         source_original_tweet_count: int,
-        source_window_start: Optional[str],
-        source_window_end: Optional[str],
+        source_window_start: str | None,
+        source_window_end: str | None,
         corpus_stats: dict[str, Any],
         representative_tweets: list[dict[str, Any]],
         persona: dict[str, Any],
@@ -221,7 +221,7 @@ class Database:
                 ),
             )
             connection.commit()
-            return int(cursor.lastrowid)
+            return cursor.lastrowid or 0
 
     def save_draft_request(
         self,
@@ -250,7 +250,7 @@ class Database:
                 ),
             )
             connection.commit()
-            return int(cursor.lastrowid)
+            return cursor.lastrowid or 0
 
     def list_allowed_usernames(self) -> list[str]:
         with self.connect() as connection:
@@ -295,7 +295,7 @@ class Database:
             ).fetchone()
         return row is not None
 
-    def get_user_by_username(self, username: str) -> Optional[dict[str, Any]]:
+    def get_user_by_username(self, username: str) -> dict[str, Any] | None:
         normalized_username = normalize_username(username)
         with self.connect() as connection:
             row = connection.execute(
@@ -306,7 +306,7 @@ class Database:
             return None
         return _row_to_user(row)
 
-    def get_user_tweets(self, user_id: str, limit: Optional[int] = None) -> list[dict[str, Any]]:
+    def get_user_tweets(self, user_id: str, limit: int | None = None) -> list[dict[str, Any]]:
         query = "SELECT * FROM tweets WHERE user_id = ? ORDER BY created_at DESC"
         params: list[Any] = [user_id]
         if limit is not None:
@@ -317,7 +317,7 @@ class Database:
             rows = connection.execute(query, params).fetchall()
         return [_row_to_tweet(row) for row in rows]
 
-    def get_latest_persona_snapshot(self, username: str) -> Optional[dict[str, Any]]:
+    def get_latest_persona_snapshot(self, username: str) -> dict[str, Any] | None:
         normalized_username = normalize_username(username)
         with self.connect() as connection:
             row = connection.execute(

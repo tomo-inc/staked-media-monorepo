@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 
@@ -33,21 +33,20 @@ from app.schemas import (
 )
 from app.upstream import UpstreamClient, UpstreamError
 
-
 logger = get_logger(__name__)
 WHITELIST_FORBIDDEN_DETAIL = "Target username is not in the trial whitelist"
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def create_app(
-    settings: Optional[Settings] = None,
+    settings: Settings | None = None,
     *,
-    upstream_client: Optional[UpstreamClient] = None,
-    llm_client: Optional[LLMClient] = None,
-    content_orchestrator: Optional[ContentOrchestrator] = None,
+    upstream_client: UpstreamClient | None = None,
+    llm_client: LLMClient | None = None,
+    content_orchestrator: ContentOrchestrator | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings)
@@ -105,7 +104,9 @@ def create_app(
 
         try:
             user = upstream.fetch_user_by_username(username, request_id=request_id)
-            tweet_items = upstream.fetch_user_tweets(user["id"], max_tweets=settings.max_ingest_tweets, request_id=request_id)
+            tweet_items = upstream.fetch_user_tweets(
+                user["id"], max_tweets=settings.max_ingest_tweets, request_id=request_id
+            )
         except UpstreamError as exc:
             log_event(
                 logger,
@@ -350,7 +351,9 @@ def create_app(
         request_id = uuid.uuid4().hex[:12]
         started_at = time.perf_counter()
         database: Database = request.app.state.database
-        username = _require_allowed_username(database, payload.username, request_id=request_id, route="content_generate")
+        username = _require_allowed_username(
+            database, payload.username, request_id=request_id, route="content_generate"
+        )
         payload = payload.copy(update={"username": username})
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
         try:
@@ -469,7 +472,7 @@ def _require_allowed_username(
     raise HTTPException(status_code=403, detail=WHITELIST_FORBIDDEN_DETAIL)
 
 
-def _profile_summary_from_row(row: dict[str, object]) -> ProfileSummary:
+def _profile_summary_from_row(row: dict[str, Any]) -> ProfileSummary:
     return ProfileSummary(
         id=str(row["id"]),
         username=str(row["username"]),

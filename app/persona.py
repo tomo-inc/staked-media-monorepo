@@ -6,7 +6,6 @@ from difflib import SequenceMatcher
 from statistics import mean
 from typing import Any
 
-
 URL_RE = re.compile(r"https?://\S+")
 MENTION_RE = re.compile(r"@\w+")
 HASHTAG_RE = re.compile(r"#\w+")
@@ -229,7 +228,9 @@ def extract_theme_keywords(prompt: str, limit: int = 8) -> list[str]:
     return extracted
 
 
-def select_theme_tweets(tweet_rows: list[dict[str, Any]], theme_keywords: list[str], limit: int = 12) -> list[dict[str, Any]]:
+def select_theme_tweets(
+    tweet_rows: list[dict[str, Any]], theme_keywords: list[str], limit: int = 12
+) -> list[dict[str, Any]]:
     if not theme_keywords:
         return []
 
@@ -329,7 +330,9 @@ def extract_top_theme_keywords(
     return results[:limit]
 
 
-def build_corpus_stats(profile: dict[str, Any], tweet_rows: list[dict[str, Any]], sample_size: int = 40) -> dict[str, Any]:
+def build_corpus_stats(
+    profile: dict[str, Any], tweet_rows: list[dict[str, Any]], sample_size: int = 40
+) -> dict[str, Any]:
     total_tweets = len(tweet_rows)
     original_rows = [row for row in tweet_rows if not row["is_retweet"]]
     original_or_quote_rows = [row for row in tweet_rows if not row["is_retweet"] or row["is_quote"]]

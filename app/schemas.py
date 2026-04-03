@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, conint, constr
+from pydantic import BaseModel, Field
 
 
 class ProfileIngestRequest(BaseModel):
-    username: constr(strip_whitespace=True, min_length=1)
+    username: str = Field(..., strip_whitespace=True, min_length=1)
 
 
 class ProfileSummary(BaseModel):
@@ -37,13 +37,13 @@ class IngestResponse(BaseModel):
 class ProfileResponse(BaseModel):
     profile: ProfileSummary
     stored_tweet_count: int
-    latest_persona_snapshot: Optional[dict[str, Any]] = None
+    latest_persona_snapshot: dict[str, Any] | None = None
 
 
 class DraftGenerateRequest(BaseModel):
-    username: constr(strip_whitespace=True, min_length=1)
-    prompt: constr(strip_whitespace=True, min_length=3)
-    draft_count: conint(gt=0, le=10) = 5
+    username: str = Field(..., strip_whitespace=True, min_length=1)
+    prompt: str = Field(..., strip_whitespace=True, min_length=3)
+    draft_count: int = Field(5, gt=0, le=10)
 
 
 class DraftItem(BaseModel):
@@ -111,7 +111,7 @@ class DraftsOutput(BaseModel):
 
 
 class ContentGenerateRequest(BaseModel):
-    username: constr(strip_whitespace=True, min_length=1)
+    username: str = Field(..., strip_whitespace=True, min_length=1)
     mode: Literal["A", "B"] = "A"
     idea: str = ""
     direction: str = ""
@@ -119,7 +119,7 @@ class ContentGenerateRequest(BaseModel):
     topic: str = ""
     keywords: list[str] = Field(default_factory=list)
     tone: str = ""
-    draft_count: conint(gt=0, le=10) = 3
+    draft_count: int = Field(3, gt=0, le=10)
 
 
 class ContentScoreBreakdown(BaseModel):
@@ -172,7 +172,7 @@ class ContentIdeasRequest(BaseModel):
     direction: str = ""
     domain: str = ""
     topic_hint: str = ""
-    limit: conint(gt=0, le=20) = 8
+    limit: int = Field(8, gt=0, le=20)
 
 
 class IdeaItem(BaseModel):
@@ -191,8 +191,8 @@ class ContentIdeasResponse(BaseModel):
 
 
 class ExposureAnalyzeRequest(BaseModel):
-    username: constr(strip_whitespace=True, min_length=1)
-    text: constr(strip_whitespace=True, min_length=3)
+    username: str = Field(..., strip_whitespace=True, min_length=1)
+    text: str = Field(..., strip_whitespace=True, min_length=3)
     topic: str = ""
     domain: str = ""
 
@@ -206,7 +206,7 @@ class ExposureAnalyzeResponse(BaseModel):
 
 
 class WhitelistUsernameRequest(BaseModel):
-    username: constr(strip_whitespace=True, min_length=1)
+    username: str = Field(..., strip_whitespace=True, min_length=1)
 
 
 class WhitelistUsernamesResponse(BaseModel):

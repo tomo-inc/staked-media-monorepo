@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import threading
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.config import Settings
 from app.database import Database
@@ -89,7 +89,7 @@ class OrchestratorTestCase(unittest.TestCase):
             web_enricher=self.web,  # type: ignore[arg-type]
         )
 
-        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        now = datetime.now(UTC).replace(microsecond=0).isoformat()
         user = {
             "id": "u-1",
             "username": "demo",
@@ -133,7 +133,11 @@ class OrchestratorTestCase(unittest.TestCase):
             source_window_end="2026-03-30T10:00:00+00:00",
             corpus_stats={"tweet_counts": {"total": 2, "original": 2}},
             representative_tweets=[
-                {"id": "t-1", "text": "Binance AI Pro updates and winners list discussion", "created_at": "2026-03-30T10:00:00+00:00"}
+                {
+                    "id": "t-1",
+                    "text": "Binance AI Pro updates and winners list discussion",
+                    "created_at": "2026-03-30T10:00:00+00:00",
+                }
             ],
             persona={
                 "persona_version": "v1",
