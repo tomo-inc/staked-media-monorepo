@@ -266,7 +266,6 @@ class LLMClient:
         *,
         profile: dict[str, Any],
         corpus_stats: dict[str, Any],
-        representative_tweets: list[dict[str, Any]],
         request_id: str | None = None,
     ) -> dict[str, Any]:
         log_event(
@@ -276,12 +275,11 @@ class LLMClient:
             request_id=request_id,
             provider=self.provider_name,
             username=profile.get("username"),
-            representative_tweet_count=len(representative_tweets),
+            representative_tweet_count=len(corpus_stats.get("representative_tweets", [])),
         )
         request_payload = self._build_persona_request_payload(
             profile=profile,
             corpus_stats=corpus_stats,
-            representative_tweets=representative_tweets,
         )
         payload = self._chat_completion_json(
             system_prompt=(
@@ -1544,7 +1542,6 @@ class LLMClient:
         *,
         profile: dict[str, Any],
         corpus_stats: dict[str, Any],
-        representative_tweets: list[dict[str, Any]],
     ) -> dict[str, Any]:
         return {
             "profile": {
@@ -1556,7 +1553,6 @@ class LLMClient:
                 "following_count": (profile.get("public_metrics") or {}).get("following_count", 0),
             },
             "corpus_stats": corpus_stats,
-            "representative_tweets": representative_tweets,
             "instructions": [
                 'persona_version must always be "v1".',
                 "Keep author_summary to 3 sentences max.",
