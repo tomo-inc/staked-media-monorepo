@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const shared = require("../shared.js");
+const shared = require("../dist/shared.js");
 
 function createBackgroundHarness(options = {}) {
   const storage = { ...(options.storage || {}) };
@@ -105,7 +105,7 @@ function createBackgroundHarness(options = {}) {
     }
   };
 
-  const code = fs.readFileSync(path.join(__dirname, "..", "background.js"), "utf8");
+  const code = fs.readFileSync(path.join(__dirname, "..", "dist", "background.js"), "utf8");
   vm.runInNewContext(code, context, {
     filename: "background.js"
   });

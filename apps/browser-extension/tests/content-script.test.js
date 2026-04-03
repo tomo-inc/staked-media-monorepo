@@ -5,7 +5,7 @@ const {
   findComposer,
   getComposerState,
   insertIntoComposer
-} = require("../content-script.js");
+} = require("../dist/content-script.js");
 
 class FakeEvent {
   constructor(type, init = {}) {

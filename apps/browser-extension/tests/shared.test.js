@@ -7,7 +7,7 @@ const {
   extractDrafts,
   routeMessage,
   sanitizeConfig
-} = require("../shared.js");
+} = require("../dist/shared.js");
 
 test("routeMessage dispatches supported handlers", async () => {
   const result = await routeMessage(

@@ -30,7 +30,10 @@
     activeTab: "profile",
     profile: null,
     profileLoading: false,
-    usernameError: ""
+    usernameError: "",
+    generationProgress: null,
+    generationProgressTimer: null,
+    generationStartedAt: null
   };
 
   const root = document.getElementById("app");
@@ -744,6 +747,11 @@
 
   function setLoading(nextLoading) {
     STATE.loading = nextLoading;
+    if (nextLoading) {
+      startGenerationProgress();
+    } else {
+      stopGenerationProgress();
+    }
     root.querySelectorAll("button").forEach((button) => {
       if (button.hasAttribute("data-copy-index") || button.hasAttribute("data-insert-index")) {
         return;
@@ -751,6 +759,85 @@
       button.disabled = nextLoading;
     });
     renderGenerateButton();
+  }
+
+  function startGenerationProgress() {
+    stopGenerationProgress();
+    STATE.generationStartedAt = Date.now();
+    STATE.generationProgress = {
+      percent: 8,
+      message: "Preparing request..."
+    };
+    renderGenerationProgress();
+    STATE.generationProgressTimer = window.setInterval(() => {
+      if (!STATE.loading || !STATE.generationStartedAt) {
+        return;
+      }
+      const elapsedMs = Date.now() - STATE.generationStartedAt;
+      const nextPercent = deriveProgressPercent(elapsedMs);
+      const nextMessage = deriveProgressMessage(nextPercent);
+      if (
+        nextPercent === STATE.generationProgress?.percent &&
+        nextMessage === STATE.generationProgress?.message
+      ) {
+        return;
+      }
+      STATE.generationProgress = {
+        percent: nextPercent,
+        message: nextMessage
+      };
+      renderGenerationProgress();
+    }, 120);
+  }
+
+  function stopGenerationProgress() {
+    if (STATE.generationProgressTimer != null) {
+      window.clearInterval(STATE.generationProgressTimer);
+      STATE.generationProgressTimer = null;
+    }
+    STATE.generationStartedAt = null;
+    STATE.generationProgress = null;
+  }
+
+  function deriveProgressPercent(elapsedMs) {
+    const progressCap = 93;
+    const eased = 1 - Math.exp(-elapsedMs / 2500);
+    const percent = Math.round(progressCap * eased);
+    return Math.max(8, Math.min(progressCap, percent));
+  }
+
+  function deriveProgressMessage(percent) {
+    if (percent < 28) {
+      return "Preparing request...";
+    }
+    if (percent < 60) {
+      return "Generating drafts...";
+    }
+    if (percent < 86) {
+      return "Refining tone and structure...";
+    }
+    return "Finalizing output...";
+  }
+
+  function renderGenerationProgress() {
+    if (!STATE.loading || !STATE.generationProgress) {
+      return;
+    }
+    const { percent, message } = STATE.generationProgress;
+    ui.status.innerHTML = `
+      <div class="smc-banner smc-banner-loading smc-banner-progress" role="status" aria-live="polite">
+        <div class="smc-progress-head">
+          <span class="smc-progress-label">${escapeHtml(message)}</span>
+          <span class="smc-progress-percent">${percent}%</span>
+        </div>
+        <div class="smc-progress-track" aria-hidden="true">
+          <div class="smc-progress-fill" style="width: ${percent}%;"></div>
+        </div>
+      </div>
+    `;
+    if (ui.statusSection) {
+      ui.statusSection.hidden = false;
+    }
   }
 
   function renderStatus(text, level) {

@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildPanelShell, deriveConnectionIndicator, isWhitelistDeniedError } = require("../panel-helpers.js");
+const { buildPanelShell, deriveConnectionIndicator, isWhitelistDeniedError } = require("../dist/panel-helpers.js");
 
 test("deriveConnectionIndicator distinguishes loading from failed health checks", () => {
   const loading = deriveConnectionIndicator({
