@@ -108,7 +108,9 @@ def create_app(
         try:
             user = upstream.fetch_user_by_username(username, request_id=request_id)
             tweet_items = upstream.fetch_user_tweets(
-                user["id"], max_tweets=settings.max_ingest_tweets, request_id=request_id
+                user["id"],
+                max_tweets=settings.max_ingest_tweets,
+                request_id=request_id,
             )
         except UpstreamError as exc:
             log_event(
@@ -125,13 +127,11 @@ def create_app(
         fetched_tweet_count = database.upsert_tweets(user["id"], tweet_items, ingested_at)
         tweet_rows = database.get_user_tweets(user["id"], limit=settings.max_ingest_tweets)
         corpus_stats = build_corpus_stats(user, tweet_rows, sample_size=settings.persona_sample_size)
-        representative_tweets = corpus_stats["representative_tweets"]
 
         try:
             persona = llm.generate_persona(
                 profile=user,
                 corpus_stats=corpus_stats,
-                representative_tweets=representative_tweets,
                 request_id=request_id,
             )
         except LLMError as exc:
@@ -154,6 +154,7 @@ def create_app(
             )
             raise
 
+        representative_tweets = corpus_stats["representative_tweets"]
         persona_snapshot_id = database.save_persona_snapshot(
             user_id=user["id"],
             username=user["username"],

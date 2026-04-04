@@ -74,7 +74,6 @@ class FakeLLMClient:
         *,
         profile: dict,
         corpus_stats: dict,
-        representative_tweets: list[dict],
         request_id: str | None = None,
     ) -> dict:
         return {
