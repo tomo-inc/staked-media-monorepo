@@ -284,7 +284,10 @@ class LLMClient:
         payload = self._chat_completion_json(
             system_prompt=(
                 "You analyze a public X user's profile and tweets to build a reusable writing persona. "
-                "Infer tone and style only from provided evidence. Do not fabricate facts. "
+                "Focus on the representative_tweets to infer voice, tone, sentence rhythm, and writing habits. "
+                "Use corpus statistics (writing_stats, language_stats, engagement_patterns) as supporting "
+                "quantitative evidence, not as the primary signal. "
+                "Infer only from provided evidence. Do not fabricate facts. "
                 "Return strict JSON with keys: persona_version, author_summary, voice_traits, "
                 "topic_clusters, writing_patterns, lexical_markers, do_not_sound_like, cta_style, "
                 "generation_guardrails, risk_notes, language_profile, domain_expertise, "
@@ -1543,6 +1546,29 @@ class LLMClient:
         profile: dict[str, Any],
         corpus_stats: dict[str, Any],
     ) -> dict[str, Any]:
+        representative_tweets = corpus_stats.get("representative_tweets")
+        representative_tweet_payload: list[dict[str, Any]] = []
+        if isinstance(representative_tweets, list):
+            for item in representative_tweets:
+                if not isinstance(item, dict):
+                    continue
+                text = clean_text(str(item.get("text") or ""))
+                if not text:
+                    continue
+                representative_tweet_payload.append(
+                    {
+                        "text": text,
+                        "is_reply": bool(item.get("is_reply", False)),
+                        "is_quote": bool(item.get("is_quote", False)),
+                    }
+                )
+
+        llm_corpus_stats = {
+            **corpus_stats,
+            "representative_tweets": representative_tweet_payload,
+        }
+        llm_corpus_stats.pop("high_engagement_examples", None)
+
         return {
             "profile": {
                 "name": profile.get("name"),
@@ -1552,7 +1578,7 @@ class LLMClient:
                 "followers_count": (profile.get("public_metrics") or {}).get("followers_count", 0),
                 "following_count": (profile.get("public_metrics") or {}).get("following_count", 0),
             },
-            "corpus_stats": corpus_stats,
+            "corpus_stats": llm_corpus_stats,
             "instructions": [
                 'persona_version must always be "v1".',
                 "Keep author_summary to 3 sentences max.",

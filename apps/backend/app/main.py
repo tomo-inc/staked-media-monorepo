@@ -108,7 +108,9 @@ def create_app(
         try:
             user = upstream.fetch_user_by_username(username, request_id=request_id)
             tweet_items = upstream.fetch_user_tweets(
-                user["id"], max_tweets=settings.max_ingest_tweets, request_id=request_id
+                user["id"],
+                max_tweets=settings.max_ingest_tweets,
+                request_id=request_id,
             )
         except UpstreamError as exc:
             log_event(

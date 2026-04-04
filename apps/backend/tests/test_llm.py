@@ -168,6 +168,126 @@ class LlmNormalizationTestCase(unittest.TestCase):
                 request_id="score-list",
             )
 
+    def test_build_persona_request_payload_trims_representative_tweets_for_llm(self) -> None:
+        corpus_stats = {
+            "writing_stats": {"average_length": 42.0},
+            "high_engagement_examples": [
+                {
+                    "id": "eng-1",
+                    "text": "high signal post",
+                    "created_at": "2026-04-01T00:00:00Z",
+                    "engagement_score": 99,
+                }
+            ],
+            "representative_tweets": [
+                {
+                    "id": "rep-1",
+                    "text": "  concise update  ",
+                    "created_at": "2026-04-02T00:00:00Z",
+                    "is_reply": True,
+                    "is_quote": False,
+                    "engagement_score": 17,
+                },
+                {
+                    "id": "rep-2",
+                    "text": "   ",
+                    "created_at": "2026-04-03T00:00:00Z",
+                    "is_reply": False,
+                    "is_quote": True,
+                    "engagement_score": 9,
+                },
+            ],
+        }
+
+        payload = self.client._build_persona_request_payload(
+            profile={
+                "name": "Demo",
+                "username": "demo",
+                "description": "Builder",
+                "location": "Singapore",
+                "public_metrics": {"followers_count": 12, "following_count": 3},
+            },
+            corpus_stats=corpus_stats,
+        )
+
+        self.assertIsNot(payload["corpus_stats"], corpus_stats)
+        self.assertEqual(
+            payload["corpus_stats"]["representative_tweets"],
+            [{"text": "concise update", "is_reply": True, "is_quote": False}],
+        )
+        self.assertNotIn("high_engagement_examples", payload["corpus_stats"])
+        self.assertIn("high_engagement_examples", corpus_stats)
+        self.assertEqual(corpus_stats["representative_tweets"][0]["id"], "rep-1")
+        self.assertEqual(corpus_stats["representative_tweets"][0]["engagement_score"], 17)
+        self.assertEqual(corpus_stats["representative_tweets"][1]["id"], "rep-2")
+        self.assertEqual(corpus_stats["representative_tweets"][1]["text"], "   ")
+
+    def test_generate_persona_prompt_prioritizes_representative_tweets(self) -> None:
+        with patch.object(
+            self.client,
+            "_chat_completion_json",
+            return_value={
+                "author_summary": "Builder voice.",
+                "voice_traits": ["direct", "concise", "operator-minded", "observational"],
+                "lexical_markers": ["gm"],
+                "do_not_sound_like": ["corporate PR"],
+                "cta_style": "Rare soft CTA.",
+                "risk_notes": ["Derived from public posts only."],
+            },
+        ) as mock_chat:
+            persona = self.client.generate_persona(
+                profile={
+                    "name": "Demo",
+                    "username": "demo",
+                    "description": "Builder",
+                    "location": "Singapore",
+                    "public_metrics": {"followers_count": 12, "following_count": 3},
+                },
+                corpus_stats={
+                    "writing_stats": {"average_length": 42.0},
+                    "language_stats": {"primary_language": "en"},
+                    "engagement_patterns": {"reply_ratio": 0.1},
+                    "high_engagement_examples": [
+                        {
+                            "id": "eng-1",
+                            "text": "high signal post",
+                            "created_at": "2026-04-01T00:00:00Z",
+                            "engagement_score": 99,
+                        }
+                    ],
+                    "representative_tweets": [
+                        {
+                            "id": "rep-1",
+                            "text": "short note",
+                            "created_at": "2026-04-02T00:00:00Z",
+                            "is_reply": False,
+                            "is_quote": True,
+                            "engagement_score": 17,
+                        }
+                    ],
+                },
+                request_id="persona-test",
+            )
+
+        system_prompt = mock_chat.call_args.kwargs["system_prompt"]
+        request_payload = json.loads(mock_chat.call_args.kwargs["user_prompt"])
+
+        self.assertEqual(persona["author_summary"], "Builder voice.")
+        self.assertIn(
+            "Focus on the representative_tweets to infer voice, tone, sentence rhythm, and writing habits.",
+            system_prompt,
+        )
+        self.assertIn(
+            "Use corpus statistics (writing_stats, language_stats, engagement_patterns) as supporting "
+            "quantitative evidence, not as the primary signal.",
+            system_prompt,
+        )
+        self.assertEqual(
+            request_payload["corpus_stats"]["representative_tweets"],
+            [{"text": "short note", "is_reply": False, "is_quote": True}],
+        )
+        self.assertNotIn("high_engagement_examples", request_payload["corpus_stats"])
+
     def test_build_draft_request_payload_uses_guardrails_and_language_matching(self) -> None:
         payload = self.client._build_draft_request_payload(
             persona={
