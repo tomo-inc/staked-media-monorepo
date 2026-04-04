@@ -27,6 +27,7 @@ from app.schemas import DraftCandidateEvaluation, DraftItem, DraftsOutput, Perso
 
 from .errors import LLMError, LLMTransportError
 from .utils import (
+    GENERATION_GUARDRAIL_KEYS,
     MIN_RULE_SCORE_FOR_LLM_REVIEW,
     TARGET_DRAFT_SCORE,
     _as_string_list,
@@ -288,11 +289,12 @@ class LLMClient:
                 "Use corpus statistics (writing_stats, language_stats, engagement_patterns) as supporting "
                 "quantitative evidence, not as the primary signal. "
                 "Infer only from provided evidence. Do not fabricate facts. "
-                "Return strict JSON with keys: persona_version, author_summary, voice_traits, "
-                "topic_clusters, writing_patterns, lexical_markers, do_not_sound_like, cta_style, "
-                "generation_guardrails, risk_notes, language_profile, domain_expertise, "
-                "emotional_baseline, audience_profile, interaction_style, posting_cadence, "
-                "media_habits, geo_context, stance_patterns, banned_phrases."
+                "Return strict JSON with keys: persona_version, author_summary, voice_traits, voice_signals, "
+                "signature_patterns, topic_clusters, writing_patterns, lexical_markers, "
+                "lexical_markers_detailed, do_not_sound_like, cta_style, generation_guardrails, "
+                "generation_guardrails_detailed, risk_notes, language_profile, domain_expertise, "
+                "emotional_baseline, audience_profile, interaction_style, posting_cadence, media_habits, "
+                "geo_context, stance_patterns, banned_phrases."
             ),
             user_prompt=json.dumps(request_payload, ensure_ascii=True),
             temperature=0.4,
@@ -416,9 +418,11 @@ class LLMClient:
                 system_prompt=(
                     "You write original X posts that sound like the provided persona. "
                     "The goal is inspired-by writing, not copying. "
-                    "Treat the persona's generation_guardrails as hard style guidance. "
-                    "Use the full style_brief, including emotional_baseline, audience_profile, "
-                    "interaction_style, posting_cadence, media_habits, geo_context, and stance_patterns. "
+                    "Treat style_brief as the only persona source. "
+                    "Treat generation_guardrails and generation_guardrails_detailed as hard style guidance. "
+                    "Use the full style_brief, including voice_signals, signature_patterns, "
+                    "lexical_markers_detailed, emotional_baseline, audience_profile, interaction_style, "
+                    "posting_cadence, media_habits, geo_context, and stance_patterns. "
                     "Prioritize the theme-matched historical tweets over generic persona habits. "
                     "Prefer concrete, timeline-native phrasing over polished summary language. "
                     "Return strict JSON with a top-level 'drafts' array. "
@@ -721,6 +725,7 @@ class LLMClient:
         theme_top_keywords: list[str],
         request_id: str | None = None,
     ) -> dict[str, Any]:
+        persona_payload = self._style_brief_from_persona(persona)
         payload = self._chat_completion_json(
             system_prompt=(
                 "You are a strict evaluator for whether a generated X post sounds like the same author "
@@ -729,20 +734,7 @@ class LLMClient:
             ),
             user_prompt=json.dumps(
                 {
-                    "persona": {
-                        "author_summary": persona.get("author_summary", ""),
-                        "voice_traits": persona.get("voice_traits", []),
-                        "do_not_sound_like": persona.get("do_not_sound_like", []),
-                        "generation_guardrails": persona.get("generation_guardrails", {}),
-                        "language_profile": persona.get("language_profile", {}),
-                        "emotional_baseline": persona.get("emotional_baseline", {}),
-                        "audience_profile": persona.get("audience_profile", {}),
-                        "interaction_style": persona.get("interaction_style", {}),
-                        "posting_cadence": persona.get("posting_cadence", {}),
-                        "media_habits": persona.get("media_habits", {}),
-                        "geo_context": persona.get("geo_context", {}),
-                        "stance_patterns": persona.get("stance_patterns", {}),
-                    },
+                    "persona": persona_payload,
                     "prompt": prompt,
                     "candidate_text": candidate_text,
                     "theme_keywords": theme_keywords,
@@ -759,6 +751,14 @@ class LLMClient:
                         "Check whether the amount of polish and assumed context fit audience_profile.",
                         "Check whether the tone feels consistent with interaction_style for the likely post type.",
                         "Check whether the draft matches the persona's posting cadence and media habit defaults.",
+                        "Check whether at least one signature pattern is reflected naturally when "
+                        "signature_patterns are available.",
+                        "Check whether lexical markers appear in the right contexts and frequencies "
+                        "based on lexical_markers_detailed.",
+                        "Check whether generation_guardrails_detailed examples are followed, especially their "
+                        "positive and negative boundaries.",
+                        "Check whether the voice feels close to voice_signals.evidence rather than only matching "
+                        "abstract trait labels.",
                         "Check whether the draft invents unsupported local context or event proximity inconsistent "
                         "with geo_context.",
                         "Check whether hot-take intensity, controversy posture, and endorsement style fit "
@@ -800,6 +800,7 @@ class LLMClient:
         if not candidate_texts:
             return []
         candidates_input = [{"index": i, "text": text} for i, text in enumerate(candidate_texts)]
+        persona_payload = self._style_brief_from_persona(persona)
         payload = self._chat_completion_json(
             system_prompt=(
                 "You are a strict evaluator for whether generated X posts sound like the same author "
@@ -809,20 +810,7 @@ class LLMClient:
             ),
             user_prompt=json.dumps(
                 {
-                    "persona": {
-                        "author_summary": persona.get("author_summary", ""),
-                        "voice_traits": persona.get("voice_traits", []),
-                        "do_not_sound_like": persona.get("do_not_sound_like", []),
-                        "generation_guardrails": persona.get("generation_guardrails", {}),
-                        "language_profile": persona.get("language_profile", {}),
-                        "emotional_baseline": persona.get("emotional_baseline", {}),
-                        "audience_profile": persona.get("audience_profile", {}),
-                        "interaction_style": persona.get("interaction_style", {}),
-                        "posting_cadence": persona.get("posting_cadence", {}),
-                        "media_habits": persona.get("media_habits", {}),
-                        "geo_context": persona.get("geo_context", {}),
-                        "stance_patterns": persona.get("stance_patterns", {}),
-                    },
+                    "persona": persona_payload,
                     "prompt": prompt,
                     "candidates": candidates_input,
                     "theme_keywords": theme_keywords,
@@ -839,6 +827,14 @@ class LLMClient:
                         "Check whether the amount of polish and assumed context fit audience_profile.",
                         "Check whether the tone feels consistent with interaction_style for the likely post type.",
                         "Check whether each draft matches the persona's posting cadence and media habit defaults.",
+                        "Check whether at least one signature pattern is reflected naturally when "
+                        "signature_patterns are available.",
+                        "Check whether lexical markers appear in the right contexts and frequencies "
+                        "based on lexical_markers_detailed.",
+                        "Check whether generation_guardrails_detailed examples are followed, especially their "
+                        "positive and negative boundaries.",
+                        "Check whether the voice feels close to voice_signals.evidence rather than only matching "
+                        "abstract trait labels.",
                         "Check whether the draft invents unsupported local context or event proximity inconsistent "
                         "with geo_context.",
                         "Check whether hot-take intensity, controversy posture, and endorsement style fit "
@@ -988,8 +984,9 @@ class LLMClient:
         strengths: list[str] = []
         score = 10.0
         language_mode = prompt_language_mode(prompt)
+        normalized_persona = self._normalize_persona_payload(persona)
 
-        banned_phrases = _as_string_list(persona.get("banned_phrases"))
+        banned_phrases = _as_string_list(normalized_persona.get("banned_phrases"))
         for phrase in banned_phrases:
             if keyword_in_text(phrase, candidate_text):
                 return {
@@ -1046,7 +1043,7 @@ class LLMClient:
                 score -= 1.5
                 issues.append(f"Summary-style drift phrase detected: {phrase}")
 
-        lexical_markers = _as_string_list(persona.get("lexical_markers"))
+        lexical_markers = _as_string_list(normalized_persona.get("lexical_markers"))
         for marker in lexical_markers:
             if keyword_in_text(marker, candidate_text):
                 marker_frequency = phrase_frequency(matched_theme_tweets, marker)
@@ -1064,24 +1061,24 @@ class LLMClient:
             issues.append("Reads too complete or essay-like for a compact timeline post")
 
         too_polished = reads_too_complete or has_summary_drift
-        audience_formality = self._persona_audience_formality(persona)
+        audience_formality = self._persona_audience_formality(normalized_persona)
         if audience_formality in {"raw", "casual"} and too_polished:
             score -= 1.0
             issues.append("Polish level is especially misaligned for this persona's casual audience")
 
-        sarcasm_level = self._persona_sarcasm_level(persona)
+        sarcasm_level = self._persona_sarcasm_level(normalized_persona)
         if sarcasm_level in {"frequent", "defining"} and self._draft_sounds_earnest(candidate_text):
             score -= 1.5
             issues.append("Draft lacks expected sarcasm for this persona")
 
-        posting_cadence = self._normalize_posting_cadence(persona.get("posting_cadence"))
+        posting_cadence = self._normalize_posting_cadence(normalized_persona.get("posting_cadence"))
         if (
             posting_cadence["preferred_post_length"] == "short" or posting_cadence["posting_style"] == "burst-poster"
         ) and reads_too_complete:
             score -= 1.0
             issues.append("Too complete for this persona's posting cadence")
 
-        media_habits = self._normalize_media_habits(persona.get("media_habits"))
+        media_habits = self._normalize_media_habits(normalized_persona.get("media_habits"))
         if media_habits["dominant_format"] == "text-only" and self._draft_is_link_forward(candidate_text):
             score -= 1.0
             issues.append("Too link-forward for this persona's text-only habit")
@@ -1155,10 +1152,35 @@ class LLMClient:
 
         normalized["persona_version"] = "v1"
         normalized["author_summary"] = clean_text(str(normalized.get("author_summary") or ""))
+        normalized["voice_signals"] = self._normalize_voice_signals(normalized.get("voice_signals"))
+        normalized["signature_patterns"] = self._normalize_signature_patterns(normalized.get("signature_patterns"))
+        normalized["lexical_markers_detailed"] = self._normalize_lexical_marker_details(
+            normalized.get("lexical_markers_detailed")
+        )
+        normalized["generation_guardrails_detailed"] = self._normalize_generation_guardrails_detailed(
+            normalized.get("generation_guardrails_detailed")
+        )
+
         normalized["voice_traits"] = _as_string_list(normalized.get("voice_traits"))
+        if not normalized["voice_traits"] and normalized["voice_signals"]:
+            normalized["voice_traits"] = _dedupe_preserve_order(
+                [item["trait"] for item in normalized["voice_signals"] if item.get("trait")]
+            )
+
         normalized["lexical_markers"] = _as_string_list(normalized.get("lexical_markers"))
+        if not normalized["lexical_markers"] and normalized["lexical_markers_detailed"]:
+            normalized["lexical_markers"] = _dedupe_preserve_order(
+                [item["marker"] for item in normalized["lexical_markers_detailed"] if item.get("marker")]
+            )
+
         normalized["do_not_sound_like"] = _as_string_list(normalized.get("do_not_sound_like"))
         normalized["generation_guardrails"] = _normalize_generation_guardrails(normalized.get("generation_guardrails"))
+        if not normalized["generation_guardrails"] and normalized["generation_guardrails_detailed"]:
+            normalized["generation_guardrails"] = {
+                key: [item["instruction"] for item in items if item.get("instruction")]
+                for key, items in normalized["generation_guardrails_detailed"].items()
+                if any(item.get("instruction") for item in items)
+            }
         normalized["risk_notes"] = _as_string_list(normalized.get("risk_notes"))
         normalized["topic_clusters"] = self._normalize_topic_clusters(normalized.get("topic_clusters"))
         normalized["writing_patterns"] = self._normalize_writing_patterns(normalized.get("writing_patterns"))
@@ -1236,6 +1258,114 @@ class LLMClient:
                 }
             )
         return normalized_items
+
+    def _normalize_voice_signals(self, value: Any) -> list[dict[str, Any]]:
+        items = value if isinstance(value, list) else ([value] if value else [])
+        normalized_items: list[dict[str, Any]] = []
+        for item in items:
+            if isinstance(item, dict):
+                trait = clean_text(str(item.get("trait") or item.get("name") or ""))
+                evidence = clean_text(str(item.get("evidence") or item.get("example") or item.get("excerpt") or ""))
+            else:
+                trait = clean_text(str(item))
+                evidence = ""
+            if not trait:
+                continue
+            normalized_items.append(
+                {
+                    "trait": trait,
+                    "evidence": evidence,
+                }
+            )
+        return normalized_items
+
+    def _normalize_signature_patterns(self, value: Any) -> list[dict[str, Any]]:
+        items = value if isinstance(value, list) else ([value] if value else [])
+        normalized_items: list[dict[str, Any]] = []
+        for item in items:
+            if isinstance(item, dict):
+                pattern = clean_text(str(item.get("pattern") or item.get("name") or item.get("structure") or ""))
+                instruction = clean_text(
+                    str(item.get("instruction") or item.get("usage") or item.get("how_to_apply") or "")
+                )
+                evidence = clean_text(str(item.get("evidence") or item.get("example") or item.get("excerpt") or ""))
+            else:
+                pattern = clean_text(str(item))
+                instruction = ""
+                evidence = ""
+            if not pattern:
+                continue
+            normalized_items.append(
+                {
+                    "pattern": pattern,
+                    "instruction": instruction,
+                    "evidence": evidence,
+                }
+            )
+        return normalized_items
+
+    def _normalize_lexical_marker_details(self, value: Any) -> list[dict[str, Any]]:
+        items = value if isinstance(value, list) else ([value] if value else [])
+        normalized_items: list[dict[str, Any]] = []
+        for item in items:
+            if isinstance(item, dict):
+                marker = clean_text(str(item.get("marker") or item.get("term") or item.get("token") or ""))
+                usage = clean_text(str(item.get("usage") or item.get("context") or item.get("role") or ""))
+                frequency = clean_text(str(item.get("frequency") or "medium")).lower() or "medium"
+            else:
+                marker = clean_text(str(item))
+                usage = ""
+                frequency = "medium"
+            if not marker:
+                continue
+            if frequency not in {"high", "medium", "low"}:
+                frequency = "medium"
+            normalized_items.append(
+                {
+                    "marker": marker,
+                    "usage": usage,
+                    "frequency": frequency,
+                }
+            )
+        return normalized_items
+
+    def _normalize_generation_guardrails_detailed(self, value: Any) -> dict[str, list[dict[str, Any]]]:
+        if not value:
+            return {}
+
+        normalized: dict[str, list[dict[str, Any]]] = {key: [] for key in GENERATION_GUARDRAIL_KEYS}
+        if not isinstance(value, dict):
+            return {}
+
+        for key in GENERATION_GUARDRAIL_KEYS:
+            raw_items = value.get(key)
+            items = raw_items if isinstance(raw_items, list) else ([raw_items] if raw_items else [])
+            normalized_items: list[dict[str, Any]] = []
+            for item in items:
+                if isinstance(item, dict):
+                    instruction = clean_text(str(item.get("instruction") or item.get("rule") or item.get("text") or ""))
+                    positive_example = clean_text(
+                        str(item.get("positive_example") or item.get("positive") or item.get("example") or "")
+                    )
+                    negative_example = clean_text(
+                        str(item.get("negative_example") or item.get("negative") or item.get("anti_example") or "")
+                    )
+                else:
+                    instruction = clean_text(str(item))
+                    positive_example = ""
+                    negative_example = ""
+                if not instruction and not positive_example and not negative_example:
+                    continue
+                normalized_items.append(
+                    {
+                        "instruction": instruction,
+                        "positive_example": positive_example,
+                        "negative_example": negative_example,
+                    }
+                )
+            normalized[key] = normalized_items
+
+        return {key: items for key, items in normalized.items() if items}
 
     def _normalize_writing_patterns(self, value: Any) -> dict[str, Any]:
         if isinstance(value, dict):
@@ -1582,12 +1712,21 @@ class LLMClient:
             "instructions": [
                 'persona_version must always be "v1".',
                 "Keep author_summary to 3 sentences max.",
-                "voice_traits should be 4 to 8 short traits.",
+                "voice_traits should be 4 to 8 short traits for compatibility with existing consumers.",
+                "voice_signals should be 3 to 6 objects with trait and evidence. "
+                "Evidence must be a short excerpt or paraphrase grounded in representative_tweets.",
+                "signature_patterns should be 2 to 5 recurring structural or sentence-level habits. "
+                "Each item must include pattern, instruction, and evidence from representative_tweets.",
                 "topic_clusters should be 3 to 6 clusters with topic, evidence_terms, and frequency.",
                 "writing_patterns must be a structured object with avg_sentence_length, punctuation_habits, "
                 "paragraph_structure, code_switching_style, and emoji_usage.",
+                "lexical_markers should remain a concise compatibility list of the author's native recurring terms.",
+                "lexical_markers_detailed should contain up to 8 objects with marker, usage, and frequency. "
+                "Usage must explain where the marker fits naturally; frequency must be high, medium, or low.",
                 "do_not_sound_like should capture style drift risks.",
-                "generation_guardrails should translate the style into concrete writing rules for generation.",
+                "generation_guardrails should remain concise compatibility rules for generation.",
+                "generation_guardrails_detailed should provide concrete instruction objects with "
+                "instruction, positive_example, and negative_example for each populated category.",
                 "generation_guardrails.preferred_openings should capture native ways this author often starts posts.",
                 "generation_guardrails.preferred_formats should describe post shapes "
                 "such as reaction, observation, link drop, thesis-lite, or scene-first.",
@@ -1597,6 +1736,8 @@ class LLMClient:
                 "that would sound too polished, too abstract, too symmetrical, or too essay-like.",
                 "generation_guardrails.language_notes should explain "
                 "how to handle bilingual texture or code-switching naturally.",
+                "When generation_guardrails_detailed is present, ground positive and negative examples "
+                "in observed openings, formats, or phrasing habits rather than generic writing advice.",
                 "language_profile must identify the primary language using ISO 639-1 when possible and describe "
                 "code-switching patterns with concrete evidence from the tweets.",
                 "domain_expertise should list 1 to 3 domains with depth level and jargon_examples.",
@@ -1618,6 +1759,29 @@ class LLMClient:
             ],
         }
 
+    def _style_brief_from_persona(self, persona: dict[str, Any]) -> dict[str, Any]:
+        normalized_persona = self._normalize_persona_payload(persona)
+        return {
+            "author_summary": normalized_persona["author_summary"],
+            "voice_traits": normalized_persona["voice_traits"],
+            "voice_signals": normalized_persona["voice_signals"][:6],
+            "signature_patterns": normalized_persona["signature_patterns"][:5],
+            "lexical_markers": normalized_persona["lexical_markers"][:20],
+            "lexical_markers_detailed": normalized_persona["lexical_markers_detailed"][:8],
+            "do_not_sound_like": normalized_persona["do_not_sound_like"],
+            "writing_patterns": normalized_persona["writing_patterns"],
+            "language_profile": normalized_persona["language_profile"],
+            "emotional_baseline": normalized_persona["emotional_baseline"],
+            "audience_profile": normalized_persona["audience_profile"],
+            "interaction_style": normalized_persona["interaction_style"],
+            "posting_cadence": normalized_persona["posting_cadence"],
+            "media_habits": normalized_persona["media_habits"],
+            "geo_context": normalized_persona["geo_context"],
+            "stance_patterns": normalized_persona["stance_patterns"],
+            "generation_guardrails": normalized_persona["generation_guardrails"],
+            "generation_guardrails_detailed": normalized_persona["generation_guardrails_detailed"],
+        }
+
     def _build_draft_request_payload(
         self,
         *,
@@ -1631,16 +1795,12 @@ class LLMClient:
         attempt_feedback: list[str],
         draft_count: int,
     ) -> dict[str, Any]:
-        guardrails = _normalize_generation_guardrails(persona.get("generation_guardrails"))
-        writing_patterns = self._normalize_writing_patterns(persona.get("writing_patterns"))
-        language_profile = self._normalize_language_profile(persona.get("language_profile"))
-        emotional_baseline = self._normalize_emotional_baseline(persona.get("emotional_baseline"))
-        audience_profile = self._normalize_audience_profile(persona.get("audience_profile"))
-        interaction_style = self._normalize_interaction_style(persona.get("interaction_style"))
-        posting_cadence = self._normalize_posting_cadence(persona.get("posting_cadence"))
-        media_habits = self._normalize_media_habits(persona.get("media_habits"))
-        geo_context = self._normalize_geo_context(persona.get("geo_context"))
-        stance_patterns = self._normalize_stance_patterns(persona.get("stance_patterns"))
+        style_brief = self._style_brief_from_persona(persona)
+        posting_cadence = style_brief["posting_cadence"]
+        media_habits = style_brief["media_habits"]
+        signature_patterns = style_brief["signature_patterns"]
+        lexical_markers_detailed = style_brief["lexical_markers_detailed"]
+        generation_guardrails_detailed = style_brief["generation_guardrails_detailed"]
 
         language_mode = prompt_language_mode(prompt)
         full_chinese_mode = language_mode == "full_chinese"
@@ -1663,6 +1823,7 @@ class LLMClient:
         )
         allowed_english_tokens = sorted(allowed_english_tokens_set)
         drafting_rules = [
+            "Treat style_brief as the only persona source. Do not assume hidden traits beyond it.",
             "Prefer the persona's native opening moves and post formats over generic summary framing.",
             "Prioritize the matched theme tweets and their keyword patterns over unrelated global persona habits.",
             "If compression_rules are present, follow them closely: "
@@ -1678,6 +1839,24 @@ class LLMClient:
             "If the user prompt asks for a stronger stance, follow the prompt while staying as close as possible "
             "to the persona's normal posture.",
         ]
+        if style_brief["voice_signals"]:
+            drafting_rules.append(
+                "Use voice_signals.evidence to match cadence and phrasing texture without copying any original wording."
+            )
+        if lexical_markers_detailed:
+            drafting_rules.append(
+                "Use lexical_markers_detailed only in their native contexts and frequencies. "
+                "Do not stuff markers unnaturally."
+            )
+        if generation_guardrails_detailed:
+            drafting_rules.append(
+                "When generation_guardrails_detailed is present, follow its instruction and examples more closely "
+                "than any generic interpretation of the style."
+            )
+        if signature_patterns:
+            drafting_rules.append(
+                "At least one draft must use one signature_pattern from style_brief.signature_patterns when available."
+            )
         if full_chinese_mode:
             drafting_rules.append(
                 "Full-Chinese mode is required: keep the draft in Chinese. "
@@ -1717,25 +1896,9 @@ class LLMClient:
                 "while keeping the persona's natural language texture."
             )
         else:
-            language_constraint = self._persona_language_guidance(persona)
+            language_constraint = self._persona_language_guidance(style_brief)
         return {
-            "persona": persona,
-            "style_brief": {
-                "author_summary": clean_text(str(persona.get("author_summary") or "")),
-                "voice_traits": _as_string_list(persona.get("voice_traits")),
-                "lexical_markers": _as_string_list(persona.get("lexical_markers"))[:20],
-                "do_not_sound_like": _as_string_list(persona.get("do_not_sound_like")),
-                "writing_patterns": writing_patterns,
-                "language_profile": language_profile,
-                "emotional_baseline": emotional_baseline,
-                "audience_profile": audience_profile,
-                "interaction_style": interaction_style,
-                "posting_cadence": posting_cadence,
-                "media_habits": media_habits,
-                "geo_context": geo_context,
-                "stance_patterns": stance_patterns,
-                "generation_guardrails": guardrails,
-            },
+            "style_brief": style_brief,
             "user_prompt": prompt_for_generation,
             "representative_tweets": representative_tweets[:12],
             "matched_theme_tweets": matched_theme_tweets[:8],
