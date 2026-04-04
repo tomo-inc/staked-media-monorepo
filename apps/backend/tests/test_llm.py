@@ -46,9 +46,24 @@ class LlmNormalizationTestCase(unittest.TestCase):
             "persona_version": 1.0,
             "author_summary": "Builder voice",
             "voice_traits": ["direct", "operator-minded"],
+            "voice_signals": [{"name": "sarcastic", "example": "又来了，每次都说这次不一样"}],
+            "signature_patterns": [
+                {
+                    "structure": "contrast turn",
+                    "usage": "lead with thesis then flip it",
+                    "example": "看起来强，但是别急着下结论",
+                }
+            ],
             "topic_clusters": [{"topic": "adoption", "evidence_terms": ["growth"]}],
             "writing_patterns": ["short punchy lines", "mission-driven essays"],
             "lexical_markers": ["mass adoption"],
+            "lexical_markers_detailed": [
+                {
+                    "term": "确实",
+                    "context": "sentence-ending agreement marker",
+                    "frequency": "HIGH",
+                }
+            ],
             "do_not_sound_like": "corporate PR",
             "cta_style": {
                 "overall": "Light CTA usage",
@@ -60,6 +75,21 @@ class LlmNormalizationTestCase(unittest.TestCase):
                 "compression_rules": ["one sharp point then stop"],
                 "anti_patterns": ["polished symmetry"],
                 "language_notes": "natural CN-EN code-switching only",
+            },
+            "generation_guardrails_detailed": {
+                "preferred_openings": [
+                    {
+                        "rule": "open bluntly",
+                        "positive": "说个事",
+                        "negative": "众所周知",
+                    }
+                ],
+                "anti_patterns": [
+                    {
+                        "text": "avoid textbook framing",
+                        "negative_example": "在当今社会",
+                    }
+                ],
             },
             "risk_notes": "Public-post inference only",
             "language_profile": {
@@ -108,13 +138,28 @@ class LlmNormalizationTestCase(unittest.TestCase):
         normalized = self.client._normalize_persona_payload(payload)
 
         self.assertEqual(normalized["persona_version"], "v1")
+        self.assertEqual(normalized["voice_signals"][0]["trait"], "sarcastic")
+        self.assertEqual(normalized["voice_signals"][0]["evidence"], "又来了，每次都说这次不一样")
+        self.assertEqual(normalized["signature_patterns"][0]["pattern"], "contrast turn")
+        self.assertEqual(normalized["signature_patterns"][0]["instruction"], "lead with thesis then flip it")
         self.assertEqual(normalized["writing_patterns"]["avg_sentence_length"], "medium")
         self.assertEqual(normalized["writing_patterns"]["punctuation_habits"][0], "short punchy lines")
+        self.assertEqual(normalized["lexical_markers_detailed"][0]["marker"], "确实")
+        self.assertEqual(normalized["lexical_markers_detailed"][0]["usage"], "sentence-ending agreement marker")
+        self.assertEqual(normalized["lexical_markers_detailed"][0]["frequency"], "high")
         self.assertEqual(normalized["do_not_sound_like"], ["corporate PR"])
         self.assertIn("Light CTA usage", normalized["cta_style"])
         self.assertEqual(
             normalized["generation_guardrails"]["preferred_formats"],
             ["short observation"],
+        )
+        self.assertEqual(
+            normalized["generation_guardrails_detailed"]["preferred_openings"][0]["instruction"],
+            "open bluntly",
+        )
+        self.assertEqual(
+            normalized["generation_guardrails_detailed"]["anti_patterns"][0]["negative_example"],
+            "在当今社会",
         )
         self.assertEqual(
             normalized["generation_guardrails"]["language_notes"],
@@ -139,6 +184,42 @@ class LlmNormalizationTestCase(unittest.TestCase):
         self.assertEqual(normalized["stance_patterns"]["controversy_posture"], "avoids pile-ons")
         self.assertEqual(normalized["stance_patterns"]["endorsement_style"], "selective")
         self.assertEqual(normalized["banned_phrases"], ["gm ser"])
+
+    def test_normalize_persona_payload_derives_legacy_fields_from_structured_fields(self) -> None:
+        payload = {
+            "author_summary": "Builder voice",
+            "voice_signals": [{"trait": "sarcastic", "evidence": "又来了"}],
+            "signature_patterns": [
+                {
+                    "pattern": "thesis then reversal",
+                    "instruction": "state the take, then pivot",
+                    "evidence": "看起来强，但是别急着下结论",
+                }
+            ],
+            "lexical_markers_detailed": [
+                {
+                    "marker": "确实",
+                    "usage": "sentence-ending agreement marker",
+                    "frequency": "high",
+                }
+            ],
+            "generation_guardrails_detailed": {
+                "preferred_openings": [
+                    {
+                        "instruction": "open bluntly",
+                        "positive_example": "说个事",
+                        "negative_example": "众所周知",
+                    }
+                ]
+            },
+        }
+
+        normalized = self.client._normalize_persona_payload(payload)
+
+        self.assertEqual(normalized["voice_traits"], ["sarcastic"])
+        self.assertEqual(normalized["lexical_markers"], ["确实"])
+        self.assertEqual(normalized["generation_guardrails"]["preferred_openings"], ["open bluntly"])
+        self.assertEqual(normalized["signature_patterns"][0]["pattern"], "thesis then reversal")
 
     def test_normalize_drafts_payload_accepts_string_items(self) -> None:
         payload = {"drafts": ["One clear post", {"draft": "Second clear post", "tags": "direct"}]}
@@ -228,10 +309,37 @@ class LlmNormalizationTestCase(unittest.TestCase):
             "_chat_completion_json",
             return_value={
                 "author_summary": "Builder voice.",
-                "voice_traits": ["direct", "concise", "operator-minded", "observational"],
-                "lexical_markers": ["gm"],
+                "voice_signals": [
+                    {
+                        "trait": "direct",
+                        "evidence": "short note",
+                    }
+                ],
+                "signature_patterns": [
+                    {
+                        "pattern": "thesis then turn",
+                        "instruction": "state the take, then pivot",
+                        "evidence": "看起来强，但是别急着下结论",
+                    }
+                ],
+                "lexical_markers_detailed": [
+                    {
+                        "marker": "gm",
+                        "usage": "casual opener",
+                        "frequency": "high",
+                    }
+                ],
                 "do_not_sound_like": ["corporate PR"],
                 "cta_style": "Rare soft CTA.",
+                "generation_guardrails_detailed": {
+                    "preferred_openings": [
+                        {
+                            "instruction": "open bluntly",
+                            "positive_example": "说个事",
+                            "negative_example": "众所周知",
+                        }
+                    ]
+                },
                 "risk_notes": ["Derived from public posts only."],
             },
         ) as mock_chat:
@@ -271,16 +379,33 @@ class LlmNormalizationTestCase(unittest.TestCase):
 
         system_prompt = mock_chat.call_args.kwargs["system_prompt"]
         request_payload = json.loads(mock_chat.call_args.kwargs["user_prompt"])
+        instructions = request_payload["instructions"]
 
         self.assertEqual(persona["author_summary"], "Builder voice.")
+        self.assertEqual(persona["voice_traits"], ["direct"])
+        self.assertEqual(persona["lexical_markers"], ["gm"])
+        self.assertEqual(persona["generation_guardrails"]["preferred_openings"], ["open bluntly"])
+        self.assertEqual(persona["signature_patterns"][0]["pattern"], "thesis then turn")
         self.assertIn(
             "Focus on the representative_tweets to infer voice, tone, sentence rhythm, and writing habits.",
             system_prompt,
         )
+        self.assertIn("voice_signals, signature_patterns", system_prompt)
+        self.assertIn("lexical_markers_detailed", system_prompt)
+        self.assertIn("generation_guardrails_detailed", system_prompt)
         self.assertIn(
             "Use corpus statistics (writing_stats, language_stats, engagement_patterns) as supporting "
             "quantitative evidence, not as the primary signal.",
             system_prompt,
+        )
+        self.assertTrue(any("voice_signals should be 3 to 6 objects" in item for item in instructions))
+        self.assertTrue(any("signature_patterns should be 2 to 5 recurring" in item for item in instructions))
+        self.assertTrue(any("lexical_markers_detailed should contain up to 8 objects" in item for item in instructions))
+        self.assertTrue(
+            any(
+                "generation_guardrails_detailed should provide concrete instruction objects" in item
+                for item in instructions
+            )
         )
         self.assertEqual(
             request_payload["corpus_stats"]["representative_tweets"],
@@ -293,7 +418,27 @@ class LlmNormalizationTestCase(unittest.TestCase):
             persona={
                 "author_summary": "Timeline-native bilingual poster",
                 "voice_traits": ["casual", "meme-aware"],
+                "voice_signals": [
+                    {
+                        "trait": "casual",
+                        "evidence": "gm frens",
+                    }
+                ],
+                "signature_patterns": [
+                    {
+                        "pattern": "thesis then turn",
+                        "instruction": "state the take, then pivot",
+                        "evidence": "看起来强，但是别急着下结论",
+                    }
+                ],
                 "lexical_markers": ["gm frens", "timeline"],
+                "lexical_markers_detailed": [
+                    {
+                        "marker": "gm frens",
+                        "usage": "casual opener",
+                        "frequency": "high",
+                    }
+                ],
                 "do_not_sound_like": ["essay"],
                 "writing_patterns": {
                     "avg_sentence_length": "short",
@@ -351,6 +496,15 @@ class LlmNormalizationTestCase(unittest.TestCase):
                     "compression_rules": ["leave some implication unstated"],
                     "anti_patterns": ["generic summary language"],
                 },
+                "generation_guardrails_detailed": {
+                    "preferred_openings": [
+                        {
+                            "instruction": "open scene-first",
+                            "positive_example": "刚看到一个...",
+                            "negative_example": "在当今社会",
+                        }
+                    ]
+                },
             },
             prompt="Talk about WTDD with the same punchy tone",
             representative_tweets=[{"text": "gm frens"}],
@@ -362,9 +516,13 @@ class LlmNormalizationTestCase(unittest.TestCase):
             draft_count=4,
         )
 
+        self.assertNotIn("persona", payload)
         self.assertEqual(payload["constraints"]["draft_count"], 4)
         self.assertIn("Default to zh", payload["constraints"]["language_mode"])
         self.assertFalse(payload["constraints"]["full_chinese_only"])
+        self.assertEqual(payload["style_brief"]["voice_signals"][0]["trait"], "casual")
+        self.assertEqual(payload["style_brief"]["signature_patterns"][0]["pattern"], "thesis then turn")
+        self.assertEqual(payload["style_brief"]["lexical_markers_detailed"][0]["marker"], "gm frens")
         self.assertEqual(payload["style_brief"]["posting_cadence"]["posting_style"], "burst-poster")
         self.assertEqual(payload["style_brief"]["media_habits"]["dominant_format"], "text-only")
         self.assertEqual(payload["style_brief"]["geo_context"]["declared_location"], "Singapore")
@@ -387,6 +545,10 @@ class LlmNormalizationTestCase(unittest.TestCase):
         self.assertTrue(
             any("hot-take, controversy, and endorsement posture" in rule for rule in payload["drafting_rules"])
         )
+        self.assertTrue(any("voice_signals.evidence" in rule for rule in payload["drafting_rules"]))
+        self.assertTrue(any("lexical_markers_detailed" in rule for rule in payload["drafting_rules"]))
+        self.assertTrue(any("generation_guardrails_detailed" in rule for rule in payload["drafting_rules"]))
+        self.assertTrue(any("signature_pattern" in rule for rule in payload["drafting_rules"]))
 
     def test_build_draft_request_payload_full_chinese_prompt_overrides_persona_language_profile(self) -> None:
         payload = self.client._build_draft_request_payload(
@@ -810,8 +972,32 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
                 persona={
                     "author_summary": "",
                     "voice_traits": [],
+                    "voice_signals": [{"trait": "dry", "evidence": "Right, because that always works."}],
+                    "signature_patterns": [
+                        {
+                            "pattern": "thesis then reversal",
+                            "instruction": "state the take, then pivot",
+                            "evidence": "看起来强，但是别急着下结论",
+                        }
+                    ],
                     "do_not_sound_like": [],
+                    "lexical_markers_detailed": [
+                        {
+                            "marker": "确实",
+                            "usage": "sentence-ending agreement marker",
+                            "frequency": "high",
+                        }
+                    ],
                     "generation_guardrails": {},
+                    "generation_guardrails_detailed": {
+                        "preferred_openings": [
+                            {
+                                "instruction": "open bluntly",
+                                "positive_example": "说个事",
+                                "negative_example": "众所周知",
+                            }
+                        ]
+                    },
                     "language_profile": {"primary_language": "zh"},
                     "emotional_baseline": {"sarcasm_level": "occasional"},
                     "audience_profile": {"formality": "casual"},
@@ -828,11 +1014,15 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
                 theme_top_keywords=[],
             )
         request_payload = json.loads(mock_chat.call_args.kwargs["user_prompt"])
+        instructions = request_payload["instructions"]
         self.assertEqual(len(results), 2)
         self.assertEqual(results[0]["score"], 9.0)
         self.assertEqual(results[1]["score"], 7.5)
         self.assertEqual(results[1]["issues"], ["drift"])
         self.assertIn("language_profile", request_payload["persona"])
+        self.assertIn("voice_signals", request_payload["persona"])
+        self.assertIn("signature_patterns", request_payload["persona"])
+        self.assertIn("lexical_markers_detailed", request_payload["persona"])
         self.assertIn("emotional_baseline", request_payload["persona"])
         self.assertIn("audience_profile", request_payload["persona"])
         self.assertIn("interaction_style", request_payload["persona"])
@@ -840,10 +1030,21 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
         self.assertIn("media_habits", request_payload["persona"])
         self.assertIn("geo_context", request_payload["persona"])
         self.assertIn("stance_patterns", request_payload["persona"])
-        self.assertTrue(any("emotional register" in instruction for instruction in request_payload["instructions"]))
-        self.assertTrue(any("interaction_style" in instruction for instruction in request_payload["instructions"]))
-        self.assertTrue(any("geo_context" in instruction for instruction in request_payload["instructions"]))
-        self.assertTrue(any("stance_patterns" in instruction for instruction in request_payload["instructions"]))
+        self.assertIn("generation_guardrails_detailed", request_payload["persona"])
+        has_lexical_context_guidance = any(
+            "lexical markers appear in the right contexts" in instruction for instruction in instructions
+        )
+        has_voice_evidence_guidance = any(
+            "voice feels close to voice_signals.evidence" in instruction for instruction in instructions
+        )
+        self.assertTrue(any("emotional register" in instruction for instruction in instructions))
+        self.assertTrue(any("interaction_style" in instruction for instruction in instructions))
+        self.assertTrue(any("signature pattern" in instruction for instruction in instructions))
+        self.assertTrue(has_lexical_context_guidance)
+        self.assertTrue(any("generation_guardrails_detailed examples" in instruction for instruction in instructions))
+        self.assertTrue(has_voice_evidence_guidance)
+        self.assertTrue(any("geo_context" in instruction for instruction in instructions))
+        self.assertTrue(any("stance_patterns" in instruction for instruction in instructions))
 
     def test_single_score_includes_geo_and_stance_guidance(self) -> None:
         with patch.object(
@@ -855,8 +1056,32 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
                 persona={
                     "author_summary": "",
                     "voice_traits": [],
+                    "voice_signals": [{"trait": "dry", "evidence": "Right, because that always works."}],
                     "do_not_sound_like": [],
                     "generation_guardrails": {},
+                    "generation_guardrails_detailed": {
+                        "preferred_openings": [
+                            {
+                                "instruction": "open bluntly",
+                                "positive_example": "说个事",
+                                "negative_example": "众所周知",
+                            }
+                        ]
+                    },
+                    "signature_patterns": [
+                        {
+                            "pattern": "thesis then reversal",
+                            "instruction": "state the take, then pivot",
+                            "evidence": "看起来强，但是别急着下结论",
+                        }
+                    ],
+                    "lexical_markers_detailed": [
+                        {
+                            "marker": "确实",
+                            "usage": "sentence-ending agreement marker",
+                            "frequency": "high",
+                        }
+                    ],
                     "language_profile": {"primary_language": "en"},
                     "geo_context": {"region_hint": "sea"},
                     "stance_patterns": {"hot_take_style": "measured"},
@@ -869,11 +1094,26 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
             )
 
         request_payload = json.loads(mock_chat.call_args.kwargs["user_prompt"])
+        instructions = request_payload["instructions"]
         self.assertEqual(result["score"], 8.8)
+        self.assertIn("voice_signals", request_payload["persona"])
+        self.assertIn("signature_patterns", request_payload["persona"])
+        self.assertIn("lexical_markers_detailed", request_payload["persona"])
+        self.assertIn("generation_guardrails_detailed", request_payload["persona"])
         self.assertIn("geo_context", request_payload["persona"])
         self.assertIn("stance_patterns", request_payload["persona"])
-        self.assertTrue(any("geo_context" in instruction for instruction in request_payload["instructions"]))
-        self.assertTrue(any("stance_patterns" in instruction for instruction in request_payload["instructions"]))
+        has_lexical_context_guidance = any(
+            "lexical markers appear in the right contexts" in instruction for instruction in instructions
+        )
+        has_voice_evidence_guidance = any(
+            "voice feels close to voice_signals.evidence" in instruction for instruction in instructions
+        )
+        self.assertTrue(any("signature pattern" in instruction for instruction in instructions))
+        self.assertTrue(has_lexical_context_guidance)
+        self.assertTrue(any("generation_guardrails_detailed examples" in instruction for instruction in instructions))
+        self.assertTrue(has_voice_evidence_guidance)
+        self.assertTrue(any("geo_context" in instruction for instruction in instructions))
+        self.assertTrue(any("stance_patterns" in instruction for instruction in instructions))
 
     def test_batch_returns_defaults_for_missing_indices(self) -> None:
         batch_response = {

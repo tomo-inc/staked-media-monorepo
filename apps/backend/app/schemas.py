@@ -170,16 +170,51 @@ class StancePatterns(BaseModel):
     notes: str = ""
 
 
+class VoiceSignal(BaseModel):
+    trait: str = ""
+    evidence: str = ""
+
+
+class SignaturePattern(BaseModel):
+    pattern: str = ""
+    instruction: str = ""
+    evidence: str = ""
+
+
+class LexicalMarkerDetail(BaseModel):
+    marker: str = ""
+    usage: str = ""
+    frequency: str = "medium"
+
+
+class GuardrailExample(BaseModel):
+    instruction: str = ""
+    positive_example: str = ""
+    negative_example: str = ""
+
+
+class GenerationGuardrailsDetailed(BaseModel):
+    preferred_openings: list[GuardrailExample] = Field(default_factory=list)
+    preferred_formats: list[GuardrailExample] = Field(default_factory=list)
+    compression_rules: list[GuardrailExample] = Field(default_factory=list)
+    anti_patterns: list[GuardrailExample] = Field(default_factory=list)
+    language_notes: list[GuardrailExample] = Field(default_factory=list)
+
+
 class PersonaOutput(BaseModel):
     persona_version: str = "v1"
     author_summary: str
     voice_traits: list[str]
+    voice_signals: list[VoiceSignal] = Field(default_factory=list)
+    signature_patterns: list[SignaturePattern] = Field(default_factory=list)
     topic_clusters: list[TopicCluster] = Field(default_factory=list)
     writing_patterns: WritingPatterns = Field(default_factory=WritingPatterns)
     lexical_markers: list[str]
+    lexical_markers_detailed: list[LexicalMarkerDetail] = Field(default_factory=list)
     do_not_sound_like: list[str]
     cta_style: str
     generation_guardrails: dict[str, list[str]] = Field(default_factory=dict)
+    generation_guardrails_detailed: GenerationGuardrailsDetailed = Field(default_factory=GenerationGuardrailsDetailed)
     risk_notes: list[str]
     language_profile: LanguageProfile = Field(default_factory=LanguageProfile)
     domain_expertise: list[DomainExpertise] = Field(default_factory=list)
