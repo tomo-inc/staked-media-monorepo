@@ -72,10 +72,15 @@ class FakeHotEventsService:
     def __init__(self) -> None:
         self.calls = 0
         self.latest_refresh = False
+        self.should_fail = False
+        self.error_message = "provider unavailable"
+        self.published_at = (datetime.now(UTC).replace(microsecond=0)).isoformat()
 
     def list_hot_events(self, *, hours: int, limit: int, refresh: bool) -> dict:
         self.calls += 1
         self.latest_refresh = refresh
+        if self.should_fail:
+            raise RuntimeError(self.error_message)
         items = [
             {
                 "id": "web3::event-1",
@@ -84,7 +89,7 @@ class FakeHotEventsService:
                 "url": "https://example.com/etf",
                 "source": "Example News",
                 "source_domain": "example.com",
-                "published_at": "2026-03-31T00:00:00+00:00",
+                "published_at": self.published_at,
                 "relative_age_hint": "2h ago",
                 "heat_score": 96.0,
                 "category": "web3",
@@ -344,10 +349,36 @@ class OrchestratorTestCase(unittest.TestCase):
         self.assertEqual(payload["items"][0]["id"], "web3::event-1")
         self.assertEqual(payload["warnings"], [])
         self.assertEqual(payload["source_status"]["opennews"]["status"], "ok")
+        self.assertFalse(payload["is_stale"])
+        self.assertEqual(payload["last_refresh_error"], "")
         self.assertEqual(self.hot.calls, 1)
         self.assertTrue(self.hot.latest_refresh)
 
+    def test_list_hot_events_reads_stored_items_without_re_fetching(self) -> None:
+        first = self.orchestrator.list_hot_events(hours=24, limit=20, refresh=True)
+        second = self.orchestrator.list_hot_events(hours=24, limit=20, refresh=False)
+
+        self.assertEqual(first["items"][0]["id"], "web3::event-1")
+        self.assertEqual(second["items"][0]["id"], "web3::event-1")
+        self.assertEqual(self.hot.calls, 1)
+        self.assertEqual(second["warnings"], [])
+        self.assertEqual(second["source_status"], {})
+
+    def test_list_hot_events_returns_stored_items_after_refresh_failure(self) -> None:
+        self.orchestrator.list_hot_events(hours=24, limit=20, refresh=True)
+        self.hot.should_fail = True
+
+        payload = self.orchestrator.list_hot_events(hours=24, limit=20, refresh=True)
+
+        self.assertEqual(payload["count"], 1)
+        self.assertTrue(payload["is_stale"])
+        self.assertEqual(payload["last_refresh_error"], "provider unavailable")
+        self.assertEqual(payload["items"][0]["id"], "web3::event-1")
+        self.assertEqual(payload["warnings"], ["hot events refresh failed: provider unavailable"])
+        self.assertEqual(self.hot.calls, 2)
+
     def test_generate_conversation_content_uses_mode_b_and_selected_event(self) -> None:
+        self.orchestrator.list_hot_events(hours=24, limit=20, refresh=True)
         payload = ConversationGenerateRequest(
             username="demo",
             event_id="web3::event-1",

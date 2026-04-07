@@ -24,6 +24,7 @@ class HotEventsService:
     OPENTWITTER_TYPE_PATH = "/open/tweets_type"
     OPENTWITTER_SEARCH_PATH = "/open/tweets_search"
     OPENTWITTER_LEGACY_SEARCH_PATH = "/open/twitter_search"
+    OPENTWITTER_UNAVAILABLE_ERROR = "opentwitter search unavailable"
     DEFAULT_TWITTER_QUERY = "crypto OR bitcoin OR ethereum OR web3 OR ai"
 
     def __init__(
@@ -143,21 +144,21 @@ class HotEventsService:
             "keywords": query,
         }
         raw_items: list[dict[str, Any]] | None = None
-        last_error: RuntimeError | None = None
         for search_path in (self.OPENTWITTER_SEARCH_PATH, self.OPENTWITTER_LEGACY_SEARCH_PATH):
             try:
                 payload = self._post_json(search_path, payload=request_payload)
-                items = payload.get("data")
-                if isinstance(items, list):
-                    raw_items = [item for item in items if isinstance(item, dict)]
-                    break
-            except RuntimeError as exc:
-                last_error = exc
+            except RuntimeError:
+                continue
+
+            items = payload.get("data")
+            if not isinstance(items, list):
+                continue
+
+            raw_items = [item for item in items if isinstance(item, dict)]
+            break
 
         if raw_items is None:
-            if last_error is not None:
-                raise RuntimeError(str(last_error)) from last_error
-            raise RuntimeError("opentwitter response does not contain a valid data list")
+            raise RuntimeError(self.OPENTWITTER_UNAVAILABLE_ERROR)
 
         normalized: list[dict[str, Any]] = []
         for raw_item in raw_items:

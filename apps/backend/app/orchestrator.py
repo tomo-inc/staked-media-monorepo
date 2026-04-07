@@ -5,7 +5,7 @@ import logging
 import re
 import threading
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.config import Settings
@@ -52,6 +52,7 @@ class ContentOrchestrator:
             api_token=settings.provider_6551_token,
             fusion_settings=settings.hot_events_fusion,
         )
+        self._hot_events_refresh_lock = threading.Lock()
         self._debug_runs: dict[str, dict[str, Any]] = {}
 
     def suggest_ideas(self, *, direction: str, domain: str, topic_hint: str, limit: int) -> dict[str, Any]:
@@ -76,15 +77,52 @@ class ContentOrchestrator:
         }
 
     def list_hot_events(self, *, hours: int, limit: int, refresh: bool) -> dict[str, Any]:
-        payload = self.hot_events_service.list_hot_events(hours=hours, limit=limit, refresh=refresh)
-        items = payload.get("items", [])
-        return {
-            "hours": max(1, min(72, int(hours))),
-            "count": len(items),
-            "items": items,
-            "warnings": payload.get("warnings", []),
-            "source_status": payload.get("source_status", {}),
-        }
+        bounded_hours = self._bound_hot_events_hours(hours)
+        bounded_limit = self._bound_hot_events_limit(limit)
+        if refresh:
+            try:
+                return self.refresh_hot_events_snapshot(hours=bounded_hours, limit=bounded_limit)
+            except RuntimeError as exc:
+                fallback = self._get_hot_events_response(
+                    hours=bounded_hours,
+                    limit=bounded_limit,
+                    warnings=[f"hot events refresh failed: {exc}"],
+                    last_refresh_error=str(exc),
+                    force_stale=True,
+                )
+                if not fallback["items"]:
+                    raise
+                return fallback
+        return self._get_hot_events_response(hours=bounded_hours, limit=bounded_limit)
+
+    def refresh_hot_events_snapshot(self, *, hours: int = 24, limit: int = 200) -> dict[str, Any]:
+        bounded_hours = self._bound_hot_events_hours(hours)
+        bounded_limit = self._bound_hot_events_limit(limit)
+        with self._hot_events_refresh_lock:
+            refreshed_at = self._utc_now_iso()
+            payload = self.hot_events_service.list_hot_events(hours=bounded_hours, limit=200, refresh=True)
+            items_value = payload.get("items")
+            items = [item for item in items_value if isinstance(item, dict)] if isinstance(items_value, list) else []
+            stored_count = self.database.upsert_hot_events(items, refreshed_at)
+            log_level = logging.WARNING if payload.get("warnings") else logging.INFO
+            log_event(
+                logger,
+                log_level,
+                "hot_events_refresh_persisted",
+                hours=bounded_hours,
+                stored_count=stored_count,
+                warnings=payload.get("warnings", []),
+                source_status=payload.get("source_status", {}),
+            )
+        return self._get_hot_events_response(
+            hours=bounded_hours,
+            limit=bounded_limit,
+            warnings=self._coerce_string_list(payload.get("warnings")),
+            source_status=self._coerce_dict(payload.get("source_status")),
+            last_refreshed_at=refreshed_at,
+            last_attempted_at=refreshed_at,
+            force_stale=False,
+        )
 
     def generate_conversation_content(self, payload: ConversationGenerateRequest, request_id: str) -> dict[str, Any]:
         selected_event = self._resolve_conversation_event(payload)
@@ -440,12 +478,120 @@ class ContentOrchestrator:
         if not event_id:
             raise ValueError("event_id or event_payload is required")
 
-        events_payload = self.hot_events_service.list_hot_events(hours=24, limit=200, refresh=False)
-        events = events_payload.get("items", [])
-        for item in events:
-            if str(item.get("id") or "") == event_id:
-                return item
-        raise LookupError("Selected hot event was not found")
+        event = self.database.get_hot_event_by_id(event_id, published_since=self._hot_events_cutoff_iso(24))
+        if event is None:
+            raise LookupError("Selected hot event was not found")
+        return self._public_hot_event_item(event)
+
+    @staticmethod
+    def _bound_hot_events_hours(hours: int) -> int:
+        return max(1, min(72, int(hours)))
+
+    @staticmethod
+    def _bound_hot_events_limit(limit: int) -> int:
+        return max(1, min(200, int(limit)))
+
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+    @staticmethod
+    def _parse_iso_datetime(value: Any) -> datetime | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+
+        normalized = text.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+
+    def _hot_events_cutoff_iso(self, hours: int) -> str:
+        return (datetime.now(UTC).replace(microsecond=0) - self._hours_delta(hours)).isoformat()
+
+    def _get_hot_events_response(
+        self,
+        *,
+        hours: int,
+        limit: int,
+        warnings: list[str] | None = None,
+        source_status: dict[str, Any] | None = None,
+        last_refresh_error: str = "",
+        last_refreshed_at: str | None = None,
+        last_attempted_at: str | None = None,
+        force_stale: bool | None = None,
+    ) -> dict[str, Any]:
+        items = self.database.list_hot_events(
+            published_since=self._hot_events_cutoff_iso(hours),
+            limit=self._bound_hot_events_limit(limit),
+        )
+        latest_refresh_time = str(last_refreshed_at or self.database.get_latest_hot_events_refresh_time() or "")
+        response_items = [self._public_hot_event_item(item) for item in items]
+        refresh_interval_seconds = max(1, int(self.settings.hot_events_refresh_interval_seconds))
+        is_stale = (
+            bool(force_stale)
+            if force_stale is not None
+            else self._is_hot_events_refresh_stale(latest_refresh_time, refresh_interval_seconds)
+        )
+
+        return {
+            "hours": hours,
+            "count": len(response_items),
+            "items": response_items,
+            "warnings": self._coerce_string_list(warnings),
+            "source_status": self._coerce_dict(source_status),
+            "last_refreshed_at": latest_refresh_time,
+            "last_attempted_at": str(last_attempted_at or latest_refresh_time),
+            "refresh_interval_seconds": refresh_interval_seconds,
+            "is_stale": is_stale,
+            "last_refresh_error": str(last_refresh_error or ""),
+        }
+
+    def _is_hot_events_refresh_stale(self, last_refreshed_at: Any, refresh_interval_seconds: int) -> bool:
+        refreshed_at = self._parse_iso_datetime(last_refreshed_at)
+        if refreshed_at is None:
+            return False
+        age_seconds = (datetime.now(UTC) - refreshed_at).total_seconds()
+        return age_seconds > max(1, int(refresh_interval_seconds))
+
+    @staticmethod
+    def _coerce_string_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item or "").strip() for item in value if str(item or "").strip()]
+
+    @staticmethod
+    def _coerce_dict(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        return value
+
+    @staticmethod
+    def _public_hot_event_item(item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": str(item.get("id") or ""),
+            "title": str(item.get("title") or ""),
+            "summary": str(item.get("summary") or ""),
+            "url": str(item.get("url") or ""),
+            "source": str(item.get("source") or ""),
+            "source_domain": str(item.get("source_domain") or ""),
+            "published_at": str(item.get("published_at") or ""),
+            "relative_age_hint": str(item.get("relative_age_hint") or ""),
+            "heat_score": float(item.get("heat_score") or 0.0),
+            "category": str(item.get("category") or ""),
+            "subcategory": str(item.get("subcategory") or ""),
+            "content_type": str(item.get("content_type") or "news"),
+            "author_handle": str(item.get("author_handle") or ""),
+        }
+
+    @staticmethod
+    def _hours_delta(hours: int) -> timedelta:
+        return timedelta(hours=max(1, int(hours)))
 
     def _resolve_topic(self, payload: ContentGenerateRequest) -> str:
         if payload.topic.strip():

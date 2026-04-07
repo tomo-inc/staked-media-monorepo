@@ -247,6 +247,9 @@ class FakeWebEnricher:
 
 
 class FakeContentOrchestrator:
+    def __init__(self) -> None:
+        self.hot_events_refresh_calls = 0
+
     def generate_content(self, payload, request_id: str) -> dict:
         return {
             "request_id": request_id,
@@ -339,7 +342,16 @@ class FakeContentOrchestrator:
                 "opennews": {"status": "ok", "count": len(items), "error": ""},
                 "opentwitter": {"status": "error", "count": 0, "error": "timeout"},
             },
+            "last_refreshed_at": "2026-04-07T10:00:00+00:00",
+            "last_attempted_at": "2026-04-07T10:00:00+00:00",
+            "refresh_interval_seconds": 3600,
+            "is_stale": False,
+            "last_refresh_error": "",
         }
+
+    def refresh_hot_events_snapshot(self, *, hours: int = 24) -> dict:
+        self.hot_events_refresh_calls += 1
+        return self.list_hot_events(hours=hours, limit=50, refresh=True)
 
     def generate_conversation_content(self, payload, request_id: str) -> dict:
         return {
@@ -769,6 +781,71 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(payload["warnings"], ["opentwitter unavailable: timeout"])
         self.assertEqual(payload["source_status"]["opennews"]["status"], "ok")
         self.assertEqual(payload["source_status"]["opentwitter"]["status"], "error")
+        self.assertEqual(payload["last_refreshed_at"], "2026-04-07T10:00:00+00:00")
+        self.assertEqual(payload["refresh_interval_seconds"], 3600)
+        self.assertFalse(payload["is_stale"])
+        self.assertEqual(payload["last_refresh_error"], "")
+
+    def test_content_hot_events_endpoint_returns_empty_payload_when_database_has_no_rows(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        try:
+            settings = Settings(
+                app_env="test",
+                database_url=f"sqlite:///{temp_dir.name}/mvp.db",
+                openai_api_key="test-key",
+                log_enable_file=False,
+            )
+            database = Database(settings.database_path)
+            database.init()
+            orchestrator = ContentOrchestrator(
+                settings=settings,
+                database=database,
+                llm=self.llm_client,  # type: ignore[arg-type]
+                web_enricher=FakeWebEnricher(),  # type: ignore[arg-type]
+            )
+            with TestClient(
+                create_app(
+                    settings,
+                    upstream_client=FakeUpstreamClient(),
+                    llm_client=self.llm_client,
+                    content_orchestrator=orchestrator,
+                )
+            ) as client:
+                response = client.get("/api/v1/content/hot-events?hours=24&limit=10&refresh=false")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["count"], 0)
+            self.assertEqual(payload["items"], [])
+            self.assertEqual(payload["warnings"], [])
+            self.assertEqual(payload["source_status"], {})
+        finally:
+            temp_dir.cleanup()
+
+    def test_create_app_runs_hot_events_refresh_once_on_startup_when_supported(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        try:
+            settings = Settings(
+                app_env="test",
+                database_url=f"sqlite:///{temp_dir.name}/mvp.db",
+                openai_api_key="test-key",
+                log_enable_file=False,
+            )
+            content_orchestrator = FakeContentOrchestrator()
+            with TestClient(
+                create_app(
+                    settings,
+                    upstream_client=FakeUpstreamClient(),
+                    llm_client=self.llm_client,
+                    content_orchestrator=content_orchestrator,  # type: ignore[arg-type]
+                )
+            ) as client:
+                response = client.get("/healthz")
+                self.assertEqual(response.status_code, 200)
+
+            self.assertEqual(content_orchestrator.hot_events_refresh_calls, 1)
+        finally:
+            temp_dir.cleanup()
 
     def test_conversation_generate_endpoint_returns_mode_b_drafts(self) -> None:
         ingest = self.client.post(

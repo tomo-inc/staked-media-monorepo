@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -46,6 +47,42 @@ def utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+def _run_hot_events_refresh_once(app: FastAPI, *, trigger: str) -> None:
+    refresh_hot_events_snapshot = getattr(app.state.content_orchestrator, "refresh_hot_events_snapshot", None)
+    if not callable(refresh_hot_events_snapshot):
+        return
+
+    try:
+        result = refresh_hot_events_snapshot(hours=24)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            format_log_event(
+                "hot_events_refresh_failed",
+                trigger=trigger,
+                hours=24,
+                error=str(exc),
+            )
+        )
+        return
+
+    log_event(
+        logger,
+        logging.INFO,
+        "hot_events_refresh_completed",
+        trigger=trigger,
+        hours=24,
+        count=int(result.get("count", 0)),
+        is_stale=bool(result.get("is_stale", False)),
+        last_refreshed_at=result.get("last_refreshed_at"),
+    )
+
+
+def _hot_events_refresh_scheduler_loop(app: FastAPI, stop_event: threading.Event) -> None:
+    interval_seconds = max(1, int(app.state.settings.hot_events_refresh_interval_seconds))
+    while not stop_event.wait(interval_seconds):
+        _run_hot_events_refresh_once(app, trigger="scheduler")
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -61,6 +98,18 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.database.init()
+        stop_event = threading.Event()
+        scheduler_thread: threading.Thread | None = None
+        refresh_hot_events_snapshot = getattr(app.state.content_orchestrator, "refresh_hot_events_snapshot", None)
+        if callable(refresh_hot_events_snapshot):
+            _run_hot_events_refresh_once(app, trigger="startup")
+            scheduler_thread = threading.Thread(
+                target=_hot_events_refresh_scheduler_loop,
+                args=(app, stop_event),
+                daemon=True,
+                name="hot-events-refresh-scheduler",
+            )
+            scheduler_thread.start()
         log_event(
             logger,
             logging.INFO,
@@ -72,8 +121,13 @@ def create_app(
             log_level=settings.log_level,
             log_file_enabled=settings.log_enable_file,
             log_file_path=settings.log_file_path if settings.log_enable_file else None,
+            hot_events_refresh_interval_seconds=settings.hot_events_refresh_interval_seconds,
+            hot_events_scheduler_enabled=callable(refresh_hot_events_snapshot),
         )
         yield
+        stop_event.set()
+        if scheduler_thread is not None:
+            scheduler_thread.join(timeout=1.0)
 
     app = FastAPI(title="Staked Media MVP", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
@@ -430,6 +484,8 @@ def create_app(
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
         try:
             result = orchestrator.list_hot_events(hours=hours, limit=limit, refresh=refresh)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return HotEventsResponse(**result)

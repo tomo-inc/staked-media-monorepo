@@ -72,6 +72,38 @@ CREATE TABLE IF NOT EXISTS draft_requests (
     FOREIGN KEY(persona_snapshot_id) REFERENCES persona_snapshots(id)
 );
 
+CREATE TABLE IF NOT EXISTS hot_events (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    source_domain TEXT NOT NULL DEFAULT '',
+    published_at TEXT NOT NULL DEFAULT '',
+    relative_age_hint TEXT NOT NULL DEFAULT '',
+    heat_score REAL NOT NULL DEFAULT 0.0,
+    category TEXT NOT NULL DEFAULT '',
+    subcategory TEXT NOT NULL DEFAULT '',
+    content_type TEXT NOT NULL DEFAULT 'news',
+    author_handle TEXT NOT NULL DEFAULT '',
+    last_refreshed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    raw_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hot_events_published_at
+ON hot_events(published_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_hot_events_heat_score
+ON hot_events(heat_score DESC);
+
+CREATE INDEX IF NOT EXISTS idx_hot_events_content_type
+ON hot_events(content_type);
+
+CREATE INDEX IF NOT EXISTS idx_hot_events_last_refreshed_at
+ON hot_events(last_refreshed_at DESC);
+
 CREATE TABLE IF NOT EXISTS allowed_usernames (
     username TEXT PRIMARY KEY
 );
@@ -93,6 +125,7 @@ class Database:
     def init(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
+            connection.execute("DROP TABLE IF EXISTS hot_events_snapshots")
             connection.executescript(SCHEMA)
             connection.commit()
 
@@ -260,6 +293,114 @@ class Database:
             connection.commit()
             return cursor.lastrowid or 0
 
+    def upsert_hot_events(self, hot_events: Iterable[dict[str, Any]], refreshed_at: str) -> int:
+        count = 0
+        with self.connect() as connection:
+            for item in hot_events:
+                normalized = _normalize_hot_event(item)
+                connection.execute(
+                    """
+                    INSERT INTO hot_events (
+                        id,
+                        title,
+                        summary,
+                        url,
+                        source,
+                        source_domain,
+                        published_at,
+                        relative_age_hint,
+                        heat_score,
+                        category,
+                        subcategory,
+                        content_type,
+                        author_handle,
+                        last_refreshed_at,
+                        created_at,
+                        updated_at,
+                        raw_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        title=excluded.title,
+                        summary=excluded.summary,
+                        url=excluded.url,
+                        source=excluded.source,
+                        source_domain=excluded.source_domain,
+                        published_at=excluded.published_at,
+                        relative_age_hint=excluded.relative_age_hint,
+                        heat_score=excluded.heat_score,
+                        category=excluded.category,
+                        subcategory=excluded.subcategory,
+                        content_type=excluded.content_type,
+                        author_handle=excluded.author_handle,
+                        last_refreshed_at=excluded.last_refreshed_at,
+                        updated_at=excluded.updated_at,
+                        raw_json=excluded.raw_json
+                    """,
+                    (
+                        normalized["id"],
+                        normalized["title"],
+                        normalized["summary"],
+                        normalized["url"],
+                        normalized["source"],
+                        normalized["source_domain"],
+                        normalized["published_at"],
+                        normalized["relative_age_hint"],
+                        normalized["heat_score"],
+                        normalized["category"],
+                        normalized["subcategory"],
+                        normalized["content_type"],
+                        normalized["author_handle"],
+                        refreshed_at,
+                        refreshed_at,
+                        refreshed_at,
+                        json.dumps(item, ensure_ascii=True),
+                    ),
+                )
+                count += 1
+            connection.commit()
+        return count
+
+    def list_hot_events(self, *, published_since: str, limit: int | None = None) -> list[dict[str, Any]]:
+        query = """
+            SELECT *
+            FROM hot_events
+            WHERE published_at >= ?
+            ORDER BY heat_score DESC, published_at DESC, id ASC
+        """
+        params: list[Any] = [published_since]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(int(limit))
+
+        with self.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [_row_to_hot_event(row) for row in rows]
+
+    def get_hot_event_by_id(self, event_id: str, *, published_since: str | None = None) -> dict[str, Any] | None:
+        query = "SELECT * FROM hot_events WHERE id = ?"
+        params: list[Any] = [str(event_id or "").strip()]
+        if published_since is not None:
+            query += " AND published_at >= ?"
+            params.append(published_since)
+        query += " LIMIT 1"
+        with self.connect() as connection:
+            row = connection.execute(query, params).fetchone()
+        if row is None:
+            return None
+        return _row_to_hot_event(row)
+
+    def get_latest_hot_events_refresh_time(self) -> str:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT MAX(last_refreshed_at) AS last_refreshed_at
+                FROM hot_events
+                """
+            ).fetchone()
+        if row is None:
+            return ""
+        return str(row["last_refreshed_at"] or "")
+
     def list_allowed_usernames(self) -> list[str]:
         with self.connect() as connection:
             rows = connection.execute(
@@ -377,3 +518,52 @@ def _row_to_persona_snapshot(row: sqlite3.Row) -> dict[str, Any]:
     payload["representative_tweets"] = json.loads(payload.pop("representative_tweets_json"))
     payload["persona"] = json.loads(payload.pop("persona_json"))
     return payload
+
+
+def _row_to_hot_event(row: sqlite3.Row) -> dict[str, Any]:
+    payload = dict(row)
+    payload["heat_score"] = float(payload.get("heat_score") or 0.0)
+    return {
+        "id": str(payload.get("id") or ""),
+        "title": str(payload.get("title") or ""),
+        "summary": str(payload.get("summary") or ""),
+        "url": str(payload.get("url") or ""),
+        "source": str(payload.get("source") or ""),
+        "source_domain": str(payload.get("source_domain") or ""),
+        "published_at": str(payload.get("published_at") or ""),
+        "relative_age_hint": str(payload.get("relative_age_hint") or ""),
+        "heat_score": payload["heat_score"],
+        "category": str(payload.get("category") or ""),
+        "subcategory": str(payload.get("subcategory") or ""),
+        "content_type": str(payload.get("content_type") or "news"),
+        "author_handle": str(payload.get("author_handle") or ""),
+        "last_refreshed_at": str(payload.get("last_refreshed_at") or ""),
+        "created_at": str(payload.get("created_at") or ""),
+        "updated_at": str(payload.get("updated_at") or ""),
+        "raw_json": _safe_json_loads(payload.get("raw_json")),
+    }
+
+
+def _normalize_hot_event(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(item.get("id") or "").strip(),
+        "title": str(item.get("title") or "").strip(),
+        "summary": str(item.get("summary") or "").strip(),
+        "url": str(item.get("url") or "").strip(),
+        "source": str(item.get("source") or "").strip(),
+        "source_domain": str(item.get("source_domain") or "").strip(),
+        "published_at": str(item.get("published_at") or "").strip(),
+        "relative_age_hint": str(item.get("relative_age_hint") or "").strip(),
+        "heat_score": float(item.get("heat_score") or 0.0),
+        "category": str(item.get("category") or "").strip(),
+        "subcategory": str(item.get("subcategory") or "").strip(),
+        "content_type": str(item.get("content_type") or "news").strip() or "news",
+        "author_handle": str(item.get("author_handle") or "").strip(),
+    }
+
+
+def _safe_json_loads(value: Any) -> Any:
+    try:
+        return json.loads(str(value or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}

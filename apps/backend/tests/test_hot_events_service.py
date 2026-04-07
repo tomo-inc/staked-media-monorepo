@@ -216,6 +216,113 @@ class HotEventsServiceTestCase(unittest.TestCase):
         self.assertEqual(item["source_domain"], "x.com")
         self.assertGreater(item["heat_score"], 0)
 
+    def test_opentwitter_404_falls_back_to_legacy_search_without_warning(self) -> None:
+        recent_tweet_ts = (datetime.now(UTC).replace(microsecond=0) - timedelta(hours=2)).strftime(
+            "%a %b %d %H:%M:%S +0000 %Y"
+        )
+
+        def fake_get(url: str, *args, **kwargs):
+            if url.endswith("/open/news_type"):
+                return _FakeResponse({"success": True, "data": []})
+            if url.endswith("/open/tweets_type"):
+                return _FakeResponse({"success": True, "data": []})
+            raise AssertionError(f"Unexpected GET URL: {url}")
+
+        def fake_post(url: str, *args, **kwargs):
+            if url.endswith("/open/news_search"):
+                return _FakeResponse({"success": True, "data": []})
+            if url.endswith("/open/tweets_search"):
+                return _FakeResponse({}, status_code=404)
+            if url.endswith("/open/twitter_search"):
+                return _FakeResponse(
+                    {
+                        "success": True,
+                        "data": [
+                            {
+                                "id": "tweet-legacy-1",
+                                "text": "Legacy fallback tweet",
+                                "createdAt": recent_tweet_ts,
+                                "retweetCount": 12,
+                                "favoriteCount": 34,
+                                "replyCount": 5,
+                                "quoteCount": 1,
+                                "userScreenName": "legacy",
+                                "userName": "Legacy",
+                                "userFollowers": 1200,
+                            }
+                        ],
+                    }
+                )
+            raise AssertionError(f"Unexpected POST URL: {url}")
+
+        with (
+            patch("app.hot_events.requests.get", side_effect=fake_get),
+            patch("app.hot_events.requests.post", side_effect=fake_post),
+        ):
+            payload = self.service.list_hot_events(hours=24, limit=10, refresh=True)
+
+        self.assertEqual(len(payload["items"]), 1)
+        self.assertEqual(payload["items"][0]["content_type"], "tweet")
+        self.assertEqual(payload["source_status"]["opennews"]["status"], "ok")
+        self.assertEqual(payload["source_status"]["opentwitter"]["status"], "ok")
+        self.assertEqual(payload["warnings"], [])
+
+    def test_opentwitter_failure_uses_generic_error_when_both_search_paths_fail(self) -> None:
+        def fake_get(url: str, *args, **kwargs):
+            if url.endswith("/open/news_type"):
+                return _FakeResponse({"success": True, "data": []})
+            if url.endswith("/open/tweets_type"):
+                return _FakeResponse({"success": True, "data": []})
+            raise AssertionError(f"Unexpected GET URL: {url}")
+
+        def fake_post(url: str, *args, **kwargs):
+            if url.endswith("/open/news_search"):
+                return _FakeResponse({"success": True, "data": []})
+            if url.endswith("/open/tweets_search") or url.endswith("/open/twitter_search"):
+                return _FakeResponse({}, status_code=404)
+            raise AssertionError(f"Unexpected POST URL: {url}")
+
+        with (
+            patch("app.hot_events.requests.get", side_effect=fake_get),
+            patch("app.hot_events.requests.post", side_effect=fake_post),
+        ):
+            with self.assertRaises(RuntimeError) as context:
+                self.service.list_hot_events(hours=24, limit=10, refresh=True)
+
+        self.assertEqual(
+            str(context.exception),
+            f"opentwitter unavailable: {self.service.OPENTWITTER_UNAVAILABLE_ERROR}",
+        )
+
+    def test_opentwitter_invalid_legacy_payload_uses_generic_error(self) -> None:
+        def fake_get(url: str, *args, **kwargs):
+            if url.endswith("/open/news_type"):
+                return _FakeResponse({"success": True, "data": []})
+            if url.endswith("/open/tweets_type"):
+                return _FakeResponse({"success": True, "data": []})
+            raise AssertionError(f"Unexpected GET URL: {url}")
+
+        def fake_post(url: str, *args, **kwargs):
+            if url.endswith("/open/news_search"):
+                return _FakeResponse({"success": True, "data": []})
+            if url.endswith("/open/tweets_search"):
+                return _FakeResponse({}, status_code=404)
+            if url.endswith("/open/twitter_search"):
+                return _FakeResponse({"success": True, "data": {"items": []}})
+            raise AssertionError(f"Unexpected POST URL: {url}")
+
+        with (
+            patch("app.hot_events.requests.get", side_effect=fake_get),
+            patch("app.hot_events.requests.post", side_effect=fake_post),
+        ):
+            with self.assertRaises(RuntimeError) as context:
+                self.service.list_hot_events(hours=24, limit=10, refresh=True)
+
+        self.assertEqual(
+            str(context.exception),
+            f"opentwitter unavailable: {self.service.OPENTWITTER_UNAVAILABLE_ERROR}",
+        )
+
     def test_source_weights_can_promote_tweets_over_news(self) -> None:
         now_utc = datetime.now(UTC).replace(microsecond=0)
         recent_news_ts = (now_utc - timedelta(hours=2)).isoformat()

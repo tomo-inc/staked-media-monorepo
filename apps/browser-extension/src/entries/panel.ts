@@ -77,6 +77,11 @@ interface PanelHotEventsPayload {
 	count?: number;
 	items?: PanelHotEventRecord[];
 	warnings?: string[];
+	last_refreshed_at?: string;
+	last_attempted_at?: string;
+	refresh_interval_seconds?: number;
+	is_stale?: boolean;
+	last_refresh_error?: string;
 	source_status?: Record<
 		string,
 		{
@@ -160,6 +165,11 @@ interface PanelState {
 	hotEvents: PanelHotEventRecord[];
 	hotEventsWarnings: string[];
 	hotEventsFetchedAt: string;
+	hotEventsLastRefreshedAt: string;
+	hotEventsLastAttemptedAt: string;
+	hotEventsRefreshIntervalSeconds: number;
+	hotEventsIsStale: boolean;
+	hotEventsLastRefreshError: string;
 	hotEventsLoading: boolean;
 	selectedHotEventId: string;
 	conversationGenerated: StakedMediaDraftSource | null;
@@ -250,6 +260,11 @@ interface PanelUi {
 		hotEvents: [],
 		hotEventsWarnings: [],
 		hotEventsFetchedAt: "",
+		hotEventsLastRefreshedAt: "",
+		hotEventsLastAttemptedAt: "",
+		hotEventsRefreshIntervalSeconds: 0,
+		hotEventsIsStale: false,
+		hotEventsLastRefreshError: "",
 		hotEventsLoading: false,
 		selectedHotEventId: "",
 		conversationGenerated: null,
@@ -1062,6 +1077,21 @@ interface PanelUi {
 				? response.result?.warnings.map((item) => String(item || ""))
 				: [];
 			STATE.hotEventsFetchedAt = new Date().toISOString();
+			STATE.hotEventsLastRefreshedAt = String(
+				response.result?.last_refreshed_at || "",
+			).trim();
+			STATE.hotEventsLastAttemptedAt = String(
+				response.result?.last_attempted_at || "",
+			).trim();
+			STATE.hotEventsRefreshIntervalSeconds = Number.isFinite(
+				Number(response.result?.refresh_interval_seconds),
+			)
+				? Number(response.result?.refresh_interval_seconds)
+				: 0;
+			STATE.hotEventsIsStale = Boolean(response.result?.is_stale);
+			STATE.hotEventsLastRefreshError = String(
+				response.result?.last_refresh_error || "",
+			).trim();
 			if (
 				STATE.selectedHotEventId &&
 				!STATE.hotEvents.find(
@@ -1093,19 +1123,23 @@ interface PanelUi {
 		}
 		if (!STATE.hotEvents.length) {
 			const warningHtml = renderHotWarnings();
-			ui.hotEventsMeta.innerHTML = warningHtml;
+			const stateNoticeHtml = renderHotEventsStateNotice();
+			ui.hotEventsMeta.innerHTML = `${stateNoticeHtml}${warningHtml}`;
 			ui.hotEvents.innerHTML =
 				'<div class="smc-empty">No hot events available right now.</div>';
 			return;
 		}
-		const fetchedAtLabel = STATE.hotEventsFetchedAt
-			? `Fetched at ${new Date(STATE.hotEventsFetchedAt).toLocaleTimeString()}`
+		const refreshedAtLabel = STATE.hotEventsLastRefreshedAt
+			? `Snapshot updated ${formatHotEventsTimestamp(
+					STATE.hotEventsLastRefreshedAt,
+				)}`
 			: "";
 		const summaryLabel = escapeHtml(
-			`${STATE.hotEvents.length} events in last 24h. ${fetchedAtLabel}`.trim(),
+			`${STATE.hotEvents.length} events in last 24h. ${refreshedAtLabel}`.trim(),
 		);
 		const warningHtml = renderHotWarnings();
-		ui.hotEventsMeta.innerHTML = `<div>${summaryLabel}</div>${warningHtml}`;
+		const stateNoticeHtml = renderHotEventsStateNotice();
+		ui.hotEventsMeta.innerHTML = `<div>${summaryLabel}</div>${stateNoticeHtml}${warningHtml}`;
 		ui.hotEvents.innerHTML = `
       <div class="smc-hot-carousel-shell">
         <div class="smc-hot-carousel-track" data-slot="hot-events-track">
@@ -1299,6 +1333,36 @@ interface PanelUi {
 		return `<div class="smc-hot-warning">${body}</div>`;
 	}
 
+	function renderHotEventsStateNotice(): string {
+		if (!STATE.hotEventsIsStale && !STATE.hotEventsLastRefreshError) {
+			return "";
+		}
+		const parts: string[] = [];
+		if (STATE.hotEventsIsStale) {
+			if (STATE.hotEventsLastRefreshedAt) {
+				parts.push(
+					`Using cached snapshot from ${formatHotEventsTimestamp(
+						STATE.hotEventsLastRefreshedAt,
+					)}.`,
+				);
+			} else {
+				parts.push("Using the latest cached snapshot.");
+			}
+		}
+		if (STATE.hotEventsLastRefreshError) {
+			const attemptedAt = STATE.hotEventsLastAttemptedAt
+				? ` Latest refresh attempt at ${formatHotEventsTimestamp(
+						STATE.hotEventsLastAttemptedAt,
+					)} failed.`
+				: " Latest refresh attempt failed.";
+			parts.push(`${attemptedAt} ${STATE.hotEventsLastRefreshError}`.trim());
+		}
+		if (!parts.length) {
+			return "";
+		}
+		return `<div class="smc-hot-warning">${escapeHtml(parts.join(" "))}</div>`;
+	}
+
 	function hasFreshHotEventsCache(): boolean {
 		if (!STATE.hotEvents.length || !STATE.hotEventsFetchedAt) {
 			return false;
@@ -1308,6 +1372,14 @@ interface PanelUi {
 			return false;
 		}
 		return Date.now() - fetchedAt < HOT_EVENTS_CACHE_TTL_MS;
+	}
+
+	function formatHotEventsTimestamp(value: string): string {
+		const parsed = Date.parse(value);
+		if (!Number.isFinite(parsed)) {
+			return value;
+		}
+		return new Date(parsed).toLocaleTimeString();
 	}
 
 	function deriveSourceDomain(event: PanelHotEventRecord): string {
@@ -2059,6 +2131,9 @@ interface PanelUi {
 				return "Profile not found in the backend. Run ingest first.";
 			}
 			if (path.startsWith("/api/v1/content/hot-events")) {
+				if (detailText.includes("not available yet")) {
+					return "Hot events snapshot is not ready yet. Refresh once or wait for the scheduler.";
+				}
 				return `Configured backend does not expose hot-events. Start or update backend at ${configuredBaseUrl}.`;
 			}
 			if (path.startsWith("/api/v1/conversation/generate")) {
