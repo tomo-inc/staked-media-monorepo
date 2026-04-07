@@ -438,7 +438,7 @@ class HotEventsService:
     @staticmethod
     def _build_event_id(*, category: str, subcategory: str, title: str, published_at: str) -> str:
         seed = f"{category}|{subcategory}|{title}|{published_at}"
-        return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
+        return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
     @staticmethod
     def _normalize_published_at(value: Any) -> str:

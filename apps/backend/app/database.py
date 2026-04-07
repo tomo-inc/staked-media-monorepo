@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS allowed_usernames (
 
 
 class _ClosingConnection(sqlite3.Connection):
-    def __exit__(self, exc_type, exc_value, traceback):  # type: ignore[override]
+    def __exit__(self, exc_type, exc_value, traceback):
         try:
             return super().__exit__(exc_type, exc_value, traceback)
         finally:

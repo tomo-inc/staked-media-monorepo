@@ -4,8 +4,7 @@ const {
 	resolveLocale,
 	sendRuntimeMessage,
 	t,
-} =
-	window.StakedMediaExtensionShared;
+} = window.StakedMediaExtensionShared;
 const REMOTE_BACKEND_BASE_URL = "https://api.sayviner.top:8443";
 
 type OptionsPage = "home" | "api";
@@ -135,7 +134,10 @@ async function init() {
 }
 
 function getResolvedLocale(): StakedMediaLocale {
-	return resolveLocale(state.config?.language || DEFAULTS.language, navigator.language);
+	return resolveLocale(
+		state.config?.language || DEFAULTS.language,
+		navigator.language,
+	);
 }
 
 function tr(key: string): string {
@@ -152,8 +154,11 @@ async function enforceRemoteBackendConfig(): Promise<void> {
 	if (!state.config) {
 		return;
 	}
-	const currentBackendBaseUrl = String(state.config.backendBaseUrl || "").trim();
-	const needsBackendBaseUrlSync = currentBackendBaseUrl !== REMOTE_BACKEND_BASE_URL;
+	const currentBackendBaseUrl = String(
+		state.config.backendBaseUrl || "",
+	).trim();
+	const needsBackendBaseUrlSync =
+		currentBackendBaseUrl !== REMOTE_BACKEND_BASE_URL;
 	const needsApiModeSync = state.config.apiMode !== "drafts";
 	if (!needsBackendBaseUrlSync && !needsApiModeSync) {
 		return;
@@ -229,10 +234,7 @@ function applyLocalizedContent(): void {
 	const selectedLanguage = state.config?.language || DEFAULTS.language;
 	const languageOptions = listLanguageOptions(locale);
 	fields.language.innerHTML = languageOptions
-		.map(
-			(option) =>
-				`<option value="${option.value}">${option.label}</option>`,
-		)
+		.map((option) => `<option value="${option.value}">${option.label}</option>`)
 		.join("");
 	fields.language.value = selectedLanguage;
 }
@@ -296,7 +298,10 @@ async function saveLanguage(language: StakedMediaLanguageMode): Promise<void> {
 async function saveApiMode(apiMode: StakedMediaApiMode): Promise<void> {
 	if (apiMode !== "drafts") {
 		applyConfig(state.config || DEFAULTS, { syncApiForm: true });
-		setStatus("Only Drafts API mode is enabled for this remote API test phase.", "warn");
+		setStatus(
+			"Only Drafts API mode is enabled for this remote API test phase.",
+			"warn",
+		);
 		return;
 	}
 	try {

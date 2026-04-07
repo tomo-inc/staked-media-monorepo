@@ -586,7 +586,10 @@ test("background get_hot_events calls hot-events endpoint with refresh query", a
 			count: number;
 			items: Array<{ id: string; title: string }>;
 			warnings: string[];
-			source_status: Record<string, { status: string; count: number; error: string }>;
+			source_status: Record<
+				string,
+				{ status: string; count: number; error: string }
+			>;
 		};
 	}>(harness.listeners.onMessage, {
 		type: "get_hot_events",
@@ -740,13 +743,25 @@ test("background conversation_generate rebuilds local persona on 409 and retries
 
 	assert.equal(response.ok, true);
 	assert.equal(response.result.mode, "B");
-	assert.equal(response.result.drafts[0]?.text, "Conversation draft after rebuild");
+	assert.equal(
+		response.result.drafts[0]?.text,
+		"Conversation draft after rebuild",
+	);
 	assert.equal(conversationAttempts, 2);
 	assert.equal(rebuildAttempts, 1);
-	assert.match(seenUrls[0], /^http:\/\/127\.0\.0\.1:8000\/api\/v1\/conversation\/generate$/);
+	assert.match(
+		seenUrls[0],
+		/^http:\/\/127\.0\.0\.1:8000\/api\/v1\/conversation\/generate$/,
+	);
 	assert.match(seenUrls[1], /^http:\/\/127\.0\.0\.1:8000\/openapi\.json$/);
-	assert.match(seenUrls[2], /^http:\/\/127\.0\.0\.1:8000\/api\/v1\/profiles\/rebuild-persona$/);
-	assert.match(seenUrls[3], /^http:\/\/127\.0\.0\.1:8000\/api\/v1\/conversation\/generate$/);
+	assert.match(
+		seenUrls[2],
+		/^http:\/\/127\.0\.0\.1:8000\/api\/v1\/profiles\/rebuild-persona$/,
+	);
+	assert.match(
+		seenUrls[3],
+		/^http:\/\/127\.0\.0\.1:8000\/api\/v1\/conversation\/generate$/,
+	);
 	assert.equal(seenBodies[2]?.username, "lin");
 	assert.equal(harness.storage.defaultUsername, "lin");
 });
@@ -800,7 +815,10 @@ test("background conversation_generate surfaces rebuild error when persona recov
 	assert.equal(response.ok, false);
 	assert.equal(response.error.status, 409);
 	assert.equal(response.error.path, "/api/v1/profiles/rebuild-persona");
-	assert.equal(response.error.message, "No tweets found. Run /api/v1/profiles/ingest first");
+	assert.equal(
+		response.error.message,
+		"No tweets found. Run /api/v1/profiles/ingest first",
+	);
 	assert.equal(conversationAttempts, 1);
 	assert.equal(rebuildAttempts, 1);
 });

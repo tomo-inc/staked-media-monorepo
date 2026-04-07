@@ -524,7 +524,11 @@ interface PanelUi {
 				panel.getAttribute("data-tab-panel") === nextTab,
 			);
 		});
-		if (nextTab === "conversation" && !STATE.hotEventsLoading && STATE.hotEvents.length === 0) {
+		if (
+			nextTab === "conversation" &&
+			!STATE.hotEventsLoading &&
+			STATE.hotEvents.length === 0
+		) {
 			void loadHotEvents(false);
 		}
 		if (nextTab === "conversation") {
@@ -640,7 +644,8 @@ interface PanelUi {
 	}
 
 	function getResolvedLocale(): StakedMediaLocale {
-		const languageSetting = STATE.config?.language || SETTINGS_DEFAULTS.language;
+		const languageSetting =
+			STATE.config?.language || SETTINGS_DEFAULTS.language;
 		return resolveLocale(languageSetting, navigator.language);
 	}
 
@@ -678,7 +683,8 @@ interface PanelUi {
 			themeSystemOption.textContent = t("theme.system", locale);
 		}
 
-		const languageSetting = STATE.config?.language || SETTINGS_DEFAULTS.language;
+		const languageSetting =
+			STATE.config?.language || SETTINGS_DEFAULTS.language;
 		const languageOptions = listLanguageOptions(locale);
 		ui.sLanguage.innerHTML = languageOptions
 			.map(
@@ -693,8 +699,11 @@ interface PanelUi {
 		if (!STATE.config) {
 			return;
 		}
-		const currentBackendBaseUrl = String(STATE.config.backendBaseUrl || "").trim();
-		const needsBackendBaseUrlSync = currentBackendBaseUrl !== REMOTE_BACKEND_BASE_URL;
+		const currentBackendBaseUrl = String(
+			STATE.config.backendBaseUrl || "",
+		).trim();
+		const needsBackendBaseUrlSync =
+			currentBackendBaseUrl !== REMOTE_BACKEND_BASE_URL;
 		const needsApiModeSync = STATE.config.apiMode !== "drafts";
 		if (!needsBackendBaseUrlSync && !needsApiModeSync) {
 			return;
@@ -734,7 +743,9 @@ interface PanelUi {
 		}
 	}
 
-	async function saveLanguage(language: StakedMediaLanguageMode): Promise<void> {
+	async function saveLanguage(
+		language: StakedMediaLanguageMode,
+	): Promise<void> {
 		try {
 			const response = await sendRuntimeMessage<PanelConfigResponse>({
 				type: "save_config",
@@ -1078,13 +1089,15 @@ interface PanelUi {
 		}
 		if (STATE.hotEventsLoading) {
 			ui.hotEventsMeta.innerHTML = "Loading 24h hot events...";
-			ui.hotEvents.innerHTML = '<div class="smc-empty">Loading hot events...</div>';
+			ui.hotEvents.innerHTML =
+				'<div class="smc-empty">Loading hot events...</div>';
 			return;
 		}
 		if (!STATE.hotEvents.length) {
 			const warningHtml = renderHotWarnings();
 			ui.hotEventsMeta.innerHTML = warningHtml;
-			ui.hotEvents.innerHTML = '<div class="smc-empty">No hot events available right now.</div>';
+			ui.hotEvents.innerHTML =
+				'<div class="smc-empty">No hot events available right now.</div>';
 			return;
 		}
 		const fetchedAtLabel = STATE.hotEventsFetchedAt
@@ -1332,7 +1345,9 @@ interface PanelUi {
 		return String(event?.id ?? "").trim();
 	}
 
-	function normalizeHotEventRecord(event: PanelHotEventRecord): PanelHotEventRecord {
+	function normalizeHotEventRecord(
+		event: PanelHotEventRecord,
+	): PanelHotEventRecord {
 		return {
 			...event,
 			id: getHotEventId(event),
@@ -1340,7 +1355,10 @@ interface PanelUi {
 		};
 	}
 
-	function formatRelativeAge(publishedAt: string | undefined, fallbackHint: string | undefined): string {
+	function formatRelativeAge(
+		publishedAt: string | undefined,
+		fallbackHint: string | undefined,
+	): string {
 		const timestamp = Date.parse(String(publishedAt || ""));
 		if (!Number.isFinite(timestamp)) {
 			return String(fallbackHint || "unknown");
@@ -1406,7 +1424,9 @@ interface PanelUi {
 				payload,
 			});
 			STATE.conversationGenerated = response.result;
-			STATE.lastConversationDurationMs = Math.round(performance.now() - startedAt);
+			STATE.lastConversationDurationMs = Math.round(
+				performance.now() - startedAt,
+			);
 			const draftCount = extractDrafts(STATE.conversationGenerated).length;
 			if (!draftCount) {
 				STATE.lastConversationDurationMs = null;
@@ -1475,7 +1495,9 @@ interface PanelUi {
 			.replace(/\s+/g, " ")
 			.trim();
 		const summary =
-			rawSummary.length > 260 ? `${rawSummary.slice(0, 260).trim()}...` : rawSummary;
+			rawSummary.length > 260
+				? `${rawSummary.slice(0, 260).trim()}...`
+				: rawSummary;
 		const focus = [title, summary].filter(Boolean).join(" ");
 		if (!focus && !comment) {
 			return "";
@@ -1492,7 +1514,9 @@ interface PanelUi {
 	}
 
 	function getGeneratedConversationConclusion(): string {
-		const drafts = extractDrafts(STATE.conversationGenerated) as PanelDraftLike[];
+		const drafts = extractDrafts(
+			STATE.conversationGenerated,
+		) as PanelDraftLike[];
 		return getDraftText(drafts, 0).trim();
 	}
 
@@ -2049,7 +2073,10 @@ interface PanelUi {
 			}
 			return "Backend endpoint returned 404. Check API Base URL and backend version.";
 		}
-		if (runtimeError?.status === 405 && path.startsWith("/api/v1/profiles/rebuild-persona")) {
+		if (
+			runtimeError?.status === 405 &&
+			path.startsWith("/api/v1/profiles/rebuild-persona")
+		) {
 			return "Local backend does not support persona rebuild yet. Restart local backend with latest code and --reload.";
 		}
 		if (runtimeError?.status === 409) {
@@ -2070,7 +2097,9 @@ interface PanelUi {
 	function extractErrorDetailText(payload: unknown): string {
 		if (payload && typeof payload === "object" && !Array.isArray(payload)) {
 			const detail = (payload as { detail?: unknown }).detail;
-			return String(detail || "").trim().toLowerCase();
+			return String(detail || "")
+				.trim()
+				.toLowerCase();
 		}
 		return "";
 	}
@@ -2123,4 +2152,3 @@ interface PanelUi {
 		}
 	}
 })();
-

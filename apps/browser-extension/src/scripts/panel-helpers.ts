@@ -301,5 +301,3 @@ interface StakedMediaPanelHelpersHost {
 		return api;
 	},
 );
-
-

@@ -34,7 +34,6 @@ class IngestResponse(BaseModel):
     persona: dict[str, Any]
 
 
-
 class ProfileRebuildPersonaRequest(BaseModel):
     username: str = Field(..., strip_whitespace=True, min_length=1)
 
@@ -47,6 +46,8 @@ class ProfileRebuildPersonaResponse(BaseModel):
     persona_snapshot_id: int
     rebuilt_at: str
     persona: dict[str, Any]
+
+
 class ProfileResponse(BaseModel):
     profile: ProfileSummary
     stored_tweet_count: int
@@ -414,4 +415,3 @@ class ContentDebugResponse(BaseModel):
     used_keywords: list[str] = Field(default_factory=list)
     web_keywords: list[str] = Field(default_factory=list)
     source_facts: list[dict[str, Any]] = Field(default_factory=list)
-

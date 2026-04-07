@@ -16,17 +16,17 @@ from app.logging_utils import configure_logging, format_log_event, get_logger, l
 from app.orchestrator import ContentOrchestrator
 from app.persona import build_corpus_stats
 from app.schemas import (
-    ConversationGenerateRequest,
     ContentDebugResponse,
     ContentGenerateRequest,
     ContentGenerateResponse,
-    HotEventsResponse,
     ContentIdeasRequest,
     ContentIdeasResponse,
+    ConversationGenerateRequest,
     DraftGenerateRequest,
     DraftGenerateResponse,
     ExposureAnalyzeRequest,
     ExposureAnalyzeResponse,
+    HotEventsResponse,
     IngestResponse,
     ProfileIngestRequest,
     ProfileRebuildPersonaRequest,
@@ -222,9 +222,7 @@ def create_app(
         )
 
     @app.post("/api/v1/profiles/rebuild-persona", response_model=ProfileRebuildPersonaResponse)
-    def rebuild_persona(
-        payload: ProfileRebuildPersonaRequest, request: Request
-    ) -> ProfileRebuildPersonaResponse:
+    def rebuild_persona(payload: ProfileRebuildPersonaRequest, request: Request) -> ProfileRebuildPersonaResponse:
         request_id = uuid.uuid4().hex[:12]
         started_at = time.perf_counter()
         settings = request.app.state.settings

@@ -1794,13 +1794,48 @@ class LLMClient:
                 }
             )
 
+        compact_lexical_markers_detailed: list[dict[str, str]] = []
+        for item in normalized_persona["lexical_markers_detailed"][:6]:
+            if not isinstance(item, dict):
+                continue
+            compact_lexical_markers_detailed.append(
+                {
+                    "marker": clean_text(str(item.get("marker") or ""))[:40],
+                    "usage": clean_text(str(item.get("usage") or ""))[:120],
+                    "frequency": clean_text(str(item.get("frequency") or "medium")).lower() or "medium",
+                }
+            )
+
+        compact_generation_guardrails_detailed: dict[str, list[dict[str, str]]] = {}
+        for key, items in normalized_persona["generation_guardrails_detailed"].items():
+            if not isinstance(items, list):
+                continue
+            compact_items: list[dict[str, str]] = []
+            for item in items[:3]:
+                if not isinstance(item, dict):
+                    continue
+                instruction = clean_text(str(item.get("instruction") or ""))[:140]
+                positive_example = clean_text(str(item.get("positive_example") or ""))[:160]
+                negative_example = clean_text(str(item.get("negative_example") or ""))[:160]
+                if not instruction and not positive_example and not negative_example:
+                    continue
+                compact_items.append(
+                    {
+                        "instruction": instruction,
+                        "positive_example": positive_example,
+                        "negative_example": negative_example,
+                    }
+                )
+            if compact_items:
+                compact_generation_guardrails_detailed[key] = compact_items
+
         return {
             "author_summary": clean_text(normalized_persona["author_summary"])[:300],
             "voice_traits": [clean_text(str(item))[:80] for item in normalized_persona["voice_traits"][:6]],
             "voice_signals": compact_voice_signals,
             "signature_patterns": compact_signature_patterns,
             "lexical_markers": [clean_text(str(item))[:40] for item in normalized_persona["lexical_markers"][:12]],
-            "lexical_markers_detailed": [],
+            "lexical_markers_detailed": compact_lexical_markers_detailed,
             "do_not_sound_like": [clean_text(str(item))[:100] for item in normalized_persona["do_not_sound_like"][:8]],
             "writing_patterns": normalized_persona["writing_patterns"],
             "language_profile": normalized_persona["language_profile"],
@@ -1812,7 +1847,7 @@ class LLMClient:
             "geo_context": normalized_persona["geo_context"],
             "stance_patterns": normalized_persona["stance_patterns"],
             "generation_guardrails": compact_guardrails,
-            "generation_guardrails_detailed": {},
+            "generation_guardrails_detailed": compact_generation_guardrails_detailed,
         }
 
     def _build_draft_request_payload(

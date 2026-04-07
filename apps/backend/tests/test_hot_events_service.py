@@ -9,6 +9,8 @@ import requests
 from app.config import HotEventsFusionSettings
 from app.hot_events import HotEventsService
 
+FAKE_API_TOKEN = "test-token"  # noqa: S105
+
 
 class _FakeResponse:
     def __init__(self, payload: dict, *, status_code: int = 200) -> None:
@@ -28,10 +30,12 @@ class HotEventsServiceTestCase(unittest.TestCase):
         self.service = HotEventsService(
             timeout_seconds=2.0,
             cache_ttl_seconds=120,
-            api_token="test-token",
+            api_token=FAKE_API_TOKEN,
         )
 
     def test_partial_success_returns_warnings_and_source_status(self) -> None:
+        recent_ts = (datetime.now(UTC).replace(microsecond=0) - timedelta(hours=2)).isoformat()
+
         def fake_get(url: str, *args, **kwargs):
             if url.endswith("/open/news_type"):
                 return _FakeResponse(
@@ -59,7 +63,7 @@ class HotEventsServiceTestCase(unittest.TestCase):
                             {
                                 "id": 1,
                                 "text": "ETF inflow spikes",
-                                "ts": "2026-04-06T09:00:00Z",
+                                "ts": recent_ts,
                                 "newsType": "Reuters",
                                 "link": "https://example.com/etf",
                                 "source": "Reuters",
@@ -72,9 +76,12 @@ class HotEventsServiceTestCase(unittest.TestCase):
                 )
             raise requests.RequestException("twitter search unavailable")
 
-        with patch("app.hot_events.requests.get", side_effect=fake_get), patch(
-            "app.hot_events.requests.post",
-            side_effect=fake_post,
+        with (
+            patch("app.hot_events.requests.get", side_effect=fake_get),
+            patch(
+                "app.hot_events.requests.post",
+                side_effect=fake_post,
+            ),
         ):
             payload = self.service.list_hot_events(hours=24, limit=10, refresh=True)
 
@@ -85,18 +92,22 @@ class HotEventsServiceTestCase(unittest.TestCase):
         self.assertTrue(payload["warnings"])
 
     def test_all_sources_failed_raises_runtime_error(self) -> None:
-        with patch(
-            "app.hot_events.requests.get",
-            side_effect=requests.RequestException("network down"),
-        ), patch(
-            "app.hot_events.requests.post",
-            side_effect=requests.RequestException("network down"),
+        with (
+            patch(
+                "app.hot_events.requests.get",
+                side_effect=requests.RequestException("network down"),
+            ),
+            patch(
+                "app.hot_events.requests.post",
+                side_effect=requests.RequestException("network down"),
+            ),
         ):
             with self.assertRaises(RuntimeError):
                 self.service.list_hot_events(hours=24, limit=10, refresh=True)
 
     def test_cache_and_refresh_behaviour(self) -> None:
         call_counts = {"get": 0, "post": 0}
+        recent_ts = (datetime.now(UTC).replace(microsecond=0) - timedelta(hours=2)).isoformat()
 
         def fake_get(url: str, *args, **kwargs):
             call_counts["get"] += 1
@@ -121,7 +132,7 @@ class HotEventsServiceTestCase(unittest.TestCase):
                             {
                                 "id": 1,
                                 "text": "Macro headline",
-                                "ts": "2026-04-06T09:00:00Z",
+                                "ts": recent_ts,
                                 "newsType": "Reuters",
                                 "link": "https://example.com/macro",
                                 "source": "Reuters",
@@ -136,9 +147,12 @@ class HotEventsServiceTestCase(unittest.TestCase):
                 return _FakeResponse({"success": True, "data": []})
             raise AssertionError(f"Unexpected POST URL: {url}")
 
-        with patch("app.hot_events.requests.get", side_effect=fake_get), patch(
-            "app.hot_events.requests.post",
-            side_effect=fake_post,
+        with (
+            patch("app.hot_events.requests.get", side_effect=fake_get),
+            patch(
+                "app.hot_events.requests.post",
+                side_effect=fake_post,
+            ),
         ):
             first = self.service.list_hot_events(hours=24, limit=10, refresh=True)
             second = self.service.list_hot_events(hours=24, limit=10, refresh=False)
@@ -152,6 +166,10 @@ class HotEventsServiceTestCase(unittest.TestCase):
         self.assertGreaterEqual(call_counts["post"], 4)
 
     def test_twitter_item_normalization_with_inferred_score(self) -> None:
+        recent_tweet_ts = (datetime.now(UTC).replace(microsecond=0) - timedelta(hours=2)).strftime(
+            "%a %b %d %H:%M:%S +0000 %Y"
+        )
+
         def fake_get(url: str, *args, **kwargs):
             if url.endswith("/open/news_type"):
                 raise requests.RequestException("news unavailable")
@@ -168,7 +186,7 @@ class HotEventsServiceTestCase(unittest.TestCase):
                             {
                                 "id": "2040946284396265834",
                                 "text": "BTC breakout setup",
-                                "createdAt": "Mon Apr 06 00:14:47 +0000 2026",
+                                "createdAt": recent_tweet_ts,
                                 "retweetCount": 100,
                                 "favoriteCount": 200,
                                 "replyCount": 30,
@@ -182,9 +200,12 @@ class HotEventsServiceTestCase(unittest.TestCase):
                 )
             raise AssertionError(f"Unexpected POST URL: {url}")
 
-        with patch("app.hot_events.requests.get", side_effect=fake_get), patch(
-            "app.hot_events.requests.post",
-            side_effect=fake_post,
+        with (
+            patch("app.hot_events.requests.get", side_effect=fake_get),
+            patch(
+                "app.hot_events.requests.post",
+                side_effect=fake_post,
+            ),
         ):
             payload = self.service.list_hot_events(hours=24, limit=10, refresh=True)
 
@@ -196,10 +217,13 @@ class HotEventsServiceTestCase(unittest.TestCase):
         self.assertGreater(item["heat_score"], 0)
 
     def test_source_weights_can_promote_tweets_over_news(self) -> None:
+        now_utc = datetime.now(UTC).replace(microsecond=0)
+        recent_news_ts = (now_utc - timedelta(hours=2)).isoformat()
+        recent_tweet_ts = (now_utc - timedelta(hours=1)).isoformat()
         service = HotEventsService(
             timeout_seconds=2.0,
             cache_ttl_seconds=120,
-            api_token="test-token",
+            api_token=FAKE_API_TOKEN,
             fusion_settings=HotEventsFusionSettings(
                 source_weight_news=0.3,
                 source_weight_tweet=2.0,
@@ -228,7 +252,7 @@ class HotEventsServiceTestCase(unittest.TestCase):
                             {
                                 "id": 1,
                                 "text": "ETF inflow spikes",
-                                "ts": "2026-04-06T09:00:00Z",
+                                "ts": recent_news_ts,
                                 "newsType": "Reuters",
                                 "link": "https://example.com/etf",
                                 "source": "Reuters",
@@ -246,7 +270,7 @@ class HotEventsServiceTestCase(unittest.TestCase):
                             {
                                 "id": "tweet-1",
                                 "text": "BTC breakout setup",
-                                "createdAt": "2026-04-06T09:00:00Z",
+                                "createdAt": recent_tweet_ts,
                                 "retweetCount": 10,
                                 "favoriteCount": 20,
                                 "replyCount": 5,
@@ -260,9 +284,12 @@ class HotEventsServiceTestCase(unittest.TestCase):
                 )
             raise AssertionError(f"Unexpected POST URL: {url}")
 
-        with patch("app.hot_events.requests.get", side_effect=fake_get), patch(
-            "app.hot_events.requests.post",
-            side_effect=fake_post,
+        with (
+            patch("app.hot_events.requests.get", side_effect=fake_get),
+            patch(
+                "app.hot_events.requests.post",
+                side_effect=fake_post,
+            ),
         ):
             payload = service.list_hot_events(hours=24, limit=10, refresh=True)
 
@@ -277,7 +304,7 @@ class HotEventsServiceTestCase(unittest.TestCase):
         service = HotEventsService(
             timeout_seconds=2.0,
             cache_ttl_seconds=120,
-            api_token="test-token",
+            api_token=FAKE_API_TOKEN,
             fusion_settings=HotEventsFusionSettings(time_decay_half_life_hours=4.0),
         )
 
@@ -326,9 +353,12 @@ class HotEventsServiceTestCase(unittest.TestCase):
                 return _FakeResponse({"success": True, "data": []})
             raise AssertionError(f"Unexpected POST URL: {url}")
 
-        with patch("app.hot_events.requests.get", side_effect=fake_get), patch(
-            "app.hot_events.requests.post",
-            side_effect=fake_post,
+        with (
+            patch("app.hot_events.requests.get", side_effect=fake_get),
+            patch(
+                "app.hot_events.requests.post",
+                side_effect=fake_post,
+            ),
         ):
             payload = service.list_hot_events(hours=48, limit=10, refresh=True)
 

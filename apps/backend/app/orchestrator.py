@@ -217,7 +217,7 @@ class ContentOrchestrator:
                 variant = future_to_variant[future]
                 try:
                     variant_result = future.result()
-                except Exception as exc:  # noqa: BLE001
+                except RuntimeError as exc:
                     error_text = str(exc)
                     variant_failures.append({"variant": variant, "error": error_text})
                     log_event(
@@ -440,8 +440,8 @@ class ContentOrchestrator:
         if not event_id:
             raise ValueError("event_id or event_payload is required")
 
-        payload = self.hot_events_service.list_hot_events(hours=24, limit=200, refresh=False)
-        events = payload.get("items", [])
+        events_payload = self.hot_events_service.list_hot_events(hours=24, limit=200, refresh=False)
+        events = events_payload.get("items", [])
         for item in events:
             if str(item.get("id") or "") == event_id:
                 return item

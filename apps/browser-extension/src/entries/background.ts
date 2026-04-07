@@ -342,7 +342,9 @@ async function getHotEvents(
 	});
 }
 
-async function generateConversation(payload: BackgroundPayload): Promise<unknown> {
+async function generateConversation(
+	payload: BackgroundPayload,
+): Promise<unknown> {
 	const username = assertNonEmpty(payload.username, "username");
 	const body: Record<string, unknown> = {
 		username,
@@ -369,7 +371,10 @@ async function generateConversation(payload: BackgroundPayload): Promise<unknown
 	} catch (error) {
 		const runtimeError = error as RuntimeErrorWithStatus;
 		const detailText = extractErrorDetailText(runtimeError?.payload);
-		if (runtimeError?.status === 409 && detailText.includes("persona not found")) {
+		if (
+			runtimeError?.status === 409 &&
+			detailText.includes("persona not found")
+		) {
 			const capability = await checkLocalConversationCapability(false);
 			if (!capability.supported) {
 				throw createRuntimeError(
@@ -614,7 +619,9 @@ function formatLocalConversationUnreachableMessage(): string {
 function extractErrorDetailText(payload: unknown): string {
 	if (payload && typeof payload === "object" && !Array.isArray(payload)) {
 		const detail = (payload as { detail?: unknown }).detail;
-		return String(detail || "").trim().toLowerCase();
+		return String(detail || "")
+			.trim()
+			.toLowerCase();
 	}
 	return "";
 }

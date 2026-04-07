@@ -115,7 +115,8 @@ interface StakedMediaExtensionSharedHost {
 				"label.language": "Language",
 				"label.apiBaseUrl": "API Base URL",
 				"label.generationApiMode": "Generation API Mode",
-				"helper.apiBaseUrlSave": "Press Enter or click outside to save the URL.",
+				"helper.apiBaseUrlSave":
+					"Press Enter or click outside to save the URL.",
 				"mode.draftsApi": "Drafts API (/api/v1/drafts/generate)",
 				"mode.contentApi": "Content API (/api/v1/content/generate)",
 				"theme.light": "Light",
@@ -373,7 +374,9 @@ interface StakedMediaExtensionSharedHost {
 		}
 
 		function normalizeLanguage(value: unknown): LanguageMode {
-			const normalized = String(value || "").trim().toLowerCase();
+			const normalized = String(value || "")
+				.trim()
+				.toLowerCase();
 			if (!SUPPORTED_LANGUAGE_VALUES.has(normalized)) {
 				return "auto";
 			}

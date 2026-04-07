@@ -35,6 +35,10 @@ class _HotEventsFusionConfigModel(_StrictConfigModel):
     max_heat_score: float = Field(100.0, gt=0.0)
 
 
+def _default_hot_events_fusion_config() -> _HotEventsFusionConfigModel:
+    return _HotEventsFusionConfigModel.parse_obj({})
+
+
 class _AppConfigModel(_StrictConfigModel):
     app_env: str = "development"
     database_url: str = "sqlite:///./data/mvp.db"
@@ -68,7 +72,7 @@ class _AppConfigModel(_StrictConfigModel):
     max_generation_attempts: int = 3
     evaluation_max_workers: int = 4
     variant_max_workers: int = 3
-    hot_events_fusion: _HotEventsFusionConfigModel = Field(default_factory=_HotEventsFusionConfigModel)
+    hot_events_fusion: _HotEventsFusionConfigModel = Field(default_factory=_default_hot_events_fusion_config)
 
 
 class _RootConfigModel(_StrictConfigModel):
