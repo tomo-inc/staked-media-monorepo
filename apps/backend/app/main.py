@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 
 from app.config import Settings, get_settings
 from app.database import Database, normalize_username
@@ -16,9 +16,11 @@ from app.logging_utils import configure_logging, format_log_event, get_logger, l
 from app.orchestrator import ContentOrchestrator
 from app.persona import build_corpus_stats
 from app.schemas import (
+    ConversationGenerateRequest,
     ContentDebugResponse,
     ContentGenerateRequest,
     ContentGenerateResponse,
+    HotEventsResponse,
     ContentIdeasRequest,
     ContentIdeasResponse,
     DraftGenerateRequest,
@@ -27,6 +29,8 @@ from app.schemas import (
     ExposureAnalyzeResponse,
     IngestResponse,
     ProfileIngestRequest,
+    ProfileRebuildPersonaRequest,
+    ProfileRebuildPersonaResponse,
     ProfileResponse,
     ProfileSummary,
     WhitelistUsernameRequest,
@@ -217,6 +221,74 @@ def create_app(
             latest_persona_snapshot=latest_persona,
         )
 
+    @app.post("/api/v1/profiles/rebuild-persona", response_model=ProfileRebuildPersonaResponse)
+    def rebuild_persona(
+        payload: ProfileRebuildPersonaRequest, request: Request
+    ) -> ProfileRebuildPersonaResponse:
+        request_id = uuid.uuid4().hex[:12]
+        started_at = time.perf_counter()
+        settings = request.app.state.settings
+        database: Database = request.app.state.database
+        llm: LLMClient = request.app.state.llm
+        username = _require_allowed_username(
+            database,
+            payload.username,
+            request_id=request_id,
+            route="profiles_rebuild_persona",
+        )
+        rebuilt_at = utc_now_iso()
+        stored_user = database.get_user_by_username(username)
+        if stored_user is None:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        tweet_rows = database.get_user_tweets(stored_user["id"], limit=settings.max_ingest_tweets)
+        if not tweet_rows:
+            raise HTTPException(status_code=409, detail="No tweets found. Run /api/v1/profiles/ingest first")
+
+        profile_payload = _profile_payload_from_stored_user(stored_user)
+        corpus_stats = build_corpus_stats(profile_payload, tweet_rows, sample_size=settings.persona_sample_size)
+        try:
+            persona = llm.generate_persona(
+                profile=profile_payload,
+                corpus_stats=corpus_stats,
+                request_id=request_id,
+            )
+        except LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        persona_snapshot_id = database.save_persona_snapshot(
+            user_id=str(stored_user["id"]),
+            username=str(stored_user["username"]),
+            source_tweet_count=corpus_stats["tweet_counts"]["total"],
+            source_original_tweet_count=corpus_stats["tweet_counts"]["original"],
+            source_window_start=corpus_stats["source_window"]["start"],
+            source_window_end=corpus_stats["source_window"]["end"],
+            corpus_stats=corpus_stats,
+            representative_tweets=corpus_stats["representative_tweets"],
+            persona=persona,
+            created_at=rebuilt_at,
+        )
+        log_event(
+            logger,
+            logging.INFO,
+            "api_rebuild_persona_completed",
+            request_id=request_id,
+            username=username,
+            source_tweet_count=corpus_stats["tweet_counts"]["total"],
+            source_original_tweet_count=corpus_stats["tweet_counts"]["original"],
+            persona_snapshot_id=persona_snapshot_id,
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+        )
+        return ProfileRebuildPersonaResponse(
+            username=str(stored_user["username"]),
+            user_id=str(stored_user["id"]),
+            source_tweet_count=corpus_stats["tweet_counts"]["total"],
+            source_original_tweet_count=corpus_stats["tweet_counts"]["original"],
+            persona_snapshot_id=persona_snapshot_id,
+            rebuilt_at=rebuilt_at,
+            persona=persona,
+        )
+
     @app.post("/api/v1/drafts/generate", response_model=DraftGenerateResponse)
     def generate_drafts(payload: DraftGenerateRequest, request: Request) -> DraftGenerateResponse:
         request_id = uuid.uuid4().hex[:12]
@@ -350,6 +422,20 @@ def create_app(
         )
         return ContentIdeasResponse(**result)
 
+    @app.get("/api/v1/content/hot-events", response_model=HotEventsResponse)
+    def content_hot_events(
+        request: Request,
+        hours: int = Query(24, ge=1, le=72),
+        limit: int = Query(50, ge=1, le=200),
+        refresh: bool = Query(False),
+    ) -> HotEventsResponse:
+        orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
+        try:
+            result = orchestrator.list_hot_events(hours=hours, limit=limit, refresh=refresh)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return HotEventsResponse(**result)
+
     @app.post("/api/v1/content/generate", response_model=ContentGenerateResponse)
     def content_generate(payload: ContentGenerateRequest, request: Request) -> ContentGenerateResponse:
         request_id = uuid.uuid4().hex[:12]
@@ -389,6 +475,51 @@ def create_app(
             request_id=request_id,
             username=username,
             mode=payload.mode,
+            topic=result.get("topic", ""),
+            final_score=result.get("score", {}).get("final_score", 0.0),
+            target_score_met=result.get("target_score_met", False),
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+        )
+        return ContentGenerateResponse(**result)
+
+    @app.post("/api/v1/conversation/generate", response_model=ContentGenerateResponse)
+    def conversation_generate(payload: ConversationGenerateRequest, request: Request) -> ContentGenerateResponse:
+        request_id = uuid.uuid4().hex[:12]
+        started_at = time.perf_counter()
+        database: Database = request.app.state.database
+        username = _require_allowed_username(
+            database, payload.username, request_id=request_id, route="conversation_generate"
+        )
+        payload = payload.copy(update={"username": username})
+        orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
+        try:
+            result = orchestrator.generate_conversation_content(payload, request_id=request_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except LookupError as exc:
+            message = str(exc)
+            status_code = 404 if "Profile not found" in message else 409
+            raise HTTPException(status_code=status_code, detail=message) from exc
+        except LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        latest_persona_snapshot = database.get_latest_persona_snapshot(username)
+        if latest_persona_snapshot is None:
+            raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
+        database.save_draft_request(
+            username=username,
+            persona_snapshot_id=latest_persona_snapshot["id"],
+            prompt=payload.comment.strip() or result.get("topic", "") or "conversation_generate",
+            draft_count=payload.draft_count,
+            output=result,
+            created_at=utc_now_iso(),
+        )
+        log_event(
+            logger,
+            logging.INFO,
+            "api_conversation_generate_completed",
+            request_id=request_id,
+            username=username,
             topic=result.get("topic", ""),
             final_score=result.get("score", {}).get("final_score", 0.0),
             target_score_met=result.get("target_score_met", False),
@@ -490,3 +621,23 @@ def _profile_summary_from_row(row: dict[str, Any]) -> ProfileSummary:
         verified=bool(row.get("verified")),
         last_ingested_at=str(row.get("last_ingested_at") or ""),
     )
+
+
+def _profile_payload_from_stored_user(row: dict[str, Any]) -> dict[str, Any]:
+    raw_payload = row.get("raw_json")
+    payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+    payload["id"] = str(payload.get("id") or row.get("id") or "")
+    payload["username"] = str(payload.get("username") or row.get("username") or "")
+    payload["name"] = str(payload.get("name") or row.get("name") or payload["username"])
+    payload["description"] = str(payload.get("description") or row.get("description") or "")
+    payload["location"] = str(payload.get("location") or row.get("location") or "")
+    payload["url"] = str(payload.get("url") or row.get("profile_url") or "")
+    payload["verified"] = bool(payload.get("verified") or row.get("verified"))
+    public_metrics = payload.get("public_metrics")
+    if not isinstance(public_metrics, dict):
+        public_metrics = {}
+    public_metrics["followers_count"] = int(public_metrics.get("followers_count") or row.get("followers_count") or 0)
+    public_metrics["following_count"] = int(public_metrics.get("following_count") or row.get("following_count") or 0)
+    public_metrics["tweet_count"] = int(public_metrics.get("tweet_count") or row.get("tweet_count") or 0)
+    payload["public_metrics"] = public_metrics
+    return payload

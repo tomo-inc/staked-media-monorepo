@@ -198,6 +198,11 @@ class EmptyPageSession:
 
 
 class UpstreamClientTestCase(unittest.TestCase):
+    def test_client_disables_environment_proxy_for_default_session(self) -> None:
+        settings = Settings(twitter_data_url="http://52.76.50.165:8081", twitter_data_proxy="")
+        client = UpstreamClient(settings)
+        self.assertFalse(client.session.trust_env)
+
     def test_fetch_user_tweets_paginates_with_cursor_and_uses_proxy(self) -> None:
         session = DummySession()
         settings = Settings(

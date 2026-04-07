@@ -73,6 +73,21 @@ test("buildPanelShell places the username error directly below the username row"
 	assert.ok(usernameErrorIndex < profileInfoIndex);
 });
 
+test("buildPanelShell includes conversation tab controls", () => {
+	const markup = buildPanelShell();
+
+	assert.notEqual(markup.indexOf('data-tab-target="conversation"'), -1);
+	assert.notEqual(markup.indexOf('data-tab-panel="conversation"'), -1);
+	assert.notEqual(markup.indexOf('data-action="refresh-hot-events"'), -1);
+	assert.notEqual(markup.indexOf('data-action="generate-conversation"'), -1);
+	assert.notEqual(markup.indexOf('data-action="send-to-draft"'), -1);
+	assert.notEqual(markup.indexOf('data-slot="hot-events-meta"'), -1);
+	assert.notEqual(markup.indexOf('data-slot="hot-events"'), -1);
+	assert.notEqual(markup.indexOf('data-slot="conversation-results"'), -1);
+	assert.notEqual(markup.indexOf('data-slot="send-to-draft-hint"'), -1);
+	assert.notEqual(markup.indexOf('data-field="s-language"'), -1);
+});
+
 test("isWhitelistDeniedError matches API 403 responses only", () => {
 	assert.equal(isWhitelistDeniedError({ status: 403 }), true);
 	assert.equal(isWhitelistDeniedError({ status: 422 }), false);

@@ -78,6 +78,14 @@ CREATE TABLE IF NOT EXISTS allowed_usernames (
 """
 
 
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):  # type: ignore[override]
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 class Database:
     def __init__(self, database_path: Path):
         self.database_path = database_path
@@ -89,7 +97,7 @@ class Database:
             connection.commit()
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
+        connection = sqlite3.connect(self.database_path, factory=_ClosingConnection)
         connection.row_factory = sqlite3.Row
         return connection
 

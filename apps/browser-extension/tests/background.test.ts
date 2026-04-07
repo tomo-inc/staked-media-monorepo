@@ -312,6 +312,42 @@ test("background save_config accepts allowed backend hosts", async () => {
 	assert.equal(harness.storage.backendBaseUrl, "https://api.sayviner.top:8443");
 });
 
+test("background save_config rejects localhost backend hosts in remote test mode", async () => {
+	const harness = createBackgroundHarness();
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { message: string };
+	}>(harness.listeners.onMessage, {
+		type: "save_config",
+		payload: { backendBaseUrl: "http://127.0.0.1:8000" },
+	});
+
+	assert.equal(response.ok, false);
+	assert.match(
+		response.error.message,
+		/Backend URL must be a valid http\(s\) URL pointing to an allowed host\./,
+	);
+});
+
+test("background get_config normalizes persisted localhost backend url to remote fallback", async () => {
+	const harness = createBackgroundHarness({
+		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
+	});
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		config: StakedMediaExtensionConfig;
+	}>(harness.listeners.onMessage, {
+		type: "get_config",
+	});
+
+	assert.equal(response.ok, true);
+	assert.equal(response.config.backendBaseUrl, "https://api.sayviner.top:8443");
+});
+
 test("background save_config rejects unsupported backend protocols", async () => {
 	const harness = createBackgroundHarness();
 	await flushTasks();
@@ -522,4 +558,303 @@ test("background whitelist message does not duplicate the @ prefix", async () =>
 		response.error.message,
 		"User @erin is not allowed. Please contact the administrator.",
 	);
+});
+
+test("background get_hot_events calls hot-events endpoint with refresh query", async () => {
+	const seenUrls: string[] = [];
+	const harness = createBackgroundHarness({
+		fetch: async (url) => {
+			seenUrls.push(String(url));
+			return createJsonResponse(200, {
+				hours: 24,
+				count: 1,
+				items: [{ id: "event-1", title: "Hot event" }],
+				warnings: ["opentwitter unavailable: timeout"],
+				source_status: {
+					opennews: { status: "ok", count: 1, error: "" },
+					opentwitter: { status: "error", count: 0, error: "timeout" },
+				},
+			});
+		},
+	});
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		result: {
+			hours: number;
+			count: number;
+			items: Array<{ id: string; title: string }>;
+			warnings: string[];
+			source_status: Record<string, { status: string; count: number; error: string }>;
+		};
+	}>(harness.listeners.onMessage, {
+		type: "get_hot_events",
+		payload: { hours: 24, limit: 50, refresh: true },
+	});
+
+	assert.equal(response.ok, true);
+	assert.equal(response.result.count, 1);
+	assert.equal(response.result.items[0]?.id, "event-1");
+	assert.equal(response.result.warnings[0], "opentwitter unavailable: timeout");
+	assert.equal(response.result.source_status.opentwitter?.status, "error");
+	assert.match(seenUrls[0], /^http:\/\/127\.0\.0\.1:8000\//);
+	assert.match(
+		seenUrls[0],
+		/\/api\/v1\/content\/hot-events\?hours=24&limit=50&refresh=true$/,
+	);
+});
+
+test("background check_local_conversation_capability reports missing rebuild route", async () => {
+	const harness = createBackgroundHarness({
+		fetch: async (url) => {
+			const normalizedUrl = String(url);
+			if (normalizedUrl.endsWith("/openapi.json")) {
+				return createJsonResponse(200, {
+					paths: {
+						"/api/v1/content/hot-events": {
+							get: {},
+						},
+					},
+				});
+			}
+			return createJsonResponse(500, { detail: "unexpected endpoint" });
+		},
+	});
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		result: { supported: boolean; message: string };
+	}>(harness.listeners.onMessage, {
+		type: "check_local_conversation_capability",
+	});
+
+	assert.equal(response.ok, true);
+	assert.equal(response.result.supported, false);
+	assert.match(response.result.message, /outdated/i);
+});
+
+test("background conversation_generate posts event payload to conversation endpoint", async () => {
+	const seenUrls: string[] = [];
+	const seenBodies: Array<Record<string, unknown>> = [];
+	const harness = createBackgroundHarness({
+		fetch: async (url, init) => {
+			seenUrls.push(String(url));
+			const requestInit = (init || {}) as { body?: string };
+			seenBodies.push(JSON.parse(String(requestInit.body || "{}")));
+			return createJsonResponse(200, {
+				mode: "B",
+				drafts: [{ text: "Conversation draft" }],
+			});
+		},
+	});
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		result: { mode: string; drafts: Array<{ text: string }> };
+	}>(harness.listeners.onMessage, {
+		type: "conversation_generate",
+		payload: {
+			username: "lin",
+			event_id: "web3:event-1",
+			event_payload: { id: "web3:event-1", title: "Hot event" },
+			comment: "Need a contrarian take.",
+			draft_count: 2,
+		},
+	});
+
+	assert.equal(response.ok, true);
+	assert.equal(response.result.mode, "B");
+	assert.equal(response.result.drafts[0]?.text, "Conversation draft");
+	assert.match(seenUrls[0], /^http:\/\/127\.0\.0\.1:8000\//);
+	assert.match(seenUrls[0], /\/api\/v1\/conversation\/generate$/);
+	assert.equal(seenBodies[0]?.username, "lin");
+	assert.equal(seenBodies[0]?.event_id, "web3:event-1");
+	assert.equal(seenBodies[0]?.draft_count, 2);
+	assert.equal(
+		(seenBodies[0]?.event_payload as { title?: string })?.title,
+		"Hot event",
+	);
+	assert.equal(harness.storage.defaultUsername, "lin");
+});
+
+test("background conversation_generate rebuilds local persona on 409 and retries once", async () => {
+	const seenUrls: string[] = [];
+	const seenBodies: Array<Record<string, unknown>> = [];
+	let conversationAttempts = 0;
+	let rebuildAttempts = 0;
+	const harness = createBackgroundHarness({
+		fetch: async (url, init) => {
+			const normalizedUrl = String(url);
+			seenUrls.push(normalizedUrl);
+			const requestInit = (init || {}) as { body?: string };
+			seenBodies.push(JSON.parse(String(requestInit.body || "{}")));
+			if (normalizedUrl.endsWith("/openapi.json")) {
+				return createJsonResponse(200, {
+					paths: {
+						"/api/v1/profiles/rebuild-persona": {
+							post: {},
+						},
+					},
+				});
+			}
+			if (normalizedUrl.endsWith("/api/v1/conversation/generate")) {
+				conversationAttempts += 1;
+				if (conversationAttempts === 1) {
+					return createJsonResponse(409, {
+						detail: "Persona not found. Run /api/v1/profiles/ingest first",
+					});
+				}
+				return createJsonResponse(200, {
+					mode: "B",
+					drafts: [{ text: "Conversation draft after rebuild" }],
+				});
+			}
+			if (normalizedUrl.endsWith("/api/v1/profiles/rebuild-persona")) {
+				rebuildAttempts += 1;
+				return createJsonResponse(200, {
+					username: "lin",
+					persona_snapshot_id: 101,
+				});
+			}
+			return createJsonResponse(500, { detail: "unexpected endpoint" });
+		},
+	});
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		result: { mode: string; drafts: Array<{ text: string }> };
+	}>(harness.listeners.onMessage, {
+		type: "conversation_generate",
+		payload: {
+			username: "lin",
+			event_id: "web3:event-2",
+			event_payload: { id: "web3:event-2", title: "Hot event 2" },
+			comment: "Need a practical angle.",
+			draft_count: 2,
+		},
+	});
+
+	assert.equal(response.ok, true);
+	assert.equal(response.result.mode, "B");
+	assert.equal(response.result.drafts[0]?.text, "Conversation draft after rebuild");
+	assert.equal(conversationAttempts, 2);
+	assert.equal(rebuildAttempts, 1);
+	assert.match(seenUrls[0], /^http:\/\/127\.0\.0\.1:8000\/api\/v1\/conversation\/generate$/);
+	assert.match(seenUrls[1], /^http:\/\/127\.0\.0\.1:8000\/openapi\.json$/);
+	assert.match(seenUrls[2], /^http:\/\/127\.0\.0\.1:8000\/api\/v1\/profiles\/rebuild-persona$/);
+	assert.match(seenUrls[3], /^http:\/\/127\.0\.0\.1:8000\/api\/v1\/conversation\/generate$/);
+	assert.equal(seenBodies[2]?.username, "lin");
+	assert.equal(harness.storage.defaultUsername, "lin");
+});
+
+test("background conversation_generate surfaces rebuild error when persona recovery fails", async () => {
+	let conversationAttempts = 0;
+	let rebuildAttempts = 0;
+	const harness = createBackgroundHarness({
+		fetch: async (url) => {
+			const normalizedUrl = String(url);
+			if (normalizedUrl.endsWith("/openapi.json")) {
+				return createJsonResponse(200, {
+					paths: {
+						"/api/v1/profiles/rebuild-persona": {
+							post: {},
+						},
+					},
+				});
+			}
+			if (normalizedUrl.endsWith("/api/v1/conversation/generate")) {
+				conversationAttempts += 1;
+				return createJsonResponse(409, {
+					detail: "Persona not found. Run /api/v1/profiles/ingest first",
+				});
+			}
+			if (normalizedUrl.endsWith("/api/v1/profiles/rebuild-persona")) {
+				rebuildAttempts += 1;
+				return createJsonResponse(409, {
+					detail: "No tweets found. Run /api/v1/profiles/ingest first",
+				});
+			}
+			return createJsonResponse(500, { detail: "unexpected endpoint" });
+		},
+	});
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { status: number; path: string; message: string };
+	}>(harness.listeners.onMessage, {
+		type: "conversation_generate",
+		payload: {
+			username: "lin",
+			event_id: "web3:event-2",
+			event_payload: { id: "web3:event-2", title: "Hot event 2" },
+			comment: "Need a practical angle.",
+			draft_count: 2,
+		},
+	});
+
+	assert.equal(response.ok, false);
+	assert.equal(response.error.status, 409);
+	assert.equal(response.error.path, "/api/v1/profiles/rebuild-persona");
+	assert.equal(response.error.message, "No tweets found. Run /api/v1/profiles/ingest first");
+	assert.equal(conversationAttempts, 1);
+	assert.equal(rebuildAttempts, 1);
+});
+
+test("background conversation_generate surfaces dedicated code when rebuild endpoint is unsupported", async () => {
+	let conversationAttempts = 0;
+	let rebuildAttempts = 0;
+	const harness = createBackgroundHarness({
+		fetch: async (url) => {
+			const normalizedUrl = String(url);
+			if (normalizedUrl.endsWith("/api/v1/conversation/generate")) {
+				conversationAttempts += 1;
+				return createJsonResponse(409, {
+					detail: "Persona not found. Run /api/v1/profiles/ingest first",
+				});
+			}
+			if (normalizedUrl.endsWith("/openapi.json")) {
+				return createJsonResponse(200, {
+					paths: {
+						"/api/v1/content/hot-events": {
+							get: {},
+						},
+					},
+				});
+			}
+			if (normalizedUrl.endsWith("/api/v1/profiles/rebuild-persona")) {
+				rebuildAttempts += 1;
+				return createJsonResponse(405, {
+					detail: "Method Not Allowed",
+				});
+			}
+			return createJsonResponse(500, { detail: "unexpected endpoint" });
+		},
+	});
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { path: string; code: string; message: string };
+	}>(harness.listeners.onMessage, {
+		type: "conversation_generate",
+		payload: {
+			username: "lin",
+			event_id: "web3:event-9",
+			event_payload: { id: "web3:event-9", title: "Hot event 9" },
+			comment: "Need a practical angle.",
+			draft_count: 2,
+		},
+	});
+
+	assert.equal(response.ok, false);
+	assert.equal(response.error.path, "/api/v1/profiles/rebuild-persona");
+	assert.equal(response.error.code, "LOCAL_BACKEND_REBUILD_UNSUPPORTED");
+	assert.match(response.error.message, /outdated/i);
+	assert.equal(conversationAttempts, 1);
+	assert.equal(rebuildAttempts, 0);
 });

@@ -10,7 +10,8 @@ from typing import Any
 
 from app.config import Settings
 from app.database import Database
-from app.llm import LLMClient
+from app.hot_events import HotEventsService
+from app.llm import LLMClient, LLMError
 from app.logging_utils import get_logger, log_event
 from app.persona import (
     expand_related_keywords,
@@ -19,7 +20,7 @@ from app.persona import (
     extract_top_theme_keywords,
     select_theme_tweets,
 )
-from app.schemas import ContentGenerateRequest, ContentVariantType
+from app.schemas import ContentGenerateRequest, ContentVariantType, ConversationGenerateRequest
 from app.web_enrichment import WebEnricher
 
 logger = get_logger(__name__)
@@ -35,6 +36,7 @@ class ContentOrchestrator:
         database: Database,
         llm: LLMClient,
         web_enricher: WebEnricher | None = None,
+        hot_events_service: HotEventsService | None = None,
     ):
         self.settings = settings
         self.database = database
@@ -43,6 +45,12 @@ class ContentOrchestrator:
             timeout_seconds=settings.web_enrichment_timeout_seconds,
             max_items=settings.web_enrichment_max_items,
             recency_hours=settings.web_enrichment_recency_hours,
+        )
+        self.hot_events_service = hot_events_service or HotEventsService(
+            timeout_seconds=settings.web_enrichment_timeout_seconds,
+            cache_ttl_seconds=120,
+            api_token=settings.provider_6551_token,
+            fusion_settings=settings.hot_events_fusion,
         )
         self._debug_runs: dict[str, dict[str, Any]] = {}
 
@@ -66,6 +74,57 @@ class ContentOrchestrator:
             "query": query,
             "suggested_keywords": enrichment.get("keywords", [])[:20],
         }
+
+    def list_hot_events(self, *, hours: int, limit: int, refresh: bool) -> dict[str, Any]:
+        payload = self.hot_events_service.list_hot_events(hours=hours, limit=limit, refresh=refresh)
+        items = payload.get("items", [])
+        return {
+            "hours": max(1, min(72, int(hours))),
+            "count": len(items),
+            "items": items,
+            "warnings": payload.get("warnings", []),
+            "source_status": payload.get("source_status", {}),
+        }
+
+    def generate_conversation_content(self, payload: ConversationGenerateRequest, request_id: str) -> dict[str, Any]:
+        selected_event = self._resolve_conversation_event(payload)
+        topic = str(selected_event.get("title") or "").strip()
+        summary = str(selected_event.get("summary") or "").strip()
+        if not topic:
+            raise ValueError("Selected event is missing a title")
+
+        user_comment = payload.comment.strip()
+        idea = user_comment
+        if summary:
+            if idea:
+                idea = f"{idea}\n\nEvent context: {topic}. {summary}"
+            else:
+                idea = summary
+        if not idea:
+            idea = topic
+
+        keyword_seed = " ".join(
+            part
+            for part in [
+                topic,
+                summary,
+                str(selected_event.get("source") or ""),
+                str(selected_event.get("source_domain") or ""),
+            ]
+            if part
+        )
+        keywords = extract_theme_keywords(keyword_seed)[:20]
+        generate_payload = ContentGenerateRequest(
+            username=payload.username,
+            mode="B",
+            idea=idea,
+            direction=str(selected_event.get("category") or ""),
+            domain=str(selected_event.get("subcategory") or ""),
+            topic=topic,
+            keywords=keywords,
+            draft_count=payload.draft_count,
+        )
+        return self.generate_content(generate_payload, request_id=request_id)
 
     def analyze_exposure(self, *, username: str, text: str, topic: str, domain: str) -> dict[str, Any]:
         keywords = extract_theme_keywords(f"{topic} {domain} {text}")
@@ -129,6 +188,7 @@ class ContentOrchestrator:
 
         variants: list[dict[str, Any]] = []
         variant_debug: list[dict[str, Any]] = []
+        variant_failures: list[dict[str, str]] = []
         quality_gate_event = threading.Event()
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=min(self.settings.variant_max_workers, len(self.VARIANTS)),
@@ -154,9 +214,28 @@ class ContentOrchestrator:
                 for variant in self.VARIANTS
             }
             for future in concurrent.futures.as_completed(future_to_variant):
-                variant_result = future.result()
+                variant = future_to_variant[future]
+                try:
+                    variant_result = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    error_text = str(exc)
+                    variant_failures.append({"variant": variant, "error": error_text})
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "content_variant_generation_failed",
+                        request_id=request_id,
+                        topic=topic,
+                        variant=variant,
+                        error=error_text,
+                    )
+                    continue
                 variants.append(variant_result["output"])
                 variant_debug.append(variant_result["debug"])
+
+        if not variants:
+            detail = variant_failures[0]["error"] if variant_failures else "No variants produced content"
+            raise LLMError(detail)
 
         recommended = max(variants, key=lambda item: float(item["score"]["final_score"]))
         quality_gate_met = any(bool(item.get("target_score_met", False)) for item in variants)
@@ -262,15 +341,29 @@ class ContentOrchestrator:
                 variant=variant,
                 rewrite_hint="" if best_score is None else self._rewrite_hint(best_score),
             )
-            draft_result = self.llm.generate_drafts(
-                persona=snapshot["persona"],
-                prompt=prompt,
-                representative_tweets=snapshot["representative_tweets"],
-                source_texts=source_texts,
-                tweet_rows=tweet_rows,
-                draft_count=payload.draft_count,
-                request_id=request_id,
-            )
+            try:
+                draft_result = self.llm.generate_drafts(
+                    persona=snapshot["persona"],
+                    prompt=prompt,
+                    representative_tweets=snapshot["representative_tweets"],
+                    source_texts=source_texts,
+                    tweet_rows=tweet_rows,
+                    draft_count=payload.draft_count,
+                    request_id=request_id,
+                )
+            except LLMError as exc:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "content_variant_round_failed",
+                    request_id=request_id,
+                    variant=variant,
+                    round_index=round_index,
+                    error=str(exc),
+                )
+                if best_result is not None and best_score is not None:
+                    break
+                raise
             score = self._score_generated_content(
                 draft_result=draft_result,
                 topic=topic,
@@ -334,6 +427,25 @@ class ContentOrchestrator:
             "target_score_met": target_score_met,
         }
         return {"output": output, "debug": debug}
+
+    def _resolve_conversation_event(self, payload: ConversationGenerateRequest) -> dict[str, Any]:
+        event_payload = payload.event_payload
+        if isinstance(event_payload, dict):
+            title = str(event_payload.get("title") or "").strip()
+            if not title:
+                raise ValueError("event_payload.title is required")
+            return event_payload
+
+        event_id = payload.event_id.strip()
+        if not event_id:
+            raise ValueError("event_id or event_payload is required")
+
+        payload = self.hot_events_service.list_hot_events(hours=24, limit=200, refresh=False)
+        events = payload.get("items", [])
+        for item in events:
+            if str(item.get("id") or "") == event_id:
+                return item
+        raise LookupError("Selected hot event was not found")
 
     def _resolve_topic(self, payload: ContentGenerateRequest) -> str:
         if payload.topic.strip():

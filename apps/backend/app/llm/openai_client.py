@@ -18,6 +18,12 @@ class OpenAIClient(LLMClient):
     def __init__(self, settings: Settings):
         super().__init__(settings, provider_name="openai")
 
+    @staticmethod
+    def _ensure_json_instruction(system_prompt: str) -> str:
+        if "json" in system_prompt.lower():
+            return system_prompt
+        return f"{system_prompt.rstrip()}\n\nReturn a valid JSON object only."
+
     def _chat_completion_json(
         self,
         *,
@@ -32,40 +38,77 @@ class OpenAIClient(LLMClient):
             raise LLMError("OpenAI API key is not configured")
 
         endpoint = f"{self.settings.openai_base_url.rstrip('/')}/chat/completions"
-        body = self._post_json_with_retries(
-            endpoint=endpoint,
-            headers={
-                "Authorization": f"Bearer {self.settings.openai_api_key}",
-                "Content-Type": "application/json",
-            },
-            json_payload={
-                "model": self.settings.openai_model,
-                "temperature": temperature,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-            },
-            model=self.settings.openai_model,
-            request_id=request_id,
-            purpose=purpose,
-            timeout_seconds=timeout_seconds,
-        )
-        choices = body.get("choices") or []
-        if not choices:
-            log_event(
-                logger,
-                logging.ERROR,
-                "llm_provider_missing_choices",
-                request_id=request_id,
-                provider=self.provider_name,
-                model=self.settings.openai_model,
-            )
-            raise LLMError("OpenAI response did not include any choices")
+        normalized_system_prompt = self._ensure_json_instruction(system_prompt)
+        headers = {
+            "Authorization": f"Bearer {self.settings.openai_api_key}",
+            "Content-Type": "application/json",
+        }
+        base_payload = {
+            "model": self.settings.openai_model,
+            "temperature": temperature,
+            "messages": [
+                {"role": "system", "content": normalized_system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        content_text = ""
+        for use_json_mode in (True, False):
+            json_payload = dict(base_payload)
+            if use_json_mode:
+                json_payload["response_format"] = {"type": "json_object"}
 
-        content = choices[0].get("message", {}).get("content", "")
-        content_text = _coerce_content_text(content)
+            try:
+                body = self._post_json_with_retries(
+                    endpoint=endpoint,
+                    headers=headers,
+                    json_payload=json_payload,
+                    model=self.settings.openai_model,
+                    request_id=request_id,
+                    purpose=purpose,
+                    timeout_seconds=timeout_seconds,
+                )
+            except LLMError as exc:
+                message = str(exc).lower()
+                if use_json_mode and ("json_object" in message or "text.format" in message):
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "llm_provider_json_mode_fallback",
+                        request_id=request_id,
+                        provider=self.provider_name,
+                        model=self.settings.openai_model,
+                        reason="response_format_unsupported",
+                    )
+                    continue
+                raise
+
+            choices = body.get("choices") or []
+            if not choices:
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "llm_provider_missing_choices",
+                    request_id=request_id,
+                    provider=self.provider_name,
+                    model=self.settings.openai_model,
+                )
+                raise LLMError("OpenAI response did not include any choices")
+
+            content = choices[0].get("message", {}).get("content", "")
+            content_text = _coerce_content_text(content)
+            if content_text:
+                break
+            if use_json_mode:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "llm_provider_json_mode_fallback",
+                    request_id=request_id,
+                    provider=self.provider_name,
+                    model=self.settings.openai_model,
+                    reason="empty_content",
+                )
+
         if not content_text:
             log_event(
                 logger,

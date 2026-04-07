@@ -8,15 +8,21 @@ const {
 	DEFAULT_CONFIG,
 	escapeHtml,
 	extractDrafts,
+	listLanguageOptions,
+	resolveLocale,
 	routeMessage,
 	sanitizeConfig,
+	t,
 } = require("../dist/shared.js") as Pick<
 	StakedMediaExtensionSharedApi,
 	| "DEFAULT_CONFIG"
 	| "escapeHtml"
 	| "extractDrafts"
+	| "listLanguageOptions"
+	| "resolveLocale"
 	| "routeMessage"
 	| "sanitizeConfig"
+	| "t"
 >;
 
 test("routeMessage dispatches supported handlers", async () => {
@@ -40,12 +46,13 @@ test("routeMessage rejects unsupported handlers", async () => {
 test("default config uses the hosted backend URL", () => {
 	assert.equal(DEFAULT_CONFIG.backendBaseUrl, "https://api.sayviner.top:8443");
 	assert.equal(DEFAULT_CONFIG.apiMode, "drafts");
+	assert.equal(DEFAULT_CONFIG.language, "auto");
 });
 
 test("sanitizeConfig normalizes and trims persisted settings", () => {
 	const config = sanitizeConfig({
 		defaultUsername: "  satoshi  ",
-		backendBaseUrl: "http://localhost:9000/",
+		backendBaseUrl: "  https://api.sayviner.top:8443/v1/  ",
 		apiMode: "drafts",
 		theme: "dark",
 		hostMode: "popup",
@@ -54,7 +61,7 @@ test("sanitizeConfig normalizes and trims persisted settings", () => {
 	assert.deepEqual(config, {
 		...DEFAULT_CONFIG,
 		defaultUsername: "satoshi",
-		backendBaseUrl: "http://localhost:9000",
+		backendBaseUrl: "https://api.sayviner.top:8443/v1",
 		apiMode: "drafts",
 		theme: "dark",
 		hostMode: "popup",
@@ -134,6 +141,38 @@ test("sanitizeConfig keeps system theme and ignores unknown themes", () => {
 		}).theme,
 		DEFAULT_CONFIG.theme,
 	);
+});
+
+test("sanitizeConfig accepts supported language values and falls back to auto", () => {
+	assert.equal(
+		sanitizeConfig({
+			language: "zh-CN",
+		}).language,
+		"zh-CN",
+	);
+	assert.equal(
+		sanitizeConfig({
+			language: "italian" as unknown as StakedMediaLanguageMode,
+		}).language,
+		"auto",
+	);
+});
+
+test("resolveLocale maps browser language correctly when language is auto", () => {
+	assert.equal(resolveLocale("auto", "zh-HK"), "zh-TW");
+	assert.equal(resolveLocale("auto", "zh-CN"), "zh-CN");
+	assert.equal(resolveLocale("auto", "ja-JP"), "ja");
+	assert.equal(resolveLocale("auto", "ko-KR"), "ko");
+	assert.equal(resolveLocale("auto", "es-MX"), "es");
+	assert.equal(resolveLocale("auto", "fr-FR"), "en");
+	assert.equal(resolveLocale("zh-TW", "fr-FR"), "zh-TW");
+});
+
+test("i18n helpers return translated labels and language options", () => {
+	assert.equal(t("action.generate", "zh-CN"), "生成");
+	const options = listLanguageOptions("zh-CN");
+	assert.equal(options[0]?.value, "auto");
+	assert.match(String(options[0]?.label || ""), /自动|跟随浏览器/);
 });
 
 test("extractDrafts prefers direct drafts and variant drafts", () => {

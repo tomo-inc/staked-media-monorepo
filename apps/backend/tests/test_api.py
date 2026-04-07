@@ -312,6 +312,94 @@ class FakeContentOrchestrator:
     def suggest_ideas(self, *, direction: str, domain: str, topic_hint: str, limit: int) -> dict:
         return {"ideas": [], "query": "", "suggested_keywords": []}
 
+    def list_hot_events(self, *, hours: int, limit: int, refresh: bool) -> dict:
+        items = [
+            {
+                "id": "web3::event-1",
+                "title": "ETF flow spikes",
+                "summary": "Large inflow observed.",
+                "url": "https://example.com/etf",
+                "source": "Example",
+                "source_domain": "example.com",
+                "published_at": "2026-03-31T00:00:00+00:00",
+                "relative_age_hint": "2h ago",
+                "heat_score": 96.0,
+                "category": "web3",
+                "subcategory": "",
+                "content_type": "news",
+                "author_handle": "",
+            }
+        ][:limit]
+        return {
+            "hours": hours,
+            "count": len(items),
+            "items": items,
+            "warnings": ["opentwitter unavailable: timeout"],
+            "source_status": {
+                "opennews": {"status": "ok", "count": len(items), "error": ""},
+                "opentwitter": {"status": "error", "count": 0, "error": "timeout"},
+            },
+        }
+
+    def generate_conversation_content(self, payload, request_id: str) -> dict:
+        return {
+            "request_id": request_id,
+            "mode": "B",
+            "topic": "ETF flow spikes",
+            "variants": [
+                {
+                    "variant": "normal",
+                    "label": "Normal",
+                    "drafts": [
+                        {
+                            "text": "Conversation draft one",
+                            "tone_tags": ["direct"],
+                            "rationale": "fit",
+                        }
+                    ],
+                    "formatted_drafts": ["1. Conversation draft one"],
+                    "score": {
+                        "theme_relevance": 9.0,
+                        "style_similarity": 9.0,
+                        "publishability": 9.0,
+                        "final_score": 9.0,
+                    },
+                    "target_score_met": True,
+                    "retry_count": 0,
+                    "quality_gate_reason": "",
+                    "compensation_used": False,
+                    "used_keywords": ["etf"],
+                    "source_facts": [],
+                }
+            ],
+            "recommended_variant": "normal",
+            "drafts": [
+                {
+                    "text": "Conversation draft one",
+                    "tone_tags": ["direct"],
+                    "rationale": "fit",
+                }
+            ],
+            "formatted_drafts": ["1. Conversation draft one"],
+            "score": {
+                "theme_relevance": 9.0,
+                "style_similarity": 9.0,
+                "publishability": 9.0,
+                "final_score": 9.0,
+            },
+            "target_score_met": True,
+            "quality_gate_met": True,
+            "quality_gate_reason": "",
+            "retry_count": 0,
+            "history_match_count": 0,
+            "web_enrichment_used": False,
+            "used_keywords": ["etf"],
+            "web_keywords": [],
+            "personal_phrases": [],
+            "source_facts": [],
+            "debug_summary": "ok",
+        }
+
     def analyze_exposure(self, *, username: str, text: str, topic: str, domain: str) -> dict:
         return {
             "hashtags": [],
@@ -354,6 +442,7 @@ class ApiTestCase(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        self.client.close()
         self.temp_dir.cleanup()
 
     def test_ingest_profile_then_generate_drafts(self) -> None:
@@ -460,6 +549,80 @@ class ApiTestCase(unittest.TestCase):
             },
         )
         self.assertEqual(exposure_response.status_code, 403)
+
+    def test_rebuild_persona_recreates_snapshot_from_local_tweets(self) -> None:
+        ingest = self.client.post(
+            "/api/v1/profiles/ingest",
+            json={"username": "demo-user"},
+        )
+        self.assertEqual(ingest.status_code, 200)
+
+        database = Database(self.settings.database_path)
+        with database.connect() as connection:
+            connection.execute(
+                "DELETE FROM persona_snapshots WHERE username = ?",
+                ("demo-user",),
+            )
+            connection.commit()
+
+        rebuilt = self.client.post(
+            "/api/v1/profiles/rebuild-persona",
+            json={"username": "demo-user"},
+        )
+        self.assertEqual(rebuilt.status_code, 200)
+        payload = rebuilt.json()
+        self.assertEqual(payload["username"], "demo-user")
+        self.assertEqual(payload["user_id"], "u-1")
+        self.assertEqual(payload["source_tweet_count"], self.settings.max_ingest_tweets)
+        self.assertGreater(payload["source_original_tweet_count"], 0)
+        self.assertGreater(payload["persona_snapshot_id"], 0)
+        self.assertIn("author_summary", payload["persona"])
+
+        profile_response = self.client.get("/api/v1/profiles/demo-user")
+        self.assertEqual(profile_response.status_code, 200)
+        self.assertEqual(
+            profile_response.json()["latest_persona_snapshot"]["id"],
+            payload["persona_snapshot_id"],
+        )
+
+    def test_rebuild_persona_returns_404_when_profile_missing(self) -> None:
+        response = self.client.post(
+            "/api/v1/profiles/rebuild-persona",
+            json={"username": "missing-user"},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "Profile not found")
+
+    def test_rebuild_persona_returns_409_when_tweets_missing(self) -> None:
+        database = Database(self.settings.database_path)
+        database.add_allowed_username("empty-user")
+        database.upsert_user(
+            {
+                "id": "u-empty",
+                "username": "empty-user",
+                "name": "No Tweets User",
+                "description": "",
+                "location": "",
+                "url": "",
+                "verified": False,
+                "public_metrics": {"followers_count": 0, "following_count": 0, "tweet_count": 0},
+            },
+            "2026-03-31T00:00:00+00:00",
+        )
+
+        response = self.client.post(
+            "/api/v1/profiles/rebuild-persona",
+            json={"username": "empty-user"},
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "No tweets found. Run /api/v1/profiles/ingest first")
+
+    def test_rebuild_persona_rejects_non_whitelisted_username(self) -> None:
+        response = self.client.post(
+            "/api/v1/profiles/rebuild-persona",
+            json={"username": "elonmusk"},
+        )
+        self.assertEqual(response.status_code, 403)
 
     def test_admin_whitelist_endpoints_manage_allowed_usernames(self) -> None:
         initial = self.client.get("/admin/api/v1/whitelist/usernames")
@@ -585,6 +748,100 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(debug.json()["request_id"], payload["request_id"])
         self.assertIn("variants", debug.json())
 
+    def test_content_hot_events_endpoint_returns_sorted_items(self) -> None:
+        client = TestClient(
+            create_app(
+                self.settings,
+                upstream_client=FakeUpstreamClient(),
+                llm_client=self.llm_client,
+                content_orchestrator=FakeContentOrchestrator(),  # type: ignore[arg-type]
+            )
+        )
+        response = client.get("/api/v1/content/hot-events?hours=24&limit=10&refresh=true")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["hours"], 24)
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["items"][0]["id"], "web3::event-1")
+        self.assertEqual(payload["items"][0]["source_domain"], "example.com")
+        self.assertEqual(payload["items"][0]["relative_age_hint"], "2h ago")
+        self.assertEqual(payload["items"][0]["content_type"], "news")
+        self.assertEqual(payload["warnings"], ["opentwitter unavailable: timeout"])
+        self.assertEqual(payload["source_status"]["opennews"]["status"], "ok")
+        self.assertEqual(payload["source_status"]["opentwitter"]["status"], "error")
+
+    def test_conversation_generate_endpoint_returns_mode_b_drafts(self) -> None:
+        ingest = self.client.post(
+            "/api/v1/profiles/ingest",
+            json={"username": "demo-user"},
+        )
+        self.assertEqual(ingest.status_code, 200)
+
+        response = self.client.post(
+            "/api/v1/conversation/generate",
+            json={
+                "username": "demo-user",
+                "event_payload": {
+                    "id": "web3::event-1",
+                    "title": "ETF flow spikes",
+                    "summary": "Large inflow observed.",
+                    "url": "https://example.com/etf",
+                    "source": "Example",
+                    "source_domain": "example.com",
+                    "published_at": "2026-03-31T00:00:00+00:00",
+                    "relative_age_hint": "2h ago",
+                    "heat_score": 96.0,
+                    "category": "web3",
+                    "subcategory": "",
+                    "content_type": "news",
+                    "author_handle": "",
+                },
+                "comment": "Need a concise contrarian angle.",
+                "draft_count": 2,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["mode"], "B")
+        self.assertEqual(payload["topic"], "ETF flow spikes")
+        self.assertEqual(len(payload["drafts"]), 2)
+
+    def test_conversation_generate_accepts_tweet_event_payload(self) -> None:
+        ingest = self.client.post(
+            "/api/v1/profiles/ingest",
+            json={"username": "demo-user"},
+        )
+        self.assertEqual(ingest.status_code, 200)
+
+        response = self.client.post(
+            "/api/v1/conversation/generate",
+            json={
+                "username": "demo-user",
+                "event_payload": {
+                    "id": "tweet:x:event-1",
+                    "title": "BTC is breaking out",
+                    "summary": "A high-engagement tweet about BTC momentum.",
+                    "url": "https://x.com/example/status/1",
+                    "source": "@example",
+                    "source_domain": "x.com",
+                    "published_at": "2026-03-31T00:00:00+00:00",
+                    "relative_age_hint": "2h ago",
+                    "heat_score": 88.5,
+                    "category": "social",
+                    "subcategory": "x",
+                    "content_type": "tweet",
+                    "author_handle": "example",
+                },
+                "comment": "Keep it concise and actionable.",
+                "draft_count": 2,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["mode"], "B")
+        self.assertEqual(payload["topic"], "BTC is breaking out")
+        self.assertEqual(len(payload["drafts"]), 2)
+
     def test_content_generate_returns_409_when_persona_snapshot_is_missing_before_save(self) -> None:
         temp_dir = tempfile.TemporaryDirectory()
         try:
@@ -610,29 +867,92 @@ class ApiTestCase(unittest.TestCase):
                 },
                 "2026-03-31T00:00:00+00:00",
             )
-            client = TestClient(
+            with TestClient(
                 create_app(
                     settings,
                     upstream_client=FakeUpstreamClient(),
                     llm_client=self.llm_client,
                     content_orchestrator=FakeContentOrchestrator(),  # type: ignore[arg-type]
                 )
-            )
+            ) as client:
+                response = client.post(
+                    "/api/v1/content/generate",
+                    json={
+                        "username": "demo-user",
+                        "mode": "A",
+                        "idea": "Share thoughts about BTC momentum",
+                        "topic": "BTC momentum",
+                        "keywords": ["BTC"],
+                        "draft_count": 1,
+                    },
+                )
 
-            response = client.post(
-                "/api/v1/content/generate",
-                json={
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()["detail"], "Persona not found. Run /api/v1/profiles/ingest first")
+        finally:
+            temp_dir.cleanup()
+
+    def test_conversation_generate_returns_409_when_persona_is_missing(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        try:
+            settings = Settings(
+                app_env="test",
+                database_url=f"sqlite:///{temp_dir.name}/mvp.db",
+                openai_api_key="test-key",
+                log_enable_file=False,
+            )
+            database = Database(settings.database_path)
+            database.init()
+            database.add_allowed_username("demo-user")
+            database.upsert_user(
+                {
+                    "id": "u-1",
                     "username": "demo-user",
-                    "mode": "A",
-                    "idea": "Share thoughts about BTC momentum",
-                    "topic": "BTC momentum",
-                    "keywords": ["BTC"],
-                    "draft_count": 1,
+                    "name": "Test User",
+                    "description": "",
+                    "location": "",
+                    "url": "",
+                    "verified": False,
+                    "public_metrics": {"followers_count": 1, "following_count": 1, "tweet_count": 1},
                 },
+                "2026-03-31T00:00:00+00:00",
             )
+            content_orchestrator = ContentOrchestrator(
+                settings=settings,
+                database=database,
+                llm=self.llm_client,  # type: ignore[arg-type]
+                web_enricher=FakeWebEnricher(),
+            )
+            with TestClient(
+                create_app(
+                    settings,
+                    upstream_client=FakeUpstreamClient(),
+                    llm_client=self.llm_client,
+                    content_orchestrator=content_orchestrator,
+                )
+            ) as client:
+                response = client.post(
+                    "/api/v1/conversation/generate",
+                    json={
+                        "username": "demo-user",
+                        "event_payload": {
+                            "id": "web3::event-1",
+                            "title": "ETF flow spikes",
+                            "summary": "Large inflow observed.",
+                            "url": "https://example.com/etf",
+                            "source": "Example",
+                            "source_domain": "example.com",
+                            "published_at": "2026-03-31T00:00:00+00:00",
+                            "category": "web3",
+                            "subcategory": "",
+                        },
+                        "comment": "Need a concise contrarian angle.",
+                        "draft_count": 1,
+                    },
+                )
 
-            self.assertEqual(response.status_code, 409)
-            self.assertEqual(response.json()["detail"], "Persona not found. Run /api/v1/profiles/ingest first")
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()["detail"], "Persona not found. Run /api/v1/profiles/ingest first")
         finally:
             temp_dir.cleanup()
 
