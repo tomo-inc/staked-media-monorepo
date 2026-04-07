@@ -5,7 +5,6 @@ const {
 	sendRuntimeMessage,
 	t,
 } = window.StakedMediaExtensionShared;
-const REMOTE_BACKEND_BASE_URL = "https://api.sayviner.top:8443";
 
 type OptionsPage = "home" | "api";
 type StatusKind = "" | "warn";
@@ -63,7 +62,7 @@ const fields: OptionsFields = {
 	status: document.getElementById("status") as HTMLElement,
 };
 
-applyRemoteApiGuard();
+applyApiModeGuard();
 
 init().catch((error) => {
 	setStatus(formatRuntimeError(error), "warn");
@@ -127,7 +126,7 @@ async function init() {
 		type: "get_config",
 	});
 	state.config = response.config || DEFAULTS;
-	await enforceRemoteBackendConfig();
+	await enforceDraftsApiMode();
 	applyConfig(state.config, { syncApiForm: true });
 	renderPage();
 	setStatus("", "");
@@ -144,30 +143,22 @@ function tr(key: string): string {
 	return t(key, getResolvedLocale());
 }
 
-function applyRemoteApiGuard(): void {
-	fields.backendBaseUrl.readOnly = true;
-	fields.backendBaseUrl.value = REMOTE_BACKEND_BASE_URL;
+function applyApiModeGuard(): void {
+	fields.backendBaseUrl.readOnly = false;
 	fields.apiModeContent.disabled = true;
 }
 
-async function enforceRemoteBackendConfig(): Promise<void> {
+async function enforceDraftsApiMode(): Promise<void> {
 	if (!state.config) {
 		return;
 	}
-	const currentBackendBaseUrl = String(
-		state.config.backendBaseUrl || "",
-	).trim();
-	const needsBackendBaseUrlSync =
-		currentBackendBaseUrl !== REMOTE_BACKEND_BASE_URL;
-	const needsApiModeSync = state.config.apiMode !== "drafts";
-	if (!needsBackendBaseUrlSync && !needsApiModeSync) {
+	if (state.config.apiMode === "drafts") {
 		return;
 	}
 
 	const response = await sendRuntimeMessage<OptionsConfigResponse>({
 		type: "save_config",
 		payload: {
-			backendBaseUrl: REMOTE_BACKEND_BASE_URL,
 			apiMode: "drafts",
 		},
 	});
@@ -185,9 +176,10 @@ function applyConfig(
 	state.config = next;
 
 	if (syncApiForm) {
-		fields.backendBaseUrl.value = REMOTE_BACKEND_BASE_URL;
-		fields.apiModeDrafts.checked = true;
-		fields.apiModeContent.checked = false;
+		fields.backendBaseUrl.value =
+			next.backendBaseUrl || DEFAULTS.backendBaseUrl;
+		fields.apiModeDrafts.checked = next.apiMode === "drafts";
+		fields.apiModeContent.checked = next.apiMode === "content";
 	}
 
 	fields.theme.value = next.theme || "light";
@@ -298,10 +290,7 @@ async function saveLanguage(language: StakedMediaLanguageMode): Promise<void> {
 async function saveApiMode(apiMode: StakedMediaApiMode): Promise<void> {
 	if (apiMode !== "drafts") {
 		applyConfig(state.config || DEFAULTS, { syncApiForm: true });
-		setStatus(
-			"Only Drafts API mode is enabled for this remote API test phase.",
-			"warn",
-		);
+		setStatus("Only Drafts API mode is currently enabled.", "warn");
 		return;
 	}
 	try {
@@ -318,8 +307,7 @@ async function saveApiMode(apiMode: StakedMediaApiMode): Promise<void> {
 }
 
 async function saveBackendBaseUrl(): Promise<boolean> {
-	const nextValue = REMOTE_BACKEND_BASE_URL;
-	fields.backendBaseUrl.value = REMOTE_BACKEND_BASE_URL;
+	const nextValue = String(fields.backendBaseUrl.value || "").trim();
 	const currentValue = String(
 		state.config?.backendBaseUrl || DEFAULTS.backendBaseUrl,
 	);
@@ -332,7 +320,7 @@ async function saveBackendBaseUrl(): Promise<boolean> {
 		const response = await sendRuntimeMessage<OptionsConfigResponse>({
 			type: "save_config",
 			payload: {
-				backendBaseUrl: REMOTE_BACKEND_BASE_URL,
+				backendBaseUrl: nextValue,
 				apiMode: "drafts",
 			},
 		});

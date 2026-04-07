@@ -312,26 +312,41 @@ test("background save_config accepts allowed backend hosts", async () => {
 	assert.equal(harness.storage.backendBaseUrl, "https://api.sayviner.top:8443");
 });
 
-test("background save_config rejects localhost backend hosts in remote test mode", async () => {
+test("background save_config accepts localhost backend hosts", async () => {
 	const harness = createBackgroundHarness();
 	await flushTasks();
 
 	const response = await dispatchRuntimeMessage<{
-		ok: false;
-		error: { message: string };
+		ok: boolean;
+		config: StakedMediaExtensionConfig;
 	}>(harness.listeners.onMessage, {
 		type: "save_config",
 		payload: { backendBaseUrl: "http://127.0.0.1:8000" },
 	});
 
-	assert.equal(response.ok, false);
-	assert.match(
-		response.error.message,
-		/Backend URL must be a valid http\(s\) URL pointing to an allowed host\./,
-	);
+	assert.equal(response.ok, true);
+	assert.equal(response.config.backendBaseUrl, "http://127.0.0.1:8000");
+	assert.equal(harness.storage.backendBaseUrl, "http://127.0.0.1:8000");
 });
 
-test("background get_config normalizes persisted localhost backend url to remote fallback", async () => {
+test("background save_config accepts localhost alias", async () => {
+	const harness = createBackgroundHarness();
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		config: StakedMediaExtensionConfig;
+	}>(harness.listeners.onMessage, {
+		type: "save_config",
+		payload: { backendBaseUrl: "http://localhost:9000" },
+	});
+
+	assert.equal(response.ok, true);
+	assert.equal(response.config.backendBaseUrl, "http://localhost:9000");
+	assert.equal(harness.storage.backendBaseUrl, "http://localhost:9000");
+});
+
+test("background get_config keeps persisted localhost backend url", async () => {
 	const harness = createBackgroundHarness({
 		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
 	});
@@ -345,7 +360,7 @@ test("background get_config normalizes persisted localhost backend url to remote
 	});
 
 	assert.equal(response.ok, true);
-	assert.equal(response.config.backendBaseUrl, "https://api.sayviner.top:8443");
+	assert.equal(response.config.backendBaseUrl, "http://127.0.0.1:8000");
 });
 
 test("background save_config rejects unsupported backend protocols", async () => {
@@ -563,6 +578,7 @@ test("background whitelist message does not duplicate the @ prefix", async () =>
 test("background get_hot_events calls hot-events endpoint with refresh query", async () => {
 	const seenUrls: string[] = [];
 	const harness = createBackgroundHarness({
+		storage: { backendBaseUrl: "https://api.sayviner.top:8443" },
 		fetch: async (url) => {
 			seenUrls.push(String(url));
 			return createJsonResponse(200, {
@@ -601,17 +617,20 @@ test("background get_hot_events calls hot-events endpoint with refresh query", a
 	assert.equal(response.result.items[0]?.id, "event-1");
 	assert.equal(response.result.warnings[0], "opentwitter unavailable: timeout");
 	assert.equal(response.result.source_status.opentwitter?.status, "error");
-	assert.match(seenUrls[0], /^http:\/\/127\.0\.0\.1:8000\//);
+	assert.match(seenUrls[0], /^https:\/\/api\.sayviner\.top:8443\//);
 	assert.match(
 		seenUrls[0],
 		/\/api\/v1\/content\/hot-events\?hours=24&limit=50&refresh=true$/,
 	);
 });
 
-test("background check_local_conversation_capability reports missing rebuild route", async () => {
+test("background check_local_conversation_capability reports missing rebuild route on configured backend", async () => {
+	const seenUrls: string[] = [];
 	const harness = createBackgroundHarness({
+		storage: { backendBaseUrl: "https://api.sayviner.top:8443" },
 		fetch: async (url) => {
 			const normalizedUrl = String(url);
+			seenUrls.push(normalizedUrl);
 			if (normalizedUrl.endsWith("/openapi.json")) {
 				return createJsonResponse(200, {
 					paths: {
@@ -636,12 +655,17 @@ test("background check_local_conversation_capability reports missing rebuild rou
 	assert.equal(response.ok, true);
 	assert.equal(response.result.supported, false);
 	assert.match(response.result.message, /outdated/i);
+	assert.match(
+		seenUrls[0],
+		/^https:\/\/api\.sayviner\.top:8443\/openapi\.json$/,
+	);
 });
 
-test("background conversation_generate posts event payload to conversation endpoint", async () => {
+test("background conversation_generate posts event payload to configured conversation endpoint", async () => {
 	const seenUrls: string[] = [];
 	const seenBodies: Array<Record<string, unknown>> = [];
 	const harness = createBackgroundHarness({
+		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
 		fetch: async (url, init) => {
 			seenUrls.push(String(url));
 			const requestInit = (init || {}) as { body?: string };
@@ -683,12 +707,13 @@ test("background conversation_generate posts event payload to conversation endpo
 	assert.equal(harness.storage.defaultUsername, "lin");
 });
 
-test("background conversation_generate rebuilds local persona on 409 and retries once", async () => {
+test("background conversation_generate rebuilds persona on configured backend and retries once", async () => {
 	const seenUrls: string[] = [];
 	const seenBodies: Array<Record<string, unknown>> = [];
 	let conversationAttempts = 0;
 	let rebuildAttempts = 0;
 	const harness = createBackgroundHarness({
+		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
 		fetch: async (url, init) => {
 			const normalizedUrl = String(url);
 			seenUrls.push(normalizedUrl);
@@ -766,10 +791,11 @@ test("background conversation_generate rebuilds local persona on 409 and retries
 	assert.equal(harness.storage.defaultUsername, "lin");
 });
 
-test("background conversation_generate surfaces rebuild error when persona recovery fails", async () => {
+test("background conversation_generate surfaces rebuild error when configured backend persona recovery fails", async () => {
 	let conversationAttempts = 0;
 	let rebuildAttempts = 0;
 	const harness = createBackgroundHarness({
+		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
 		fetch: async (url) => {
 			const normalizedUrl = String(url);
 			if (normalizedUrl.endsWith("/openapi.json")) {
@@ -823,10 +849,11 @@ test("background conversation_generate surfaces rebuild error when persona recov
 	assert.equal(rebuildAttempts, 1);
 });
 
-test("background conversation_generate surfaces dedicated code when rebuild endpoint is unsupported", async () => {
+test("background conversation_generate surfaces dedicated code when configured backend rebuild endpoint is unsupported", async () => {
 	let conversationAttempts = 0;
 	let rebuildAttempts = 0;
 	const harness = createBackgroundHarness({
+		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
 		fetch: async (url) => {
 			const normalizedUrl = String(url);
 			if (normalizedUrl.endsWith("/api/v1/conversation/generate")) {
