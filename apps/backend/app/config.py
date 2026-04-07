@@ -39,6 +39,10 @@ def _default_hot_events_fusion_config() -> _HotEventsFusionConfigModel:
     return _HotEventsFusionConfigModel.parse_obj({})
 
 
+def _default_app_config_model() -> _AppConfigModel:
+    return _AppConfigModel.parse_obj({})
+
+
 class _AppConfigModel(_StrictConfigModel):
     app_env: str = "development"
     database_url: str = "sqlite:///./data/mvp.db"
@@ -78,7 +82,7 @@ class _AppConfigModel(_StrictConfigModel):
 
 class _RootConfigModel(_StrictConfigModel):
     server: _ServerConfigModel = Field(default_factory=_ServerConfigModel)
-    app: _AppConfigModel = Field(default_factory=_AppConfigModel)
+    app: _AppConfigModel = Field(default_factory=_default_app_config_model)
 
 
 def _parse_sqlite_path(database_url: str) -> Path:

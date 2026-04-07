@@ -65,15 +65,16 @@ def _run_hot_events_refresh_once(app: FastAPI, *, trigger: str) -> None:
         )
         return
 
+    result_payload = result if isinstance(result, dict) else {}
     log_event(
         logger,
         logging.INFO,
         "hot_events_refresh_completed",
         trigger=trigger,
         hours=24,
-        count=int(result.get("count", 0)),
-        is_stale=bool(result.get("is_stale", False)),
-        last_refreshed_at=result.get("last_refreshed_at"),
+        count=int(result_payload.get("count", 0)),
+        is_stale=bool(result_payload.get("is_stale", False)),
+        last_refreshed_at=result_payload.get("last_refreshed_at"),
     )
 
 
