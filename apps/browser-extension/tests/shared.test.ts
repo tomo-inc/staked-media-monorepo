@@ -76,7 +76,7 @@ test("sanitizeConfig falls back for invalid stored backend URLs", () => {
 	assert.equal(config.backendBaseUrl, DEFAULT_CONFIG.backendBaseUrl);
 });
 
-test("sanitizeConfig accepts allowed backend hosts in strict mode", () => {
+test("sanitizeConfig accepts hosted backend urls in strict mode", () => {
 	const config = sanitizeConfig(
 		{
 			backendBaseUrl: "https://api.sayviner.top:8443/v1/",
@@ -87,12 +87,56 @@ test("sanitizeConfig accepts allowed backend hosts in strict mode", () => {
 	assert.equal(config.backendBaseUrl, "https://api.sayviner.top:8443/v1");
 });
 
+test("sanitizeConfig accepts local backend urls in strict mode", () => {
+	assert.equal(
+		sanitizeConfig(
+			{
+				backendBaseUrl: "http://127.0.0.1:8000/api/",
+			},
+			{ strictBackendBaseUrl: true },
+		).backendBaseUrl,
+		"http://127.0.0.1:8000/api",
+	);
+	assert.equal(
+		sanitizeConfig(
+			{
+				backendBaseUrl: "http://localhost:9000",
+			},
+			{ strictBackendBaseUrl: true },
+		).backendBaseUrl,
+		"http://localhost:9000",
+	);
+});
+
 test("sanitizeConfig rejects unsupported backend protocols in strict mode", () => {
 	assert.throws(
 		() =>
 			sanitizeConfig(
 				{
 					backendBaseUrl: "ftp://api.example.com",
+				},
+				{ strictBackendBaseUrl: true },
+			),
+		/Backend URL must be a valid http\(s\) URL pointing to an allowed host\./,
+	);
+});
+
+test("sanitizeConfig rejects disallowed protocol and host combinations in strict mode", () => {
+	assert.throws(
+		() =>
+			sanitizeConfig(
+				{
+					backendBaseUrl: "http://api.sayviner.top:8443",
+				},
+				{ strictBackendBaseUrl: true },
+			),
+		/Backend URL must be a valid http\(s\) URL pointing to an allowed host\./,
+	);
+	assert.throws(
+		() =>
+			sanitizeConfig(
+				{
+					backendBaseUrl: "https://localhost:8000",
 				},
 				{ strictBackendBaseUrl: true },
 			),

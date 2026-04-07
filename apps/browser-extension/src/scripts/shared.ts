@@ -17,6 +17,8 @@ interface StakedMediaExtensionSharedHost {
 
 		const ALLOWED_BACKEND_HOSTS: ReadonlySet<string> = new Set([
 			"api.sayviner.top",
+			"127.0.0.1",
+			"localhost",
 		]);
 
 		type ThemeMode = "light" | "dark" | "system";
@@ -481,6 +483,19 @@ interface StakedMediaExtensionSharedHost {
 					throw new Error(
 						`Backend host "${parsed.hostname}" is not in the allowed list. Allowed: ${[...ALLOWED_BACKEND_HOSTS].join(", ")}`,
 					);
+				}
+				if (
+					parsed.hostname === "api.sayviner.top" &&
+					parsed.protocol !== "https:"
+				) {
+					throw new Error("Hosted backend requires https");
+				}
+				if (
+					(parsed.hostname === "127.0.0.1" ||
+						parsed.hostname === "localhost") &&
+					parsed.protocol !== "http:"
+				) {
+					throw new Error("Local backend requires http");
 				}
 				const normalizedPath =
 					parsed.pathname && parsed.pathname !== "/"

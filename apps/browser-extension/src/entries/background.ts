@@ -103,10 +103,9 @@ const API = {
 	conversationGenerate: "/api/v1/conversation/generate",
 	exposureAnalyze: "/api/v1/exposure/analyze",
 };
-const LOCAL_CONVERSATION_BASE_URL = "http://127.0.0.1:8000";
 const LOCAL_CAPABILITY_CACHE_TTL_MS = 60 * 1000;
 let cachedLocalConversationCapability:
-	| (LocalConversationCapability & { checkedAtMs: number })
+	| (LocalConversationCapability & { checkedAtMs: number; baseUrl: string })
 	| null = null;
 
 initializeHostBehavior();
@@ -190,13 +189,17 @@ async function getConfig(): Promise<StakedMediaExtensionConfig> {
 async function saveConfig(
 	patch: BackgroundPayload,
 ): Promise<StakedMediaExtensionConfig> {
+	const currentConfig = await getConfig();
 	const nextConfig = sanitizeConfig(
 		{
-			...(await getConfig()),
+			...currentConfig,
 			...patch,
 		},
 		{ strictBackendBaseUrl: true },
 	);
+	if (nextConfig.backendBaseUrl !== currentConfig.backendBaseUrl) {
+		cachedLocalConversationCapability = null;
+	}
 	await storageSet(nextConfig);
 	await applyHostMode(nextConfig.hostMode);
 	return nextConfig;
@@ -205,10 +208,6 @@ async function saveConfig(
 async function getBackendBaseUrl(): Promise<string> {
 	const config = await getConfig();
 	return normalizeBaseUrl(config.backendBaseUrl || FALLBACK_BACKEND_BASE_URL);
-}
-
-function getLocalConversationBaseUrl(): string {
-	return normalizeBaseUrl(LOCAL_CONVERSATION_BASE_URL);
 }
 
 async function healthCheck(): Promise<{
@@ -334,11 +333,12 @@ async function getHotEvents(
 	const limit = clampInt(payload.limit || 50, 1, 200);
 	const refresh = Boolean(payload.refresh);
 	const query = `hours=${hours}&limit=${limit}&refresh=${refresh ? "true" : "false"}`;
+	const baseUrl = await getBackendBaseUrl();
 	return requestJson<Record<string, unknown> | null>({
 		path: `${API.hotEvents}?${query}`,
 		method: "GET",
-		baseUrlOverride: getLocalConversationBaseUrl(),
-		unreachableMessage: formatLocalConversationUnreachableMessage(),
+		baseUrlOverride: baseUrl,
+		unreachableMessage: formatConversationBackendUnreachableMessage(baseUrl),
 	});
 }
 
@@ -358,6 +358,7 @@ async function generateConversation(
 	if (payload.event_payload && typeof payload.event_payload === "object") {
 		body.event_payload = payload.event_payload;
 	}
+	const baseUrl = await getBackendBaseUrl();
 	let result: unknown;
 	try {
 		result = await requestJson<unknown>({
@@ -365,8 +366,8 @@ async function generateConversation(
 			method: "POST",
 			body,
 			deniedUsername: username,
-			baseUrlOverride: getLocalConversationBaseUrl(),
-			unreachableMessage: formatLocalConversationUnreachableMessage(),
+			baseUrlOverride: baseUrl,
+			unreachableMessage: formatConversationBackendUnreachableMessage(baseUrl),
 		});
 	} catch (error) {
 		const runtimeError = error as RuntimeErrorWithStatus;
@@ -378,7 +379,7 @@ async function generateConversation(
 			const capability = await checkLocalConversationCapability(false);
 			if (!capability.supported) {
 				throw createRuntimeError(
-					`${capability.message} Please restart local backend with latest code and --reload.`,
+					`${capability.message} Update or restart the configured backend and try again.`,
 					{
 						code: "LOCAL_BACKEND_REBUILD_UNSUPPORTED",
 						path: API.rebuildPersona,
@@ -391,8 +392,9 @@ async function generateConversation(
 					method: "POST",
 					body: { username },
 					deniedUsername: username,
-					baseUrlOverride: getLocalConversationBaseUrl(),
-					unreachableMessage: formatLocalConversationUnreachableMessage(),
+					baseUrlOverride: baseUrl,
+					unreachableMessage:
+						formatConversationBackendUnreachableMessage(baseUrl),
 				});
 			} catch (rebuildError) {
 				const rebuildRuntimeError = rebuildError as RuntimeErrorWithStatus;
@@ -401,7 +403,7 @@ async function generateConversation(
 					rebuildRuntimeError?.status === 405
 				) {
 					throw createRuntimeError(
-						"Local backend does not support /api/v1/profiles/rebuild-persona (backend version is outdated).",
+						"Configured backend does not support /api/v1/profiles/rebuild-persona (backend version is outdated).",
 						{
 							status: rebuildRuntimeError.status,
 							payload: rebuildRuntimeError.payload,
@@ -417,8 +419,9 @@ async function generateConversation(
 				method: "POST",
 				body,
 				deniedUsername: username,
-				baseUrlOverride: getLocalConversationBaseUrl(),
-				unreachableMessage: formatLocalConversationUnreachableMessage(),
+				baseUrlOverride: baseUrl,
+				unreachableMessage:
+					formatConversationBackendUnreachableMessage(baseUrl),
 			});
 		} else {
 			throw error;
@@ -611,9 +614,8 @@ async function requestJson<TResponse = unknown>({
 	return payload as TResponse;
 }
 
-function formatLocalConversationUnreachableMessage(): string {
-	const localBaseUrl = getLocalConversationBaseUrl();
-	return `Local conversation backend is unreachable at ${localBaseUrl}. Start the local API server first.`;
+function formatConversationBackendUnreachableMessage(baseUrl: string): string {
+	return `Conversation backend is unreachable at ${baseUrl}. Start or update the configured API server first.`;
 }
 
 function extractErrorDetailText(payload: unknown): string {
@@ -630,9 +632,11 @@ async function checkLocalConversationCapability(
 	forceRefresh: boolean,
 ): Promise<LocalConversationCapability> {
 	const now = Date.now();
+	const baseUrl = await getBackendBaseUrl();
 	if (
 		!forceRefresh &&
 		cachedLocalConversationCapability &&
+		cachedLocalConversationCapability.baseUrl === baseUrl &&
 		now - cachedLocalConversationCapability.checkedAtMs <
 			LOCAL_CAPABILITY_CACHE_TTL_MS
 	) {
@@ -647,19 +651,20 @@ async function checkLocalConversationCapability(
 		const openApi = await requestJson<Record<string, unknown>>({
 			path: "/openapi.json",
 			method: "GET",
-			baseUrlOverride: getLocalConversationBaseUrl(),
-			unreachableMessage: formatLocalConversationUnreachableMessage(),
+			baseUrlOverride: baseUrl,
+			unreachableMessage: formatConversationBackendUnreachableMessage(baseUrl),
 		});
 		const supported = hasRebuildPersonaPost(openApi);
 		const capability: LocalConversationCapability = {
 			supported,
 			message: supported
-				? "Local conversation capability check passed."
-				: "Local backend is outdated: /api/v1/profiles/rebuild-persona (POST) is missing.",
+				? "Conversation capability check passed."
+				: "Configured backend is outdated: /api/v1/profiles/rebuild-persona (POST) is missing.",
 			checkedAt: new Date().toISOString(),
 		};
 		cachedLocalConversationCapability = {
 			...capability,
+			baseUrl,
 			checkedAtMs: now,
 		};
 		return capability;
@@ -669,11 +674,12 @@ async function checkLocalConversationCapability(
 			supported: false,
 			message:
 				runtimeError?.message ||
-				"Failed to verify local backend capability from /openapi.json.",
+				"Failed to verify backend capability from /openapi.json.",
 			checkedAt: new Date().toISOString(),
 		};
 		cachedLocalConversationCapability = {
 			...capability,
+			baseUrl,
 			checkedAtMs: now,
 		};
 		return capability;

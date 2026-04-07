@@ -225,7 +225,6 @@ interface PanelUi {
 
 	const SETTINGS_DEFAULTS = { ...DEFAULT_CONFIG };
 	const HOT_EVENTS_CACHE_TTL_MS = 120 * 1000;
-	const REMOTE_BACKEND_BASE_URL = "https://api.sayviner.top:8443";
 
 	const STATE: PanelState = {
 		config: null,
@@ -352,7 +351,7 @@ interface PanelUi {
 		) as NodeListOf<HTMLElement>,
 	};
 
-	applyRemoteApiGuard();
+	applyApiModeGuard();
 
 	// Tab navigation
 	(
@@ -579,7 +578,7 @@ interface PanelUi {
 			type: "get_config",
 		});
 		STATE.config = configResponse.config;
-		await enforceRemoteBackendConfig();
+		await enforceDraftsApiMode();
 		applyTheme(STATE.config?.theme);
 		hydrateInputs();
 		await refreshHealth();
@@ -617,7 +616,7 @@ interface PanelUi {
 			if (!supported) {
 				STATE.conversationErrorHint =
 					String(response?.result?.message || "").trim() ||
-					"Local conversation backend is outdated. Please restart local backend with latest code and --reload.";
+					`Configured backend is outdated. Update or restart ${getConfiguredBackendBaseUrl()} with the latest code.`;
 				renderConversationResults();
 				renderSendToDraftButton();
 				return;
@@ -629,18 +628,24 @@ interface PanelUi {
 			}
 		} catch (_error) {
 			if (!STATE.conversationGenerated) {
-				STATE.conversationErrorHint =
-					"Unable to verify local backend capability. Make sure http://127.0.0.1:8000 is running.";
+				STATE.conversationErrorHint = `Unable to verify backend capability. Make sure ${getConfiguredBackendBaseUrl()} is reachable.`;
 				renderConversationResults();
 				renderSendToDraftButton();
 			}
 		}
 	}
 
-	function applyRemoteApiGuard(): void {
-		ui.sBackendBaseUrl.readOnly = true;
-		ui.sBackendBaseUrl.value = REMOTE_BACKEND_BASE_URL;
+	function applyApiModeGuard(): void {
+		ui.sBackendBaseUrl.readOnly = false;
 		ui.sApiModeContent.disabled = true;
+	}
+
+	function getConfiguredBackendBaseUrl(): string {
+		return (
+			String(
+				STATE.config?.backendBaseUrl || SETTINGS_DEFAULTS.backendBaseUrl,
+			).trim() || SETTINGS_DEFAULTS.backendBaseUrl
+		);
 	}
 
 	function getResolvedLocale(): StakedMediaLocale {
@@ -695,17 +700,11 @@ interface PanelUi {
 		ui.sLanguage.value = languageSetting;
 	}
 
-	async function enforceRemoteBackendConfig(): Promise<void> {
+	async function enforceDraftsApiMode(): Promise<void> {
 		if (!STATE.config) {
 			return;
 		}
-		const currentBackendBaseUrl = String(
-			STATE.config.backendBaseUrl || "",
-		).trim();
-		const needsBackendBaseUrlSync =
-			currentBackendBaseUrl !== REMOTE_BACKEND_BASE_URL;
-		const needsApiModeSync = STATE.config.apiMode !== "drafts";
-		if (!needsBackendBaseUrlSync && !needsApiModeSync) {
+		if (STATE.config.apiMode === "drafts") {
 			return;
 		}
 
@@ -713,7 +712,6 @@ interface PanelUi {
 			const response = await sendRuntimeMessage<PanelConfigResponse>({
 				type: "save_config",
 				payload: {
-					backendBaseUrl: REMOTE_BACKEND_BASE_URL,
 					apiMode: "drafts",
 				},
 			});
@@ -728,9 +726,10 @@ interface PanelUi {
 		const config = STATE.config || {};
 		const merged = { ...SETTINGS_DEFAULTS, ...config };
 		if (syncApiForm) {
-			ui.sBackendBaseUrl.value = REMOTE_BACKEND_BASE_URL;
-			ui.sApiModeDrafts.checked = true;
-			ui.sApiModeContent.checked = false;
+			ui.sBackendBaseUrl.value =
+				merged.backendBaseUrl || SETTINGS_DEFAULTS.backendBaseUrl;
+			ui.sApiModeDrafts.checked = merged.apiMode === "drafts";
+			ui.sApiModeContent.checked = merged.apiMode === "content";
 		}
 		ui.sTheme.value = merged.theme || "light";
 		ui.sLanguage.value = merged.language || "auto";
@@ -781,7 +780,7 @@ interface PanelUi {
 		if (apiMode !== "drafts") {
 			loadSettingsUI({ syncApiForm: true });
 			renderSettingsStatus(
-				"Only Drafts API mode is enabled for this remote API test phase.",
+				"Only Drafts API mode is currently enabled.",
 				"warn",
 			);
 			return;
@@ -803,8 +802,7 @@ interface PanelUi {
 	}
 
 	async function saveBackendBaseUrl(): Promise<boolean> {
-		const nextValue = REMOTE_BACKEND_BASE_URL;
-		ui.sBackendBaseUrl.value = REMOTE_BACKEND_BASE_URL;
+		const nextValue = String(ui.sBackendBaseUrl.value || "").trim();
 		const currentValue = String(
 			STATE.config?.backendBaseUrl || SETTINGS_DEFAULTS.backendBaseUrl,
 		);
@@ -815,7 +813,7 @@ interface PanelUi {
 			const response = await sendRuntimeMessage<PanelConfigResponse>({
 				type: "save_config",
 				payload: {
-					backendBaseUrl: REMOTE_BACKEND_BASE_URL,
+					backendBaseUrl: nextValue,
 					apiMode: "drafts",
 				},
 			});
@@ -2046,30 +2044,31 @@ interface PanelUi {
 		const code = String(runtimeError?.code || "").trim();
 		const path = String(runtimeError?.path || "");
 		const detailText = extractErrorDetailText(runtimeError?.payload);
+		const configuredBaseUrl = getConfiguredBackendBaseUrl();
 		if (code === "LOCAL_BACKEND_REBUILD_UNSUPPORTED") {
-			return "Local backend is outdated: /api/v1/profiles/rebuild-persona is unavailable. Restart local backend with latest code and --reload.";
+			return `Configured backend is outdated: /api/v1/profiles/rebuild-persona is unavailable on ${configuredBaseUrl}. Update or restart that backend.`;
 		}
 		if (code === "LOCAL_BACKEND_OPENAPI_UNAVAILABLE") {
-			return "Local backend capability check failed. Confirm http://127.0.0.1:8000 is reachable.";
+			return `Backend capability check failed. Confirm ${configuredBaseUrl} is reachable.`;
 		}
 		if (runtimeError?.status === 404) {
 			if (path.startsWith("/api/v1/profiles/rebuild-persona")) {
-				return "Profile is missing in local backend. Import profile history into local DB first.";
+				return `Profile is missing in the configured backend (${configuredBaseUrl}). Import profile history there first.`;
 			}
 			if (path.startsWith("/api/v1/profiles/")) {
 				return "Profile not found in the backend. Run ingest first.";
 			}
 			if (path.startsWith("/api/v1/content/hot-events")) {
-				return "Local conversation backend does not expose hot-events. Start or update local backend at http://127.0.0.1:8000.";
+				return `Configured backend does not expose hot-events. Start or update backend at ${configuredBaseUrl}.`;
 			}
 			if (path.startsWith("/api/v1/conversation/generate")) {
 				if (detailText.includes("selected hot event was not found")) {
 					return "Selected hot event expired. Refresh hot events and select again.";
 				}
-				return "Local conversation endpoint is unavailable. Start or update local backend at http://127.0.0.1:8000.";
+				return `Conversation endpoint is unavailable on the configured backend. Start or update backend at ${configuredBaseUrl}.`;
 			}
 			if (path === "/openapi.json") {
-				return "Local backend OpenAPI route is unavailable. Start or update local backend at http://127.0.0.1:8000.";
+				return `Configured backend OpenAPI route is unavailable. Start or update backend at ${configuredBaseUrl}.`;
 			}
 			return "Backend endpoint returned 404. Check API Base URL and backend version.";
 		}
@@ -2077,11 +2076,11 @@ interface PanelUi {
 			runtimeError?.status === 405 &&
 			path.startsWith("/api/v1/profiles/rebuild-persona")
 		) {
-			return "Local backend does not support persona rebuild yet. Restart local backend with latest code and --reload.";
+			return `Configured backend does not support persona rebuild yet. Update or restart backend at ${configuredBaseUrl}.`;
 		}
 		if (runtimeError?.status === 409) {
 			if (path.startsWith("/api/v1/profiles/rebuild-persona")) {
-				return "Local backend has no tweets for this user, so persona rebuild cannot run yet.";
+				return `Configured backend has no tweets for this user, so persona rebuild cannot run yet.`;
 			}
 			return "Persona is missing in the backend. Re-run ingest before generating.";
 		}
