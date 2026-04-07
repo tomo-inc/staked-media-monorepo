@@ -72,6 +72,7 @@ class _AppConfigModel(_StrictConfigModel):
     max_generation_attempts: int = 3
     evaluation_max_workers: int = 4
     variant_max_workers: int = 3
+    hot_events_refresh_interval_seconds: int = Field(3600, ge=1)
     hot_events_fusion: _HotEventsFusionConfigModel = Field(default_factory=_default_hot_events_fusion_config)
 
 
@@ -163,6 +164,7 @@ class Settings:
     max_generation_attempts: int = 3
     evaluation_max_workers: int = 4
     variant_max_workers: int = 3
+    hot_events_refresh_interval_seconds: int = 3600
     hot_events_fusion: HotEventsFusionSettings = field(default_factory=HotEventsFusionSettings)
 
     def __post_init__(self) -> None:

@@ -354,6 +354,11 @@ class HotEventsResponse(BaseModel):
     items: list[HotEventItem] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     source_status: dict[str, HotEventsSourceStatus] = Field(default_factory=dict)
+    last_refreshed_at: str = ""
+    last_attempted_at: str = ""
+    refresh_interval_seconds: int = 3600
+    is_stale: bool = False
+    last_refresh_error: str = ""
 
 
 class ConversationGenerateRequest(BaseModel):
