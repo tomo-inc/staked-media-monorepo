@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from app.config import Settings
 from app.database import Database
 from app.orchestrator import ContentOrchestrator
-from app.schemas import ContentGenerateRequest
+from app.schemas import ContentGenerateRequest, ConversationGenerateRequest
 
 
 class FakeLLM:
@@ -68,6 +68,41 @@ class FakeWebEnricher:
         }
 
 
+class FakeHotEventsService:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.latest_refresh = False
+
+    def list_hot_events(self, *, hours: int, limit: int, refresh: bool) -> dict:
+        self.calls += 1
+        self.latest_refresh = refresh
+        items = [
+            {
+                "id": "web3::event-1",
+                "title": "Bitcoin ETF flow spikes",
+                "summary": "ETF inflow jumps in the past 24 hours.",
+                "url": "https://example.com/etf",
+                "source": "Example News",
+                "source_domain": "example.com",
+                "published_at": "2026-03-31T00:00:00+00:00",
+                "relative_age_hint": "2h ago",
+                "heat_score": 96.0,
+                "category": "web3",
+                "subcategory": "",
+                "content_type": "news",
+                "author_handle": "",
+            }
+        ][:limit]
+        return {
+            "items": items,
+            "warnings": [],
+            "source_status": {
+                "opennews": {"status": "ok", "count": len(items), "error": ""},
+                "opentwitter": {"status": "ok", "count": 0, "error": ""},
+            },
+        }
+
+
 class OrchestratorTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -82,11 +117,13 @@ class OrchestratorTestCase(unittest.TestCase):
         self.database.init()
         self.llm = FakeLLM()
         self.web = FakeWebEnricher()
+        self.hot = FakeHotEventsService()
         self.orchestrator = ContentOrchestrator(
             settings=self.settings,
             database=self.database,
             llm=self.llm,  # type: ignore[arg-type]
             web_enricher=self.web,  # type: ignore[arg-type]
+            hot_events_service=self.hot,  # type: ignore[arg-type]
         )
 
         now = datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -299,6 +336,29 @@ class OrchestratorTestCase(unittest.TestCase):
         self.assertIn("hashtags", exposure)
         self.assertIn("best_posting_windows", exposure)
         self.assertIn("heat_score", exposure)
+
+    def test_list_hot_events_uses_service_and_returns_payload(self) -> None:
+        payload = self.orchestrator.list_hot_events(hours=24, limit=20, refresh=True)
+        self.assertEqual(payload["hours"], 24)
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["items"][0]["id"], "web3::event-1")
+        self.assertEqual(payload["warnings"], [])
+        self.assertEqual(payload["source_status"]["opennews"]["status"], "ok")
+        self.assertEqual(self.hot.calls, 1)
+        self.assertTrue(self.hot.latest_refresh)
+
+    def test_generate_conversation_content_uses_mode_b_and_selected_event(self) -> None:
+        payload = ConversationGenerateRequest(
+            username="demo",
+            event_id="web3::event-1",
+            comment="I think this may trigger rotation into large caps.",
+            draft_count=2,
+        )
+        result = self.orchestrator.generate_conversation_content(payload, request_id="req-conv-1")
+        self.assertEqual(result["request_id"], "req-conv-1")
+        self.assertEqual(result["mode"], "B")
+        self.assertEqual(result["topic"], "Bitcoin ETF flow spikes")
+        self.assertEqual(len(result["drafts"]), 2)
 
 
 if __name__ == "__main__":

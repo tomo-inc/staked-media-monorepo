@@ -417,10 +417,10 @@
                     </svg>
                   </span>
                   <span class="settings-item-copy">
-                    <span class="settings-item-title">API &amp; Generation</span>
+                    <span class="settings-item-title" data-i18n="settings.apiGeneration">API &amp; Generation</span>
                   </span>
                 </span>
-                <span class="settings-item-chevron" aria-hidden="true">›</span>
+                <span class="settings-item-chevron" aria-hidden="true">&gt;</span>
               </button>
 
               <button id="toggleOpenModeButton" class="settings-item" type="button">
@@ -446,13 +446,34 @@
                     </svg>
                   </span>
                   <span class="settings-item-copy">
-                    <span class="settings-item-title">Theme</span>
+                    <span class="settings-item-title" data-i18n="label.theme">Theme</span>
                   </span>
                 </span>
                 <select id="theme" class="settings-select">
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
                   <option value="system">System</option>
+                </select>
+              </label>
+              <label class="settings-item settings-item-select" for="language">
+                <span class="settings-item-main">
+                  <span class="settings-item-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M4 6h8M8 4v2m0 0c0 4-1.6 6.6-4 8m4-8c.9 2.3 2.2 4.2 4 5.6M14 18h6M17 15v6" stroke="currentColor" stroke-linecap="round"></path>
+                    </svg>
+                  </span>
+                  <span class="settings-item-copy">
+                    <span class="settings-item-title" data-i18n="label.language">Language</span>
+                  </span>
+                </span>
+                <select id="language" class="settings-select">
+                  <option value="auto">Auto (Browser)</option>
+                  <option value="en">English</option>
+                  <option value="zh-CN">简体中文</option>
+                  <option value="zh-TW">繁體中文</option>
+                  <option value="ja">日本語</option>
+                  <option value="ko">한국어</option>
+                  <option value="es">Español</option>
                 </select>
               </label>
             </div>
@@ -462,21 +483,21 @@
         <div id="apiPage" class="settings-page" hidden>
           <div class="section">
             <label>
-              API Base URL
+              <span data-i18n="label.apiBaseUrl">API Base URL</span>
               <input id="backendBaseUrl" type="text" placeholder="https://api.sayviner.top:8443">
             </label>
-            <div class="helper">Press Enter or click outside to save the URL.</div>
+            <div class="helper" data-i18n="helper.apiBaseUrlSave">Press Enter or click outside to save the URL.</div>
 
             <div class="field-block">
-              <div class="field-title">Generation API Mode</div>
+              <div class="field-title" data-i18n="label.generationApiMode">Generation API Mode</div>
               <div class="radio-group">
                 <div class="radio-option">
                   <input type="radio" name="apiMode" id="apiModeDrafts" value="drafts" checked>
-                  <label for="apiModeDrafts">Drafts API (/api/v1/drafts/generate)</label>
+                  <label for="apiModeDrafts" id="apiModeDraftsLabel" data-i18n="mode.draftsApi">Drafts API (/api/v1/drafts/generate)</label>
                 </div>
                 <div class="radio-option">
                   <input type="radio" name="apiMode" id="apiModeContent" value="content">
-                  <label for="apiModeContent">Content API (/api/v1/content/generate)</label>
+                  <label for="apiModeContent" id="apiModeContentLabel" data-i18n="mode.contentApi">Content API (/api/v1/content/generate)</label>
                 </div>
               </div>
             </div>

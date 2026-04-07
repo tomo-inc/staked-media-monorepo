@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 
@@ -23,11 +23,28 @@ class _ServerConfigModel(_StrictConfigModel):
     reload: bool = False
 
 
+class _HotEventsFusionConfigModel(_StrictConfigModel):
+    source_weight_news: float = Field(1.0, ge=0.0)
+    source_weight_tweet: float = Field(1.0, ge=0.0)
+    tweet_weight_retweet: float = Field(1.5, ge=0.0)
+    tweet_weight_like: float = Field(1.0, ge=0.0)
+    tweet_weight_reply: float = Field(2.0, ge=0.0)
+    tweet_weight_quote: float = Field(2.5, ge=0.0)
+    tweet_follower_cap_k: float = Field(50.0, ge=0.0)
+    time_decay_half_life_hours: float = Field(12.0, gt=0.0)
+    max_heat_score: float = Field(100.0, gt=0.0)
+
+
+def _default_hot_events_fusion_config() -> _HotEventsFusionConfigModel:
+    return _HotEventsFusionConfigModel.parse_obj({})
+
+
 class _AppConfigModel(_StrictConfigModel):
     app_env: str = "development"
     database_url: str = "sqlite:///./data/mvp.db"
     twitter_data_url: str = "http://52.76.50.165:8081"
     twitter_data_proxy: str = ""
+    provider_6551_token: str = ""
     llm_http_proxy: str = "http://192.168.1.199:9000"
     llm_provider: str = "openai"
     openai_api_key: str = ""
@@ -55,6 +72,7 @@ class _AppConfigModel(_StrictConfigModel):
     max_generation_attempts: int = 3
     evaluation_max_workers: int = 4
     variant_max_workers: int = 3
+    hot_events_fusion: _HotEventsFusionConfigModel = Field(default_factory=_default_hot_events_fusion_config)
 
 
 class _RootConfigModel(_StrictConfigModel):
@@ -99,11 +117,25 @@ class ServerSettings:
 
 
 @dataclass(frozen=True)
+class HotEventsFusionSettings:
+    source_weight_news: float = 1.0
+    source_weight_tweet: float = 1.0
+    tweet_weight_retweet: float = 1.5
+    tweet_weight_like: float = 1.0
+    tweet_weight_reply: float = 2.0
+    tweet_weight_quote: float = 2.5
+    tweet_follower_cap_k: float = 50.0
+    time_decay_half_life_hours: float = 12.0
+    max_heat_score: float = 100.0
+
+
+@dataclass(frozen=True)
 class Settings:
     app_env: str = "development"
     database_url: str = "sqlite:///./data/mvp.db"
     twitter_data_url: str = "http://52.76.50.165:8081"
     twitter_data_proxy: str = ""
+    provider_6551_token: str = ""
     llm_http_proxy: str = "http://192.168.1.199:9000"
     llm_provider: str = "openai"
     openai_api_key: str = ""
@@ -131,6 +163,7 @@ class Settings:
     max_generation_attempts: int = 3
     evaluation_max_workers: int = 4
     variant_max_workers: int = 3
+    hot_events_fusion: HotEventsFusionSettings = field(default_factory=HotEventsFusionSettings)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "llm_provider", _normalize_llm_provider(self.llm_provider))
@@ -178,6 +211,11 @@ def _load_config_file_cached(config_path: str) -> LoadedConfig:
     app_payload = parsed.app.dict()
     app_payload["database_url"] = _resolve_sqlite_url(app_payload["database_url"], base_dir=base_dir)
     app_payload["log_file_path"] = str(_resolve_path(app_payload["log_file_path"], base_dir=base_dir))
+    fusion_payload = app_payload.get("hot_events_fusion") or {}
+    if isinstance(fusion_payload, dict):
+        app_payload["hot_events_fusion"] = HotEventsFusionSettings(**fusion_payload)
+    else:
+        raise ValueError("`app.hot_events_fusion` must be a JSON object")
 
     return LoadedConfig(
         config_path=resolved_path,

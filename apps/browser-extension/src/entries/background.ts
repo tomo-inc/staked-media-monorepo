@@ -7,6 +7,8 @@ type BackgroundGlobalRoot = typeof globalThis & {
 interface RuntimeErrorWithStatus extends Error {
 	status?: number;
 	payload?: unknown;
+	path?: string;
+	code?: string;
 }
 
 interface ProfileRecord extends Record<string, unknown> {
@@ -46,6 +48,14 @@ interface RequestJsonOptions {
 	method: "GET" | "POST";
 	body?: Record<string, unknown>;
 	deniedUsername?: string;
+	baseUrlOverride?: string;
+	unreachableMessage?: string;
+}
+
+interface LocalConversationCapability {
+	supported: boolean;
+	message: string;
+	checkedAt: string;
 }
 
 interface ComposerStateResult {
@@ -85,11 +95,19 @@ const API = {
 	profile: (username: string) =>
 		`/api/v1/profiles/${encodeURIComponent(username)}`,
 	ingest: "/api/v1/profiles/ingest",
+	rebuildPersona: "/api/v1/profiles/rebuild-persona",
 	draftsGenerate: "/api/v1/drafts/generate",
 	contentGenerate: "/api/v1/content/generate",
+	hotEvents: "/api/v1/content/hot-events",
 	contentIdeas: "/api/v1/content/ideas",
+	conversationGenerate: "/api/v1/conversation/generate",
 	exposureAnalyze: "/api/v1/exposure/analyze",
 };
+const LOCAL_CONVERSATION_BASE_URL = "http://127.0.0.1:8000";
+const LOCAL_CAPABILITY_CACHE_TTL_MS = 60 * 1000;
+let cachedLocalConversationCapability:
+	| (LocalConversationCapability & { checkedAtMs: number })
+	| null = null;
 
 initializeHostBehavior();
 
@@ -137,6 +155,17 @@ async function handleMessage(
 			generate_content: async (payload) => ({
 				result: await generateContent(payload || {}),
 			}),
+			get_hot_events: async (payload) => ({
+				result: await getHotEvents(payload || {}),
+			}),
+			check_local_conversation_capability: async (payload) => ({
+				result: await checkLocalConversationCapability(
+					Boolean(payload?.refresh),
+				),
+			}),
+			conversation_generate: async (payload) => ({
+				result: await generateConversation(payload || {}),
+			}),
 			suggest_ideas: async (payload) => ({
 				result: await suggestIdeas(payload || {}),
 			}),
@@ -176,6 +205,10 @@ async function saveConfig(
 async function getBackendBaseUrl(): Promise<string> {
 	const config = await getConfig();
 	return normalizeBaseUrl(config.backendBaseUrl || FALLBACK_BACKEND_BASE_URL);
+}
+
+function getLocalConversationBaseUrl(): string {
+	return normalizeBaseUrl(LOCAL_CONVERSATION_BASE_URL);
 }
 
 async function healthCheck(): Promise<{
@@ -291,6 +324,107 @@ async function generateContent(payload: BackgroundPayload): Promise<unknown> {
 		deniedUsername: body.username,
 	});
 	await saveConfig({ defaultUsername: body.username });
+	return result;
+}
+
+async function getHotEvents(
+	payload: BackgroundPayload,
+): Promise<Record<string, unknown> | null> {
+	const hours = clampInt(payload.hours || 24, 1, 72);
+	const limit = clampInt(payload.limit || 50, 1, 200);
+	const refresh = Boolean(payload.refresh);
+	const query = `hours=${hours}&limit=${limit}&refresh=${refresh ? "true" : "false"}`;
+	return requestJson<Record<string, unknown> | null>({
+		path: `${API.hotEvents}?${query}`,
+		method: "GET",
+		baseUrlOverride: getLocalConversationBaseUrl(),
+		unreachableMessage: formatLocalConversationUnreachableMessage(),
+	});
+}
+
+async function generateConversation(
+	payload: BackgroundPayload,
+): Promise<unknown> {
+	const username = assertNonEmpty(payload.username, "username");
+	const body: Record<string, unknown> = {
+		username,
+		comment: String(payload.comment || "").trim(),
+		draft_count: clampInt(payload.draft_count || 3, 1, 10),
+	};
+	const eventId = String(payload.event_id || "").trim();
+	if (eventId) {
+		body.event_id = eventId;
+	}
+	if (payload.event_payload && typeof payload.event_payload === "object") {
+		body.event_payload = payload.event_payload;
+	}
+	let result: unknown;
+	try {
+		result = await requestJson<unknown>({
+			path: API.conversationGenerate,
+			method: "POST",
+			body,
+			deniedUsername: username,
+			baseUrlOverride: getLocalConversationBaseUrl(),
+			unreachableMessage: formatLocalConversationUnreachableMessage(),
+		});
+	} catch (error) {
+		const runtimeError = error as RuntimeErrorWithStatus;
+		const detailText = extractErrorDetailText(runtimeError?.payload);
+		if (
+			runtimeError?.status === 409 &&
+			detailText.includes("persona not found")
+		) {
+			const capability = await checkLocalConversationCapability(false);
+			if (!capability.supported) {
+				throw createRuntimeError(
+					`${capability.message} Please restart local backend with latest code and --reload.`,
+					{
+						code: "LOCAL_BACKEND_REBUILD_UNSUPPORTED",
+						path: API.rebuildPersona,
+					},
+				);
+			}
+			try {
+				await requestJson<unknown>({
+					path: API.rebuildPersona,
+					method: "POST",
+					body: { username },
+					deniedUsername: username,
+					baseUrlOverride: getLocalConversationBaseUrl(),
+					unreachableMessage: formatLocalConversationUnreachableMessage(),
+				});
+			} catch (rebuildError) {
+				const rebuildRuntimeError = rebuildError as RuntimeErrorWithStatus;
+				if (
+					rebuildRuntimeError?.status === 404 ||
+					rebuildRuntimeError?.status === 405
+				) {
+					throw createRuntimeError(
+						"Local backend does not support /api/v1/profiles/rebuild-persona (backend version is outdated).",
+						{
+							status: rebuildRuntimeError.status,
+							payload: rebuildRuntimeError.payload,
+							path: API.rebuildPersona,
+							code: "LOCAL_BACKEND_REBUILD_UNSUPPORTED",
+						},
+					);
+				}
+				throw rebuildError;
+			}
+			result = await requestJson<unknown>({
+				path: API.conversationGenerate,
+				method: "POST",
+				body,
+				deniedUsername: username,
+				baseUrlOverride: getLocalConversationBaseUrl(),
+				unreachableMessage: formatLocalConversationUnreachableMessage(),
+			});
+		} else {
+			throw error;
+		}
+	}
+	await saveConfig({ defaultUsername: username });
 	return result;
 }
 
@@ -421,8 +555,12 @@ async function requestJson<TResponse = unknown>({
 	method,
 	body,
 	deniedUsername,
+	baseUrlOverride,
+	unreachableMessage,
 }: RequestJsonOptions): Promise<TResponse> {
-	const baseUrl = await getBackendBaseUrl();
+	const baseUrl = baseUrlOverride
+		? normalizeBaseUrl(baseUrlOverride)
+		: await getBackendBaseUrl();
 	let response: Response;
 	try {
 		response = await fetch(`${baseUrl}${path}`, {
@@ -434,7 +572,8 @@ async function requestJson<TResponse = unknown>({
 		});
 	} catch (_error) {
 		throw new Error(
-			`Local backend is unreachable at ${baseUrl}. Start the API server first.`,
+			unreachableMessage ||
+				`Backend is unreachable at ${baseUrl}. Start the API server first.`,
 		);
 	}
 
@@ -455,6 +594,7 @@ async function requestJson<TResponse = unknown>({
 			) as RuntimeErrorWithStatus;
 			error.status = response.status;
 			error.payload = payload;
+			error.path = path;
 			throw error;
 		}
 		const detail =
@@ -464,10 +604,95 @@ async function requestJson<TResponse = unknown>({
 		const error = new Error(String(detail)) as RuntimeErrorWithStatus;
 		error.status = response.status;
 		error.payload = payload;
+		error.path = path;
 		throw error;
 	}
 
 	return payload as TResponse;
+}
+
+function formatLocalConversationUnreachableMessage(): string {
+	const localBaseUrl = getLocalConversationBaseUrl();
+	return `Local conversation backend is unreachable at ${localBaseUrl}. Start the local API server first.`;
+}
+
+function extractErrorDetailText(payload: unknown): string {
+	if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+		const detail = (payload as { detail?: unknown }).detail;
+		return String(detail || "")
+			.trim()
+			.toLowerCase();
+	}
+	return "";
+}
+
+async function checkLocalConversationCapability(
+	forceRefresh: boolean,
+): Promise<LocalConversationCapability> {
+	const now = Date.now();
+	if (
+		!forceRefresh &&
+		cachedLocalConversationCapability &&
+		now - cachedLocalConversationCapability.checkedAtMs <
+			LOCAL_CAPABILITY_CACHE_TTL_MS
+	) {
+		return {
+			supported: cachedLocalConversationCapability.supported,
+			message: cachedLocalConversationCapability.message,
+			checkedAt: cachedLocalConversationCapability.checkedAt,
+		};
+	}
+
+	try {
+		const openApi = await requestJson<Record<string, unknown>>({
+			path: "/openapi.json",
+			method: "GET",
+			baseUrlOverride: getLocalConversationBaseUrl(),
+			unreachableMessage: formatLocalConversationUnreachableMessage(),
+		});
+		const supported = hasRebuildPersonaPost(openApi);
+		const capability: LocalConversationCapability = {
+			supported,
+			message: supported
+				? "Local conversation capability check passed."
+				: "Local backend is outdated: /api/v1/profiles/rebuild-persona (POST) is missing.",
+			checkedAt: new Date().toISOString(),
+		};
+		cachedLocalConversationCapability = {
+			...capability,
+			checkedAtMs: now,
+		};
+		return capability;
+	} catch (error) {
+		const runtimeError = error as RuntimeErrorWithStatus;
+		const capability: LocalConversationCapability = {
+			supported: false,
+			message:
+				runtimeError?.message ||
+				"Failed to verify local backend capability from /openapi.json.",
+			checkedAt: new Date().toISOString(),
+		};
+		cachedLocalConversationCapability = {
+			...capability,
+			checkedAtMs: now,
+		};
+		return capability;
+	}
+}
+
+function hasRebuildPersonaPost(openApi: Record<string, unknown>): boolean {
+	if (!openApi || typeof openApi !== "object") {
+		return false;
+	}
+	const paths = (openApi as { paths?: unknown }).paths;
+	if (!paths || typeof paths !== "object") {
+		return false;
+	}
+	const rebuildPath = (paths as Record<string, unknown>)[API.rebuildPersona];
+	if (!rebuildPath || typeof rebuildPath !== "object") {
+		return false;
+	}
+	return Boolean((rebuildPath as Record<string, unknown>).post);
 }
 
 function formatForbiddenMessage(username: unknown): string {
@@ -501,6 +726,8 @@ function normalizeError(error: unknown): {
 	message: string;
 	status?: number;
 	payload?: unknown;
+	path?: string;
+	code?: string;
 } {
 	if (!error) {
 		return { message: "Unknown error" };
@@ -515,7 +742,34 @@ function normalizeError(error: unknown): {
 			? runtimeError.status
 			: undefined,
 		payload: runtimeError.payload,
+		path: runtimeError.path ? String(runtimeError.path) : undefined,
+		code: runtimeError.code ? String(runtimeError.code) : undefined,
 	};
+}
+
+function createRuntimeError(
+	message: string,
+	options: {
+		status?: number;
+		payload?: unknown;
+		path?: string;
+		code?: string;
+	} = {},
+): RuntimeErrorWithStatus {
+	const error = new Error(message) as RuntimeErrorWithStatus;
+	if (options.status != null) {
+		error.status = options.status;
+	}
+	if (options.payload !== undefined) {
+		error.payload = options.payload;
+	}
+	if (options.path) {
+		error.path = options.path;
+	}
+	if (options.code) {
+		error.code = options.code;
+	}
+	return error;
 }
 
 function storageGet(keys: string[]): Promise<Record<string, unknown>> {

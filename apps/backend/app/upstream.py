@@ -19,6 +19,10 @@ class UpstreamClient:
     def __init__(self, settings: Settings, session: requests.Session | None = None):
         self.settings = settings
         self.session = session or requests.Session()
+        # Avoid implicit Windows/system proxy leakage (for example Internet Settings proxy).
+        # Upstream proxy must be controlled only by `app.twitter_data_proxy`.
+        if isinstance(self.session, requests.Session):
+            self.session.trust_env = False
 
     def fetch_user_by_username(self, username: str, *, request_id: str | None = None) -> dict[str, Any]:
         log_event(
@@ -150,12 +154,36 @@ class UpstreamClient:
                 params=params or {},
                 proxy_enabled=bool(self.settings.twitter_data_proxies),
             )
-            response = self.session.get(
-                f"{self.settings.twitter_data_url.rstrip('/')}{path}",
-                params=params,
-                proxies=self.settings.twitter_data_proxies,
-                timeout=self.settings.request_timeout_seconds,
-            )
+            try:
+                response = self.session.get(
+                    f"{self.settings.twitter_data_url.rstrip('/')}{path}",
+                    params=params,
+                    proxies=self.settings.twitter_data_proxies,
+                    timeout=self.settings.request_timeout_seconds,
+                )
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt < 2:
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "upstream_request_retrying_after_exception",
+                        request_id=request_id,
+                        path=path,
+                        attempt=attempt + 1,
+                        error=str(exc),
+                    )
+                    continue
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "upstream_request_failed_before_response",
+                    request_id=request_id,
+                    path=path,
+                    attempt=attempt + 1,
+                    error=str(exc),
+                )
+                raise UpstreamError(f"Upstream request failed before response: {exc}") from exc
             try:
                 response.raise_for_status()
             except requests.HTTPError as exc:
@@ -184,7 +212,31 @@ class UpstreamClient:
                 )
                 raise UpstreamError(f"Upstream request failed: {detail}") from exc
 
-            payload = response.json()
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                last_error = exc
+                if attempt < 2:
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "upstream_response_json_retrying",
+                        request_id=request_id,
+                        path=path,
+                        attempt=attempt + 1,
+                    )
+                    continue
+                snippet = response.text[:1000]
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "upstream_response_json_invalid",
+                    request_id=request_id,
+                    path=path,
+                    attempt=attempt + 1,
+                    body_snippet=redact_for_log(snippet, self.settings.log_max_body_chars),
+                )
+                raise UpstreamError("Upstream response is not valid JSON") from exc
             if payload.get("code") not in (None, 200):
                 last_error = UpstreamError(f"Upstream returned application error: {payload}")
                 if attempt < 2:

@@ -9,6 +9,7 @@
     "database_url": "sqlite:///./data/mvp.db",
     "twitter_data_url": "",
     "twitter_data_proxy": "",
+    "provider_6551_token": "",
     "llm_http_proxy": "",
     "llm_provider": "openai",
     "openai_api_key": "",
@@ -35,6 +36,17 @@
     "content_rewrite_max_rounds": 3,
     "max_generation_attempts": 3,
     "evaluation_max_workers": 4,
-    "variant_max_workers": 3
+    "variant_max_workers": 3,
+    "hot_events_fusion": {
+      "source_weight_news": 1.0,
+      "source_weight_tweet": 1.0,
+      "tweet_weight_retweet": 1.5,
+      "tweet_weight_like": 1.0,
+      "tweet_weight_reply": 2.0,
+      "tweet_weight_quote": 2.5,
+      "tweet_follower_cap_k": 50.0,
+      "time_decay_half_life_hours": 12.0,
+      "max_heat_score": 100.0
+    }
   }
 }

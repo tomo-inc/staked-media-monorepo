@@ -337,6 +337,11 @@ class LLMClient:
         draft_count: int,
         request_id: str | None = None,
     ) -> dict[str, Any]:
+        prompt = clean_text(prompt)
+        max_prompt_chars = 4000
+        if len(prompt) > max_prompt_chars:
+            prompt = f"{prompt[:max_prompt_chars]}\n...[truncated]"
+
         log_event(
             logger,
             logging.INFO,
@@ -504,13 +509,14 @@ class LLMClient:
                         theme_top_keywords=theme_top_keywords,
                         request_id=request_id,
                     )
-                except LLMTransportError as exc:
+                except LLMError as exc:
+                    error_category = getattr(exc, "category", "response_schema")
                     llm_batch_results = [
                         {
                             "score": round(rule_results[i]["score"], 1),
                             "verdict": "provider_timeout_fallback",
                             "strengths": [],
-                            "issues": [f"LLM scoring skipped after transient failure: {exc.category}"],
+                            "issues": [f"LLM scoring skipped after transient failure: {error_category}"],
                             "must_fix": [],
                         }
                         for i in llm_eligible_indices
@@ -521,7 +527,7 @@ class LLMClient:
                         "draft_batch_score_fallback",
                         request_id=request_id,
                         provider=self.provider_name,
-                        error_category=exc.category,
+                        error_category=error_category,
                         eligible_count=len(llm_eligible_indices),
                     )
 
@@ -1761,14 +1767,76 @@ class LLMClient:
 
     def _style_brief_from_persona(self, persona: dict[str, Any]) -> dict[str, Any]:
         normalized_persona = self._normalize_persona_payload(persona)
+        compact_guardrails: dict[str, list[str]] = {}
+        for key, values in normalized_persona["generation_guardrails"].items():
+            compact_guardrails[key] = [clean_text(str(item))[:120] for item in values[:4] if clean_text(str(item))]
+
+        compact_voice_signals: list[dict[str, str]] = []
+        for item in normalized_persona["voice_signals"][:4]:
+            if not isinstance(item, dict):
+                continue
+            compact_voice_signals.append(
+                {
+                    "trait": clean_text(str(item.get("trait") or ""))[:80],
+                    "evidence": clean_text(str(item.get("evidence") or ""))[:140],
+                }
+            )
+
+        compact_signature_patterns: list[dict[str, str]] = []
+        for item in normalized_persona["signature_patterns"][:4]:
+            if not isinstance(item, dict):
+                continue
+            compact_signature_patterns.append(
+                {
+                    "pattern": clean_text(str(item.get("pattern") or ""))[:100],
+                    "instruction": clean_text(str(item.get("instruction") or ""))[:140],
+                    "evidence": clean_text(str(item.get("evidence") or ""))[:140],
+                }
+            )
+
+        compact_lexical_markers_detailed: list[dict[str, str]] = []
+        for item in normalized_persona["lexical_markers_detailed"][:6]:
+            if not isinstance(item, dict):
+                continue
+            compact_lexical_markers_detailed.append(
+                {
+                    "marker": clean_text(str(item.get("marker") or ""))[:40],
+                    "usage": clean_text(str(item.get("usage") or ""))[:120],
+                    "frequency": clean_text(str(item.get("frequency") or "medium")).lower() or "medium",
+                }
+            )
+
+        compact_generation_guardrails_detailed: dict[str, list[dict[str, str]]] = {}
+        for key, items in normalized_persona["generation_guardrails_detailed"].items():
+            if not isinstance(items, list):
+                continue
+            compact_items: list[dict[str, str]] = []
+            for item in items[:3]:
+                if not isinstance(item, dict):
+                    continue
+                instruction = clean_text(str(item.get("instruction") or ""))[:140]
+                positive_example = clean_text(str(item.get("positive_example") or ""))[:160]
+                negative_example = clean_text(str(item.get("negative_example") or ""))[:160]
+                if not instruction and not positive_example and not negative_example:
+                    continue
+                compact_items.append(
+                    {
+                        "instruction": instruction,
+                        "positive_example": positive_example,
+                        "negative_example": negative_example,
+                    }
+                )
+            if compact_items:
+                compact_generation_guardrails_detailed[key] = compact_items
+
         return {
-            "author_summary": normalized_persona["author_summary"],
-            "voice_traits": normalized_persona["voice_traits"],
-            "voice_signals": normalized_persona["voice_signals"][:6],
-            "signature_patterns": normalized_persona["signature_patterns"][:5],
-            "lexical_markers": normalized_persona["lexical_markers"][:20],
-            "lexical_markers_detailed": normalized_persona["lexical_markers_detailed"][:8],
-            "do_not_sound_like": normalized_persona["do_not_sound_like"],
+            "author_summary": clean_text(normalized_persona["author_summary"])[:300],
+            "voice_traits": [clean_text(str(item))[:80] for item in normalized_persona["voice_traits"][:6]],
+            "voice_signals": compact_voice_signals,
+            "signature_patterns": compact_signature_patterns,
+            "lexical_markers": [clean_text(str(item))[:40] for item in normalized_persona["lexical_markers"][:12]],
+            "lexical_markers_detailed": compact_lexical_markers_detailed,
+            "do_not_sound_like": [clean_text(str(item))[:100] for item in normalized_persona["do_not_sound_like"][:8]],
             "writing_patterns": normalized_persona["writing_patterns"],
             "language_profile": normalized_persona["language_profile"],
             "emotional_baseline": normalized_persona["emotional_baseline"],
@@ -1778,8 +1846,8 @@ class LLMClient:
             "media_habits": normalized_persona["media_habits"],
             "geo_context": normalized_persona["geo_context"],
             "stance_patterns": normalized_persona["stance_patterns"],
-            "generation_guardrails": normalized_persona["generation_guardrails"],
-            "generation_guardrails_detailed": normalized_persona["generation_guardrails_detailed"],
+            "generation_guardrails": compact_guardrails,
+            "generation_guardrails_detailed": compact_generation_guardrails_detailed,
         }
 
     def _build_draft_request_payload(

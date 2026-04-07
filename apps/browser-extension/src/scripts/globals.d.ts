@@ -5,6 +5,8 @@ interface CommonJsModuleLike {
 type StakedMediaThemeMode = "light" | "dark" | "system";
 type StakedMediaApiMode = "content" | "drafts";
 type StakedMediaHostMode = "sidepanel" | "popup";
+type StakedMediaLocale = "en" | "zh-CN" | "zh-TW" | "ja" | "ko" | "es";
+type StakedMediaLanguageMode = "auto" | StakedMediaLocale;
 
 interface StakedMediaExtensionConfig {
 	defaultUsername: string;
@@ -12,6 +14,7 @@ interface StakedMediaExtensionConfig {
 	apiMode: StakedMediaApiMode;
 	theme: StakedMediaThemeMode;
 	hostMode: StakedMediaHostMode;
+	language: StakedMediaLanguageMode;
 }
 
 interface StakedMediaNormalizeOptions {
@@ -63,6 +66,10 @@ interface StakedMediaExtensionSharedApi {
 	): StakedMediaDraftRecord[];
 	normalizeBaseUrl(value: unknown): string;
 	normalizeHostMode(value: unknown): StakedMediaHostMode;
+	resolveLocale(
+		languageSetting: unknown,
+		browserLanguage: unknown,
+	): StakedMediaLocale;
 	routeMessage<TPayload = unknown, TResult = unknown>(
 		message: { type?: string; payload?: TPayload } | null | undefined,
 		handlers: Record<
@@ -75,6 +82,10 @@ interface StakedMediaExtensionSharedApi {
 		options?: StakedMediaNormalizeOptions,
 	): StakedMediaExtensionConfig;
 	sendRuntimeMessage<TResponse = unknown>(message: unknown): Promise<TResponse>;
+	t(key: string, locale: StakedMediaLocale): string;
+	listLanguageOptions(
+		locale: StakedMediaLocale,
+	): Array<{ value: StakedMediaLanguageMode; label: string }>;
 }
 
 interface ChromeRuntimeLastError {

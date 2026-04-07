@@ -95,8 +95,9 @@ interface StakedMediaPanelHelpersHost {
 
           <div class="smc-view smc-view-active" data-view="main">
             <nav class="smc-tab-bar">
-              <button class="smc-tab smc-tab-active" data-tab-target="profile" type="button">Profile</button>
-              <button class="smc-tab" data-tab-target="draft" type="button">Draft</button>
+              <button class="smc-tab smc-tab-active" data-tab-target="profile" data-i18n="tab.profile" type="button">Profile</button>
+              <button class="smc-tab" data-tab-target="draft" data-i18n="tab.draft" type="button">Draft</button>
+              <button class="smc-tab" data-tab-target="conversation" data-i18n="tab.conversation" type="button">Conversation</button>
             </nav>
 
             <section class="smc-section" data-slot="status-section" hidden>
@@ -107,8 +108,8 @@ interface StakedMediaPanelHelpersHost {
               <section class="smc-section">
                 <div class="smc-username-row">
                   <input class="smc-input" data-field="username" placeholder="@Username" type="text">
-                  <button class="smc-button smc-button-secondary" data-action="load-profile" type="button">Load</button>
-                  <button class="smc-button smc-button-secondary" data-action="ingest-profile" type="button">Ingest</button>
+                  <button class="smc-button smc-button-secondary" data-action="load-profile" data-i18n="action.load" type="button">Load</button>
+                  <button class="smc-button smc-button-secondary" data-action="ingest-profile" data-i18n="action.ingest" type="button">Ingest</button>
                 </div>
                 <div class="smc-field-message smc-field-message-error" data-slot="username-error" hidden></div>
                 <div data-slot="profile-info"></div>
@@ -118,27 +119,64 @@ interface StakedMediaPanelHelpersHost {
             <div class="smc-tab-panel" data-tab-panel="draft">
               <section class="smc-section">
                 <label class="smc-label">
-                  Topic / Idea
+                  <span data-i18n="label.topicIdea">Topic / Idea</span>
                   <textarea class="smc-textarea" data-field="idea" placeholder="Can Bitcoin be cracked in 9 minutes?&#10;Google warns ECC timeline may arrive earlier&#10;Attack threshold could be 20x lower"></textarea>
                 </label>
                 <label class="smc-label">
-                  Draft Count
+                  <span data-i18n="label.draftCount">Draft Count</span>
                   <input class="smc-input smc-input-short" data-field="draftCount" min="1" max="10" step="1" type="number" value="3">
                 </label>
                 <div class="smc-button-row">
-                  <button class="smc-button smc-button-primary" data-action="generate" type="button">Generate</button>
+                  <button class="smc-button smc-button-primary" data-action="generate" data-i18n="action.generate" type="button">Generate</button>
                 </div>
               </section>
 
               <section class="smc-section">
                 <div class="smc-section-head">
-                  <h2>Result</h2>
+                  <h2 data-i18n="section.result">Result</h2>
                   <div class="smc-section-head-right">
                     <div data-slot="composer"></div>
-                    <button class="smc-link-button" data-action="clear-results" type="button">Clear</button>
+                    <button class="smc-link-button" data-action="clear-results" data-i18n="action.clear" type="button">Clear</button>
                   </div>
                 </div>
                 <div data-slot="results"></div>
+              </section>
+            </div>
+
+            <div class="smc-tab-panel" data-tab-panel="conversation">
+              <section class="smc-section">
+                <div class="smc-section-head">
+                  <h2 data-i18n="section.hotEvents24h">24h Hot Events</h2>
+                  <button class="smc-link-button" data-action="refresh-hot-events" data-i18n="action.refreshHot" type="button">Refresh</button>
+                </div>
+                <div class="smc-hot-meta" data-slot="hot-events-meta"></div>
+                <div data-slot="hot-events"></div>
+              </section>
+
+              <section class="smc-section">
+                <label class="smc-label">
+                  <span data-i18n="label.takeOptional">What is your take? (optional)</span>
+                  <textarea class="smc-textarea" data-field="conversationComment" placeholder="Anything to add before generating?"></textarea>
+                </label>
+                <label class="smc-label">
+                  <span data-i18n="label.draftCount">Draft Count</span>
+                  <input class="smc-input smc-input-short" data-field="conversationDraftCount" min="1" max="10" step="1" type="number" value="3">
+                </label>
+                <div class="smc-button-row">
+                  <button class="smc-button smc-button-primary" data-action="generate-conversation" data-i18n="action.generate" type="button">Generate</button>
+                  <button class="smc-button smc-button-secondary" data-action="send-to-draft" data-i18n="action.sendToDraft" type="button" disabled>Send to Draft</button>
+                </div>
+                <div class="smc-field-message smc-field-message-warn" data-slot="send-to-draft-hint" hidden></div>
+              </section>
+
+              <section class="smc-section">
+                <div class="smc-section-head">
+                  <h2 data-i18n="section.conversationResult">Conversation Result</h2>
+                  <div class="smc-section-head-right">
+                    <button class="smc-link-button" data-action="clear-conversation-results" data-i18n="action.clear" type="button">Clear</button>
+                  </div>
+                </div>
+                <div data-slot="conversation-results"></div>
               </section>
             </div>
           </div>
@@ -158,10 +196,10 @@ interface StakedMediaPanelHelpersHost {
                         </svg>
                       </span>
                       <span class="smc-settings-item-copy">
-                        <span class="smc-settings-item-title">API &amp; Generation</span>
+                        <span class="smc-settings-item-title" data-i18n="settings.apiGeneration">API &amp; Generation</span>
                       </span>
                     </span>
-                    <span class="smc-settings-item-chevron" aria-hidden="true">›</span>
+                    <span class="smc-settings-item-chevron" aria-hidden="true">></span>
                   </button>
 
                   <button class="smc-settings-item" data-action="toggle-open-mode" type="button">
@@ -187,13 +225,34 @@ interface StakedMediaPanelHelpersHost {
                         </svg>
                       </span>
                       <span class="smc-settings-item-copy">
-                        <span class="smc-settings-item-title">Theme</span>
+                        <span class="smc-settings-item-title" data-i18n="label.theme">Theme</span>
                       </span>
                     </span>
                     <select class="smc-settings-select" id="smc-theme-select" data-field="s-theme">
                       <option value="light">Light</option>
                       <option value="dark">Dark</option>
                       <option value="system">System</option>
+                    </select>
+                  </label>
+                  <label class="smc-settings-item smc-settings-item-select" for="smc-language-select">
+                    <span class="smc-settings-item-main">
+                      <span class="smc-settings-item-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none">
+                          <path d="M4 6h8M8 4v2m0 0c0 4-1.6 6.6-4 8m4-8c.9 2.3 2.2 4.2 4 5.6M14 18h6M17 15v6" stroke="currentColor" stroke-linecap="round"></path>
+                        </svg>
+                      </span>
+                      <span class="smc-settings-item-copy">
+                        <span class="smc-settings-item-title" data-i18n="label.language">Language</span>
+                      </span>
+                    </span>
+                    <select class="smc-settings-select" id="smc-language-select" data-field="s-language">
+                      <option value="auto">Auto (Browser)</option>
+                      <option value="en">English</option>
+                      <option value="zh-CN">简体中文</option>
+                      <option value="zh-TW">繁體中文</option>
+                      <option value="ja">日本語</option>
+                      <option value="ko">한국어</option>
+                      <option value="es">Español</option>
                     </select>
                   </label>
                 </div>
@@ -203,22 +262,22 @@ interface StakedMediaPanelHelpersHost {
             <div class="smc-settings-page" data-settings-view="api">
               <section class="smc-section">
                 <label class="smc-label">
-                  API Base URL
+                  <span data-i18n="label.apiBaseUrl">API Base URL</span>
                   <input class="smc-input" data-field="s-backendBaseUrl" type="text" placeholder="https://api.sayviner.top:8443">
                 </label>
-                <div class="smc-settings-helper">Press Enter or click outside to save the URL.</div>
+                <div class="smc-settings-helper" data-i18n="helper.apiBaseUrlSave">Press Enter or click outside to save the URL.</div>
 
                 <label class="smc-label">
-                  Generation API Mode
+                  <span data-i18n="label.generationApiMode">Generation API Mode</span>
                 </label>
                 <div class="smc-radio-group">
                   <label class="smc-radio-option">
                     <input type="radio" name="s-apiMode" data-field="s-apiModeDrafts" value="drafts" checked>
-                    Drafts API (/api/v1/drafts/generate)
+                    <span data-i18n="mode.draftsApi">Drafts API (/api/v1/drafts/generate)</span>
                   </label>
                   <label class="smc-radio-option">
                     <input type="radio" name="s-apiMode" data-field="s-apiModeContent" value="content">
-                    Content API (/api/v1/content/generate)
+                    <span data-i18n="mode.contentApi">Content API (/api/v1/content/generate)</span>
                   </label>
                 </div>
               </section>

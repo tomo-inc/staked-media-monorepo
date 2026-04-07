@@ -34,6 +34,20 @@ class IngestResponse(BaseModel):
     persona: dict[str, Any]
 
 
+class ProfileRebuildPersonaRequest(BaseModel):
+    username: str = Field(..., strip_whitespace=True, min_length=1)
+
+
+class ProfileRebuildPersonaResponse(BaseModel):
+    username: str
+    user_id: str
+    source_tweet_count: int
+    source_original_tweet_count: int
+    persona_snapshot_id: int
+    rebuilt_at: str
+    persona: dict[str, Any]
+
+
 class ProfileResponse(BaseModel):
     profile: ProfileSummary
     stored_tweet_count: int
@@ -310,6 +324,44 @@ class ContentIdeasResponse(BaseModel):
     ideas: list[IdeaItem] = Field(default_factory=list)
     query: str = ""
     suggested_keywords: list[str] = Field(default_factory=list)
+
+
+class HotEventItem(BaseModel):
+    id: str
+    title: str
+    summary: str = ""
+    url: str = ""
+    source: str = ""
+    source_domain: str = ""
+    published_at: str = ""
+    relative_age_hint: str = ""
+    heat_score: float = 0.0
+    category: str = ""
+    subcategory: str = ""
+    content_type: Literal["news", "tweet"] = "news"
+    author_handle: str = ""
+
+
+class HotEventsSourceStatus(BaseModel):
+    status: Literal["ok", "error"] = "ok"
+    count: int = 0
+    error: str = ""
+
+
+class HotEventsResponse(BaseModel):
+    hours: int = 24
+    count: int = 0
+    items: list[HotEventItem] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    source_status: dict[str, HotEventsSourceStatus] = Field(default_factory=dict)
+
+
+class ConversationGenerateRequest(BaseModel):
+    username: str = Field(..., strip_whitespace=True, min_length=1)
+    event_id: str = ""
+    event_payload: dict[str, Any] | None = None
+    comment: str = ""
+    draft_count: int = Field(3, gt=0, le=10)
 
 
 class ExposureAnalyzeRequest(BaseModel):
