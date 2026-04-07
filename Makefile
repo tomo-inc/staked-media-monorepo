@@ -10,24 +10,24 @@ BE_CONFIG ?= config.json
 # ── Backend ──────────────────────────────────────────────
 
 be-lint:
-	cd $(BE_DIR) && ruff check app/ tests/
+	cd $(BE_DIR) && uv run --extra dev ruff check app/ tests/
 
 be-format:
-	cd $(BE_DIR) && ruff format app/ tests/
+	cd $(BE_DIR) && uv run --extra dev ruff format app/ tests/
 
 be-format-check:
-	cd $(BE_DIR) && ruff format --check app/ tests/
+	cd $(BE_DIR) && uv run --extra dev ruff format --check app/ tests/
 
 be-typecheck:
-	cd $(BE_DIR) && pyright app/
+	cd $(BE_DIR) && uv run --extra dev pyright app/
 
 be-check: be-lint be-format-check be-typecheck
 
 be-test:
-	cd $(BE_DIR) && python -m pytest tests/ -q
+	cd $(BE_DIR) && uv run --extra dev pytest tests/ -q
 
 be-run:
-	cd $(BE_DIR) && python -m app.run -c $(abspath $(BE_CONFIG)) --reload
+	cd $(BE_DIR) && uv run python -m app.run -c $(abspath $(BE_CONFIG)) --reload
 
 # ── Frontend ─────────────────────────────────────────────
 

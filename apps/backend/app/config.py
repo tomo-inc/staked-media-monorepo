@@ -260,7 +260,8 @@ def get_runtime_config_path(
     runtime_path = Path(runtime_config_path).expanduser()
     if not runtime_path.exists():
         raise RuntimeError(
-            "Runtime config pointer is not initialized. Start the app with `python -m app.run -c config.json`."
+            "Runtime config pointer is not initialized. "
+            "Start the app with `uv run python -m app.run -c <path-to-config.json>`."
         )
 
     try:

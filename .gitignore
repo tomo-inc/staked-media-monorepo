@@ -6,3 +6,5 @@ data/
 .claude/
 docs.private/
 .pytest_cache/
+.venv/
+*.egg-info/
