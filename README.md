@@ -26,22 +26,22 @@ The service routes upstream profile and tweet calls through the configured proxy
    - Optional overrides live in the same `app` section, including models, proxies, logging, retries, timeouts, and web enrichment
    - If Gemini returns `User location is not supported for the API use.`, set `app.llm_http_proxy` so outbound LLM requests route through a supported region
    - `server.host`, `server.port`, and `server.reload` control the HTTP server startup defaults
-3. Install Python packages if you are not using system packages:
+3. Install `uv` if it is not already available:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install uv
 ```
 
-4. Start the server:
+4. Start the server from `apps/backend` and point it at the repo-root config file:
 
 ```bash
-python -m app.run -c config.json
+cd apps/backend && uv run python -m app.run -c ../../config.json
 ```
 
 For local development with hot reload:
 
 ```bash
-python -m app.run -c config.json --reload
+cd apps/backend && uv run python -m app.run -c ../../config.json --reload
 ```
 
 ## API
@@ -146,7 +146,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/exposure/analyze \
 ```
 
 ## Notes
-- The app reads configuration only from the JSON file passed to `python -m app.run -c ...`; `.env` and environment-variable overrides are no longer used.
+- The app reads configuration only from the JSON file passed to `uv run python -m app.run -c ...`; `.env` and environment-variable overrides are no longer used.
 - LLM provider selection is config-file based via `app.llm_provider`; the HTTP API does not expose a per-request provider override.
 - `app.llm_http_proxy` configures the proxy for outbound LLM requests (OpenAI/Gemini). `app.twitter_data_proxy` configures the proxy for Twitter data API requests. Either can be left empty to disable proxying.
 - Persona-related public APIs now require the target username to exist in the database-backed trial whitelist. Internal whitelist management lives under `/admin/api/v1/...`.
@@ -173,7 +173,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/exposure/analyze \
 
 ## Validation
 ```bash
-python -m pytest -q
+cd apps/backend && uv run --extra dev pytest tests/ -q
 ```
 
 ## Browser Extension MVP
@@ -188,7 +188,7 @@ What it does:
 - inserts a selected draft into the active X composer without auto-posting.
 
 Load it locally:
-1. Start the backend with `python -m app.run -c config.json --reload`
+1. Start the backend with `cd apps/backend && uv run python -m app.run -c ../../config.json --reload`
 2. Build extension assets with `cd apps/browser-extension && npm install && npm run build`
 3. Open `chrome://extensions`
 4. Enable `Developer mode`
