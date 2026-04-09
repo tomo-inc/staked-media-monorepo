@@ -4,11 +4,18 @@ import test from "node:test";
 
 const require = createRequire(import.meta.url);
 
-const { buildPanelShell, deriveConnectionIndicator, isWhitelistDeniedError } =
-	require("../dist/panel-helpers.js") as Pick<
-		StakedMediaPanelHelpersApi,
-		"buildPanelShell" | "deriveConnectionIndicator" | "isWhitelistDeniedError"
-	>;
+const {
+	buildPanelShell,
+	deriveConnectionIndicator,
+	deriveHotEventsStateNotice,
+	isWhitelistDeniedError,
+} = require("../dist/panel-helpers.js") as Pick<
+	StakedMediaPanelHelpersApi,
+	| "buildPanelShell"
+	| "deriveConnectionIndicator"
+	| "deriveHotEventsStateNotice"
+	| "isWhitelistDeniedError"
+>;
 
 test("deriveConnectionIndicator distinguishes loading from failed health checks", () => {
 	const loading = deriveConnectionIndicator({
@@ -43,6 +50,34 @@ test("deriveConnectionIndicator renders connected state with latency", () => {
 	assert.equal(connected.latencyText, "123ms");
 });
 
+test("deriveHotEventsStateNotice includes refreshing state without cooldown wording", () => {
+	const parts = deriveHotEventsStateNotice({
+		refreshing: true,
+		isStale: false,
+		throttled: false,
+		lastRefreshError: "",
+	});
+
+	assert.deepEqual(parts, ["Refreshing hot events in background..."]);
+});
+
+test("deriveHotEventsStateNotice composes cached and error messaging", () => {
+	const parts = deriveHotEventsStateNotice({
+		refreshing: false,
+		isStale: true,
+		throttled: false,
+		lastRefreshedAt: "2026-04-09T12:00:00+00:00",
+		lastAttemptedAt: "2026-04-09T12:01:00+00:00",
+		lastRefreshError: "provider timeout",
+		formatTimestamp: (value) => `ts:${value}`,
+	});
+
+	assert.deepEqual(parts, [
+		"Using cached snapshot from ts:2026-04-09T12:00:00+00:00.",
+		"Latest refresh attempt at ts:2026-04-09T12:01:00+00:00 failed. provider timeout",
+	]);
+});
+
 test("buildPanelShell places the status banner outside both tabs", () => {
 	const markup = buildPanelShell();
 	const tabBarIndex = markup.indexOf('class="smc-tab-bar"');
@@ -73,19 +108,31 @@ test("buildPanelShell places the username error directly below the username row"
 	assert.ok(usernameErrorIndex < profileInfoIndex);
 });
 
-test("buildPanelShell includes conversation tab controls", () => {
+test("buildPanelShell includes trending tab controls", () => {
 	const markup = buildPanelShell();
 
-	assert.notEqual(markup.indexOf('data-tab-target="conversation"'), -1);
-	assert.notEqual(markup.indexOf('data-tab-panel="conversation"'), -1);
+	assert.notEqual(markup.indexOf('data-tab-target="trending"'), -1);
+	assert.notEqual(markup.indexOf('data-tab-panel="trending"'), -1);
 	assert.notEqual(markup.indexOf('data-action="refresh-hot-events"'), -1);
-	assert.notEqual(markup.indexOf('data-action="generate-conversation"'), -1);
+	assert.notEqual(markup.indexOf('data-action="generate-trending"'), -1);
 	assert.notEqual(markup.indexOf('data-action="send-to-draft"'), -1);
 	assert.notEqual(markup.indexOf('data-slot="hot-events-meta"'), -1);
 	assert.notEqual(markup.indexOf('data-slot="hot-events"'), -1);
-	assert.notEqual(markup.indexOf('data-slot="conversation-results"'), -1);
+	assert.notEqual(markup.indexOf('data-slot="trending-results"'), -1);
 	assert.notEqual(markup.indexOf('data-slot="send-to-draft-hint"'), -1);
 	assert.notEqual(markup.indexOf('data-field="s-language"'), -1);
+});
+
+test("buildPanelShell places selected event info above the take textarea", () => {
+	const markup = buildPanelShell();
+	const selectedInfoIndex = markup.indexOf(
+		'data-slot="selected-hot-event-info"',
+	);
+	const takeLabelIndex = markup.indexOf('data-field="trendingComment"');
+
+	assert.notEqual(selectedInfoIndex, -1);
+	assert.notEqual(takeLabelIndex, -1);
+	assert.ok(selectedInfoIndex < takeLabelIndex);
 });
 
 test("isWhitelistDeniedError matches API 403 responses only", () => {

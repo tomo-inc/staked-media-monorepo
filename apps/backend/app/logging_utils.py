@@ -22,14 +22,14 @@ def configure_logging(settings: Settings) -> None:
     global _LOGGER_SIGNATURE
 
     signature = (
-        settings.log_level.upper(),
-        settings.log_file_path,
-        settings.log_enable_file,
+        settings.log.level.upper(),
+        settings.log.file_path,
+        settings.log.enable_file,
     )
     if _LOGGER_SIGNATURE == signature and _managed_loggers_ready():
         return
 
-    level = _resolve_log_level(settings.log_level)
+    level = _resolve_log_level(settings.log.level)
     handlers_to_close = _detach_handlers_from_managed_loggers()
     for handler in handlers_to_close:
         handler.close()
@@ -111,8 +111,8 @@ def _build_handlers(level: int, settings: Settings) -> list[logging.Handler]:
     stream_handler.setFormatter(formatter)
     handlers: list[logging.Handler] = [stream_handler]
 
-    if settings.log_enable_file:
-        log_path = Path(settings.log_file_path)
+    if settings.log.enable_file:
+        log_path = Path(settings.log.file_path)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_path, encoding="utf-8")
         file_handler.setLevel(level)

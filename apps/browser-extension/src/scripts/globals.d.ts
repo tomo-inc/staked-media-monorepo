@@ -45,6 +45,17 @@ interface StakedMediaConnectionIndicatorOutput {
 	latencyText: string;
 }
 
+interface StakedMediaHotEventsStateNoticeInput {
+	refreshing?: boolean;
+	isStale?: boolean;
+	throttled?: boolean;
+	nextRefreshAvailableInSeconds?: number | null;
+	lastRefreshedAt?: string;
+	lastAttemptedAt?: string;
+	lastRefreshError?: string;
+	formatTimestamp?: (value: string) => string;
+}
+
 interface StakedMediaPanelHelpersApi {
 	isWhitelistDeniedError(
 		error: { status?: number } | null | undefined,
@@ -52,6 +63,9 @@ interface StakedMediaPanelHelpersApi {
 	deriveConnectionIndicator(
 		input: StakedMediaConnectionIndicatorInput,
 	): StakedMediaConnectionIndicatorOutput;
+	deriveHotEventsStateNotice(
+		input: StakedMediaHotEventsStateNoticeInput,
+	): string[];
 	buildPanelShell(): string;
 }
 

@@ -330,6 +330,9 @@ class HotEventItem(BaseModel):
     id: str
     title: str
     summary: str = ""
+    title_translated: str = ""
+    summary_translated: str = ""
+    is_translated: bool = False
     url: str = ""
     source: str = ""
     source_domain: str = ""
@@ -358,10 +361,13 @@ class HotEventsResponse(BaseModel):
     last_attempted_at: str = ""
     refresh_interval_seconds: int = 3600
     is_stale: bool = False
+    refreshing: bool = False
+    throttled: bool = False
+    next_refresh_available_in_seconds: int = 0
     last_refresh_error: str = ""
 
 
-class ConversationGenerateRequest(BaseModel):
+class TrendingGenerateRequest(BaseModel):
     username: str = Field(..., strip_whitespace=True, min_length=1)
     event_id: str = ""
     event_payload: dict[str, Any] | None = None

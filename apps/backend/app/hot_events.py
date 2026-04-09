@@ -3,9 +3,7 @@ from __future__ import annotations
 import hashlib
 import html
 import re
-import time
 from datetime import UTC, datetime, timedelta
-from threading import Lock
 from typing import Any
 from urllib.parse import urlparse
 
@@ -36,30 +34,14 @@ class HotEventsService:
         fusion_settings: HotEventsFusionSettings | None = None,
     ):
         self.timeout_seconds = timeout_seconds
-        self.cache_ttl_seconds = max(1, int(cache_ttl_seconds))
+        self.cache_ttl_seconds = max(0, int(cache_ttl_seconds))
         self.api_token = str(api_token or "").strip()
         self.fusion_settings = fusion_settings or HotEventsFusionSettings()
-        self._lock = Lock()
-        self._cache_payload: dict[str, Any] = {"items": [], "warnings": [], "source_status": {}}
-        self._cache_expires_at_monotonic: float = 0.0
 
     def list_hot_events(self, *, hours: int = 24, limit: int = 50, refresh: bool = False) -> dict[str, Any]:
         bounded_hours = max(1, min(72, int(hours)))
         bounded_limit = max(1, min(200, int(limit)))
-
-        now_monotonic = time.monotonic()
-        with self._lock:
-            if not refresh and self._cache_payload["items"] and now_monotonic < self._cache_expires_at_monotonic:
-                return {
-                    "items": self._cache_payload["items"][:bounded_limit],
-                    "warnings": list(self._cache_payload.get("warnings", [])),
-                    "source_status": dict(self._cache_payload.get("source_status", {})),
-                }
-
         payload = self._fetch_hot_events(hours=bounded_hours)
-        with self._lock:
-            self._cache_payload = payload
-            self._cache_expires_at_monotonic = time.monotonic() + float(self.cache_ttl_seconds)
         return {
             "items": payload["items"][:bounded_limit],
             "warnings": list(payload.get("warnings", [])),

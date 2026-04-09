@@ -620,11 +620,11 @@ test("background get_hot_events calls hot-events endpoint with refresh query", a
 	assert.match(seenUrls[0], /^https:\/\/api\.sayviner\.top:8443\//);
 	assert.match(
 		seenUrls[0],
-		/\/api\/v1\/content\/hot-events\?hours=24&limit=50&refresh=true$/,
+		/\/api\/v1\/content\/hot-events\?hours=24&limit=50&refresh=true&lang=en$/,
 	);
 });
 
-test("background check_local_conversation_capability reports missing rebuild route on configured backend", async () => {
+test("background check_local_trending_capability reports missing rebuild route on configured backend", async () => {
 	const seenUrls: string[] = [];
 	const harness = createBackgroundHarness({
 		storage: { backendBaseUrl: "https://api.sayviner.top:8443" },
@@ -649,7 +649,7 @@ test("background check_local_conversation_capability reports missing rebuild rou
 		ok: boolean;
 		result: { supported: boolean; message: string };
 	}>(harness.listeners.onMessage, {
-		type: "check_local_conversation_capability",
+		type: "check_local_trending_capability",
 	});
 
 	assert.equal(response.ok, true);
@@ -661,7 +661,7 @@ test("background check_local_conversation_capability reports missing rebuild rou
 	);
 });
 
-test("background conversation_generate posts event payload to configured conversation endpoint", async () => {
+test("background trending_generate posts event payload to configured trending endpoint", async () => {
 	const seenUrls: string[] = [];
 	const seenBodies: Array<Record<string, unknown>> = [];
 	const harness = createBackgroundHarness({
@@ -672,7 +672,7 @@ test("background conversation_generate posts event payload to configured convers
 			seenBodies.push(JSON.parse(String(requestInit.body || "{}")));
 			return createJsonResponse(200, {
 				mode: "B",
-				drafts: [{ text: "Conversation draft" }],
+				drafts: [{ text: "Trending draft" }],
 			});
 		},
 	});
@@ -682,7 +682,7 @@ test("background conversation_generate posts event payload to configured convers
 		ok: boolean;
 		result: { mode: string; drafts: Array<{ text: string }> };
 	}>(harness.listeners.onMessage, {
-		type: "conversation_generate",
+		type: "trending_generate",
 		payload: {
 			username: "lin",
 			event_id: "web3:event-1",
@@ -694,9 +694,9 @@ test("background conversation_generate posts event payload to configured convers
 
 	assert.equal(response.ok, true);
 	assert.equal(response.result.mode, "B");
-	assert.equal(response.result.drafts[0]?.text, "Conversation draft");
+	assert.equal(response.result.drafts[0]?.text, "Trending draft");
 	assert.match(seenUrls[0], /^http:\/\/127\.0\.0\.1:8000\//);
-	assert.match(seenUrls[0], /\/api\/v1\/conversation\/generate$/);
+	assert.match(seenUrls[0], /\/api\/v1\/trending\/generate$/);
 	assert.equal(seenBodies[0]?.username, "lin");
 	assert.equal(seenBodies[0]?.event_id, "web3:event-1");
 	assert.equal(seenBodies[0]?.draft_count, 2);
@@ -707,10 +707,10 @@ test("background conversation_generate posts event payload to configured convers
 	assert.equal(harness.storage.defaultUsername, "lin");
 });
 
-test("background conversation_generate rebuilds persona on configured backend and retries once", async () => {
+test("background trending_generate rebuilds persona on configured backend and retries once", async () => {
 	const seenUrls: string[] = [];
 	const seenBodies: Array<Record<string, unknown>> = [];
-	let conversationAttempts = 0;
+	let trendingAttempts = 0;
 	let rebuildAttempts = 0;
 	const harness = createBackgroundHarness({
 		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
@@ -728,16 +728,16 @@ test("background conversation_generate rebuilds persona on configured backend an
 					},
 				});
 			}
-			if (normalizedUrl.endsWith("/api/v1/conversation/generate")) {
-				conversationAttempts += 1;
-				if (conversationAttempts === 1) {
+			if (normalizedUrl.endsWith("/api/v1/trending/generate")) {
+				trendingAttempts += 1;
+				if (trendingAttempts === 1) {
 					return createJsonResponse(409, {
 						detail: "Persona not found. Run /api/v1/profiles/ingest first",
 					});
 				}
 				return createJsonResponse(200, {
 					mode: "B",
-					drafts: [{ text: "Conversation draft after rebuild" }],
+					drafts: [{ text: "Trending draft after rebuild" }],
 				});
 			}
 			if (normalizedUrl.endsWith("/api/v1/profiles/rebuild-persona")) {
@@ -756,7 +756,7 @@ test("background conversation_generate rebuilds persona on configured backend an
 		ok: boolean;
 		result: { mode: string; drafts: Array<{ text: string }> };
 	}>(harness.listeners.onMessage, {
-		type: "conversation_generate",
+		type: "trending_generate",
 		payload: {
 			username: "lin",
 			event_id: "web3:event-2",
@@ -768,15 +768,12 @@ test("background conversation_generate rebuilds persona on configured backend an
 
 	assert.equal(response.ok, true);
 	assert.equal(response.result.mode, "B");
-	assert.equal(
-		response.result.drafts[0]?.text,
-		"Conversation draft after rebuild",
-	);
-	assert.equal(conversationAttempts, 2);
+	assert.equal(response.result.drafts[0]?.text, "Trending draft after rebuild");
+	assert.equal(trendingAttempts, 2);
 	assert.equal(rebuildAttempts, 1);
 	assert.match(
 		seenUrls[0],
-		/^http:\/\/127\.0\.0\.1:8000\/api\/v1\/conversation\/generate$/,
+		/^http:\/\/127\.0\.0\.1:8000\/api\/v1\/trending\/generate$/,
 	);
 	assert.match(seenUrls[1], /^http:\/\/127\.0\.0\.1:8000\/openapi\.json$/);
 	assert.match(
@@ -785,14 +782,14 @@ test("background conversation_generate rebuilds persona on configured backend an
 	);
 	assert.match(
 		seenUrls[3],
-		/^http:\/\/127\.0\.0\.1:8000\/api\/v1\/conversation\/generate$/,
+		/^http:\/\/127\.0\.0\.1:8000\/api\/v1\/trending\/generate$/,
 	);
 	assert.equal(seenBodies[2]?.username, "lin");
 	assert.equal(harness.storage.defaultUsername, "lin");
 });
 
-test("background conversation_generate surfaces rebuild error when configured backend persona recovery fails", async () => {
-	let conversationAttempts = 0;
+test("background trending_generate surfaces rebuild error when configured backend persona recovery fails", async () => {
+	let trendingAttempts = 0;
 	let rebuildAttempts = 0;
 	const harness = createBackgroundHarness({
 		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
@@ -807,8 +804,8 @@ test("background conversation_generate surfaces rebuild error when configured ba
 					},
 				});
 			}
-			if (normalizedUrl.endsWith("/api/v1/conversation/generate")) {
-				conversationAttempts += 1;
+			if (normalizedUrl.endsWith("/api/v1/trending/generate")) {
+				trendingAttempts += 1;
 				return createJsonResponse(409, {
 					detail: "Persona not found. Run /api/v1/profiles/ingest first",
 				});
@@ -828,7 +825,7 @@ test("background conversation_generate surfaces rebuild error when configured ba
 		ok: false;
 		error: { status: number; path: string; message: string };
 	}>(harness.listeners.onMessage, {
-		type: "conversation_generate",
+		type: "trending_generate",
 		payload: {
 			username: "lin",
 			event_id: "web3:event-2",
@@ -845,19 +842,19 @@ test("background conversation_generate surfaces rebuild error when configured ba
 		response.error.message,
 		"No tweets found. Run /api/v1/profiles/ingest first",
 	);
-	assert.equal(conversationAttempts, 1);
+	assert.equal(trendingAttempts, 1);
 	assert.equal(rebuildAttempts, 1);
 });
 
-test("background conversation_generate surfaces dedicated code when configured backend rebuild endpoint is unsupported", async () => {
-	let conversationAttempts = 0;
+test("background trending_generate surfaces dedicated code when configured backend rebuild endpoint is unsupported", async () => {
+	let trendingAttempts = 0;
 	let rebuildAttempts = 0;
 	const harness = createBackgroundHarness({
 		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
 		fetch: async (url) => {
 			const normalizedUrl = String(url);
-			if (normalizedUrl.endsWith("/api/v1/conversation/generate")) {
-				conversationAttempts += 1;
+			if (normalizedUrl.endsWith("/api/v1/trending/generate")) {
+				trendingAttempts += 1;
 				return createJsonResponse(409, {
 					detail: "Persona not found. Run /api/v1/profiles/ingest first",
 				});
@@ -886,7 +883,7 @@ test("background conversation_generate surfaces dedicated code when configured b
 		ok: false;
 		error: { path: string; code: string; message: string };
 	}>(harness.listeners.onMessage, {
-		type: "conversation_generate",
+		type: "trending_generate",
 		payload: {
 			username: "lin",
 			event_id: "web3:event-9",
@@ -900,6 +897,6 @@ test("background conversation_generate surfaces dedicated code when configured b
 	assert.equal(response.error.path, "/api/v1/profiles/rebuild-persona");
 	assert.equal(response.error.code, "LOCAL_BACKEND_REBUILD_UNSUPPORTED");
 	assert.match(response.error.message, /outdated/i);
-	assert.equal(conversationAttempts, 1);
+	assert.equal(trendingAttempts, 1);
 	assert.equal(rebuildAttempts, 0);
 });

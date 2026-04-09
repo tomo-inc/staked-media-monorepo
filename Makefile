@@ -1,6 +1,20 @@
 BE_DIR := apps/backend
 FE_DIR := apps/browser-extension
 BE_CONFIG ?= config.json
+PYTHON ?= python
+UV := $(shell command -v uv 2>/dev/null)
+
+ifdef UV
+BE_RUFF = uv run --extra dev ruff
+BE_PYRIGHT = uv run --extra dev pyright
+BE_PYTEST = uv run --extra dev pytest
+BE_APP = uv run python -m app.run
+else
+BE_RUFF = $(PYTHON) -m ruff
+BE_PYRIGHT = $(PYTHON) -m pyright
+BE_PYTEST = $(PYTHON) -m pytest
+BE_APP = $(PYTHON) -m app.run
+endif
 
 .PHONY: lint format typecheck check test build \
         be-lint be-format be-format-check be-typecheck be-check be-test be-run \
@@ -10,24 +24,24 @@ BE_CONFIG ?= config.json
 # ── Backend ──────────────────────────────────────────────
 
 be-lint:
-	cd $(BE_DIR) && uv run --extra dev ruff check app/ tests/
+	cd $(BE_DIR) && $(BE_RUFF) check app/ tests/
 
 be-format:
-	cd $(BE_DIR) && uv run --extra dev ruff format app/ tests/
+	cd $(BE_DIR) && $(BE_RUFF) format app/ tests/
 
 be-format-check:
-	cd $(BE_DIR) && uv run --extra dev ruff format --check app/ tests/
+	cd $(BE_DIR) && $(BE_RUFF) format --check app/ tests/
 
 be-typecheck:
-	cd $(BE_DIR) && uv run --extra dev pyright app/
+	cd $(BE_DIR) && $(BE_PYRIGHT) app/
 
 be-check: be-lint be-format-check be-typecheck
 
 be-test:
-	cd $(BE_DIR) && uv run --extra dev pytest tests/ -q
+	cd $(BE_DIR) && $(BE_PYTEST) tests/ -q
 
 be-run:
-	cd $(BE_DIR) && uv run python -m app.run -c $(abspath $(BE_CONFIG)) --reload
+	cd $(BE_DIR) && $(BE_APP) -c $(abspath $(BE_CONFIG)) --reload
 
 # ── Frontend ─────────────────────────────────────────────
 

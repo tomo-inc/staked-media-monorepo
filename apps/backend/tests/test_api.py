@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -228,6 +230,21 @@ class FakeLLMClient:
             "evaluation": {"best_candidate": {"final_score": 9.2}},
         }
 
+    def translate_hot_events_batch(
+        self,
+        *,
+        items: dict[str, dict[str, str]],
+        target_language: str,
+        request_id: str | None = None,
+    ) -> dict[str, dict[str, str]]:
+        return {
+            str(event_id): {
+                "title_translated": str(item.get("title") or ""),
+                "summary_translated": str(item.get("summary") or ""),
+            }
+            for event_id, item in items.items()
+        }
+
 
 class FakeWebEnricher:
     def search_recent_topic_signals(self, topic: str, keywords: list[str]) -> dict:
@@ -249,6 +266,8 @@ class FakeWebEnricher:
 class FakeContentOrchestrator:
     def __init__(self) -> None:
         self.hot_events_refresh_calls = 0
+        self.refresh_call_event = threading.Event()
+        self.refresh_delay_seconds = 0.0
 
     def generate_content(self, payload, request_id: str) -> dict:
         return {
@@ -315,12 +334,15 @@ class FakeContentOrchestrator:
     def suggest_ideas(self, *, direction: str, domain: str, topic_hint: str, limit: int) -> dict:
         return {"ideas": [], "query": "", "suggested_keywords": []}
 
-    def list_hot_events(self, *, hours: int, limit: int, refresh: bool) -> dict:
+    def list_hot_events(self, *, hours: int, limit: int, refresh: bool, language: str | None = None) -> dict:
         items = [
             {
                 "id": "web3::event-1",
                 "title": "ETF flow spikes",
                 "summary": "Large inflow observed.",
+                "title_translated": "ETF flow spikes",
+                "summary_translated": "Large inflow observed.",
+                "is_translated": False,
                 "url": "https://example.com/etf",
                 "source": "Example",
                 "source_domain": "example.com",
@@ -346,14 +368,26 @@ class FakeContentOrchestrator:
             "last_attempted_at": "2026-04-07T10:00:00+00:00",
             "refresh_interval_seconds": 3600,
             "is_stale": False,
+            "refreshing": False,
+            "throttled": False,
+            "next_refresh_available_in_seconds": 0,
             "last_refresh_error": "",
         }
 
-    def refresh_hot_events_snapshot(self, *, hours: int = 24) -> dict:
+    def refresh_hot_events_snapshot(
+        self,
+        *,
+        hours: int = 24,
+        limit: int = 200,
+        language: str | None = None,
+    ) -> dict:
         self.hot_events_refresh_calls += 1
-        return self.list_hot_events(hours=hours, limit=50, refresh=True)
+        self.refresh_call_event.set()
+        if self.refresh_delay_seconds > 0:
+            time.sleep(self.refresh_delay_seconds)
+        return self.list_hot_events(hours=hours, limit=50, refresh=True, language=language)
 
-    def generate_conversation_content(self, payload, request_id: str) -> dict:
+    def generate_trending_content(self, payload, request_id: str) -> dict:
         return {
             "request_id": request_id,
             "mode": "B",
@@ -364,12 +398,12 @@ class FakeContentOrchestrator:
                     "label": "Normal",
                     "drafts": [
                         {
-                            "text": "Conversation draft one",
+                            "text": "Trending draft one",
                             "tone_tags": ["direct"],
                             "rationale": "fit",
                         }
                     ],
-                    "formatted_drafts": ["1. Conversation draft one"],
+                    "formatted_drafts": ["1. Trending draft one"],
                     "score": {
                         "theme_relevance": 9.0,
                         "style_similarity": 9.0,
@@ -387,12 +421,12 @@ class FakeContentOrchestrator:
             "recommended_variant": "normal",
             "drafts": [
                 {
-                    "text": "Conversation draft one",
+                    "text": "Trending draft one",
                     "tone_tags": ["direct"],
                     "rationale": "fit",
                 }
             ],
-            "formatted_drafts": ["1. Conversation draft one"],
+            "formatted_drafts": ["1. Trending draft one"],
             "score": {
                 "theme_relevance": 9.0,
                 "style_similarity": 9.0,
@@ -784,6 +818,7 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(payload["last_refreshed_at"], "2026-04-07T10:00:00+00:00")
         self.assertEqual(payload["refresh_interval_seconds"], 3600)
         self.assertFalse(payload["is_stale"])
+        self.assertFalse(payload["refreshing"])
         self.assertEqual(payload["last_refresh_error"], "")
 
     def test_content_hot_events_endpoint_returns_empty_payload_when_database_has_no_rows(self) -> None:
@@ -822,7 +857,7 @@ class ApiTestCase(unittest.TestCase):
         finally:
             temp_dir.cleanup()
 
-    def test_create_app_runs_hot_events_refresh_once_on_startup_when_supported(self) -> None:
+    def test_create_app_starts_before_background_hot_events_refresh_completes(self) -> None:
         temp_dir = tempfile.TemporaryDirectory()
         try:
             settings = Settings(
@@ -832,6 +867,8 @@ class ApiTestCase(unittest.TestCase):
                 log_enable_file=False,
             )
             content_orchestrator = FakeContentOrchestrator()
+            content_orchestrator.refresh_delay_seconds = 0.25
+            started_at = time.monotonic()
             with TestClient(
                 create_app(
                     settings,
@@ -842,12 +879,15 @@ class ApiTestCase(unittest.TestCase):
             ) as client:
                 response = client.get("/healthz")
                 self.assertEqual(response.status_code, 200)
+                startup_elapsed = time.monotonic() - started_at
+                self.assertLess(startup_elapsed, 0.2)
+                self.assertTrue(content_orchestrator.refresh_call_event.wait(timeout=1.0))
 
             self.assertEqual(content_orchestrator.hot_events_refresh_calls, 1)
         finally:
             temp_dir.cleanup()
 
-    def test_conversation_generate_endpoint_returns_mode_b_drafts(self) -> None:
+    def test_trending_generate_endpoint_returns_mode_b_drafts(self) -> None:
         ingest = self.client.post(
             "/api/v1/profiles/ingest",
             json={"username": "demo-user"},
@@ -855,7 +895,7 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(ingest.status_code, 200)
 
         response = self.client.post(
-            "/api/v1/conversation/generate",
+            "/api/v1/trending/generate",
             json={
                 "username": "demo-user",
                 "event_payload": {
@@ -883,7 +923,7 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(payload["topic"], "ETF flow spikes")
         self.assertEqual(len(payload["drafts"]), 2)
 
-    def test_conversation_generate_accepts_tweet_event_payload(self) -> None:
+    def test_trending_generate_accepts_tweet_event_payload(self) -> None:
         ingest = self.client.post(
             "/api/v1/profiles/ingest",
             json={"username": "demo-user"},
@@ -891,7 +931,7 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(ingest.status_code, 200)
 
         response = self.client.post(
-            "/api/v1/conversation/generate",
+            "/api/v1/trending/generate",
             json={
                 "username": "demo-user",
                 "event_payload": {
@@ -969,7 +1009,7 @@ class ApiTestCase(unittest.TestCase):
         finally:
             temp_dir.cleanup()
 
-    def test_conversation_generate_returns_409_when_persona_is_missing(self) -> None:
+    def test_trending_generate_returns_409_when_persona_is_missing(self) -> None:
         temp_dir = tempfile.TemporaryDirectory()
         try:
             settings = Settings(
@@ -1009,7 +1049,7 @@ class ApiTestCase(unittest.TestCase):
                 )
             ) as client:
                 response = client.post(
-                    "/api/v1/conversation/generate",
+                    "/api/v1/trending/generate",
                     json={
                         "username": "demo-user",
                         "event_payload": {

@@ -1007,43 +1007,35 @@ body {
 	word-break: break-word;
 }
 
-.smc-hot-carousel-shell {
-	overflow: hidden;
-}
-
-.smc-hot-carousel-track {
+.smc-hot-list {
 	display: grid;
-	grid-auto-flow: column;
-	grid-auto-columns: minmax(280px, 88%);
 	gap: 10px;
-	overflow-x: auto;
-	overflow-y: hidden;
-	padding: 2px;
-	scroll-snap-type: x mandatory;
-	scroll-padding-inline: 2px;
+	max-height: min(50vh, 420px);
+	overflow-y: auto;
+	padding-right: 4px;
 	scrollbar-width: thin;
 	scrollbar-color: var(--smc-line-contrast) transparent;
-	overscroll-behavior-x: contain;
-	cursor: grab;
-	touch-action: pan-x;
-	user-select: none;
 }
 
-.smc-hot-carousel-track::-webkit-scrollbar {
-	height: 8px;
+.smc-hot-list-frame {
+	margin-top: 8px;
+	padding: 10px;
+	border: 1px solid var(--smc-line-soft);
+	border-radius: 12px;
+	background: var(--smc-surface);
 }
 
-.smc-hot-carousel-track::-webkit-scrollbar-thumb {
+.smc-hot-list::-webkit-scrollbar {
+	width: 8px;
+}
+
+.smc-hot-list::-webkit-scrollbar-thumb {
 	background: var(--smc-line-contrast);
 	border-radius: 999px;
 }
 
-.smc-hot-carousel-track::-webkit-scrollbar-track {
+.smc-hot-list::-webkit-scrollbar-track {
 	background: transparent;
-}
-
-.smc-hot-carousel-track-dragging {
-	cursor: grabbing;
 }
 
 .smc-hot-event-card {
@@ -1051,8 +1043,6 @@ body {
 	border-radius: 10px;
 	padding: 12px;
 	background: var(--smc-card-alt);
-	scroll-snap-align: start;
-	min-height: 180px;
 	display: flex;
 	flex-direction: column;
 	cursor: pointer;
@@ -1074,9 +1064,19 @@ body {
 
 .smc-hot-event-head {
 	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 8px;
+}
+
+.smc-hot-event-head-main {
+	display: flex;
 	align-items: center;
 	gap: 8px;
-	margin-bottom: 8px;
+	flex: 1;
+	min-width: 0;
+	flex-wrap: wrap;
 }
 
 .smc-hot-event-rank {
@@ -1126,6 +1126,44 @@ body {
 	color: var(--smc-ink);
 }
 
+.smc-hot-event-score-group {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.smc-hot-translate-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 1px solid var(--smc-line-soft);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--smc-primary);
+	transition:
+		border-color 0.15s,
+		color 0.15s,
+		background 0.15s;
+}
+
+.smc-hot-translate-button:hover {
+	border-color: var(--smc-primary);
+	background: var(--smc-primary-soft);
+}
+
+.smc-hot-translate-button svg {
+	width: 14px;
+	height: 14px;
+}
+
+.smc-hot-translate-button-muted {
+	color: var(--smc-muted);
+}
+
 .smc-hot-event-title {
 	margin: 0;
 	font-size: 14px;
@@ -1138,10 +1176,18 @@ body {
 	font-size: 12px;
 	line-height: 1.5;
 	color: var(--smc-muted);
-	display: -webkit-box;
-	-webkit-line-clamp: 4;
-	-webkit-box-orient: vertical;
-	overflow: hidden;
+}
+
+.smc-hot-summary-toggle {
+	display: inline;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--smc-primary);
+	font: inherit;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
 }
 
 .smc-hot-event-actions {
@@ -1149,6 +1195,58 @@ body {
 	justify-content: flex-end;
 	margin-top: auto;
 	padding-top: 10px;
+}
+
+.smc-hot-select-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	border: 1px solid color-mix(in srgb, var(--smc-primary) 32%, transparent);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--smc-primary) 12%, var(--smc-card));
+	color: var(--smc-primary);
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1;
+	transition:
+		border-color 0.15s,
+		background 0.15s,
+		color 0.15s;
+}
+
+.smc-hot-select-button:hover {
+	border-color: var(--smc-primary);
+	background: color-mix(in srgb, var(--smc-primary) 18%, var(--smc-card));
+}
+
+.smc-hot-select-button svg {
+	width: 14px;
+	height: 14px;
+}
+
+.smc-hot-select-button-selected {
+	background: var(--smc-primary);
+	border-color: var(--smc-primary);
+	color: #fff;
+}
+
+.smc-selected-event-info {
+	margin-bottom: 10px;
+}
+
+.smc-selected-event-status {
+	font-size: 12px;
+	line-height: 1.4;
+	color: var(--smc-good);
+}
+
+.smc-selected-event-title {
+	margin-top: 4px;
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--smc-muted);
+	word-break: break-word;
 }
 
 /* Empty state */
@@ -1185,13 +1283,12 @@ body {
 		min-width: 82px;
 	}
 
-	.smc-hot-carousel-shell {
-		overflow: hidden;
+	.smc-hot-list {
+		max-height: min(52vh, 360px);
 	}
 
-	.smc-hot-carousel-track {
-		grid-auto-columns: minmax(84%, 90%);
-		padding-bottom: 4px;
+	.smc-hot-list-frame {
+		padding: 8px;
 	}
 }
 

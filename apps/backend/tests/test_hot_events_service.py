@@ -161,9 +161,8 @@ class HotEventsServiceTestCase(unittest.TestCase):
         self.assertEqual(len(first["items"]), 1)
         self.assertEqual(len(second["items"]), 1)
         self.assertEqual(len(third["items"]), 1)
-        # First + third call fetch from upstream, second call should hit cache.
-        self.assertGreaterEqual(call_counts["get"], 4)
-        self.assertGreaterEqual(call_counts["post"], 4)
+        self.assertGreaterEqual(call_counts["get"], 6)
+        self.assertGreaterEqual(call_counts["post"], 6)
 
     def test_twitter_item_normalization_with_inferred_score(self) -> None:
         recent_tweet_ts = (datetime.now(UTC).replace(microsecond=0) - timedelta(hours=2)).strftime(

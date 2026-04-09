@@ -21,10 +21,10 @@ The service routes upstream profile and tweet calls through the configured proxy
 ## Local Setup
 1. Copy `config.example.json` to `config.json`
 2. Edit `config.json`
-   - Set `app.llm_provider` to `openai` or `gemini`
-   - Fill in the matching API key: `app.openai_api_key` for OpenAI or `app.gemini_api_key` for Gemini
-   - Optional overrides live in the same `app` section, including models, proxies, logging, retries, timeouts, and web enrichment
-   - If Gemini returns `User location is not supported for the API use.`, set `app.llm_http_proxy` so outbound LLM requests route through a supported region
+   - Set `llm.provider` to `openai` or `gemini`
+   - Fill in the matching API key: `llm.openai.api_key` for OpenAI or `llm.gemini.api_key` for Gemini
+   - Optional overrides live under `twitter`, `llm`, `log`, `content`, `web_enrichment`, and `hot_events`
+   - If Gemini returns `User location is not supported for the API use.`, set `llm.http_proxy` so outbound LLM requests route through a supported region
    - `server.host`, `server.port`, and `server.reload` control the HTTP server startup defaults
 3. Install `uv` if it is not already available:
 
@@ -133,6 +133,23 @@ curl -X POST http://127.0.0.1:8000/api/v1/content/ideas \
   }'
 ```
 
+### Generate trending drafts from a hot event
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/trending/generate \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "username": "ryanfang95",
+    "event_id": "news:crypto:abc123",
+    "comment": "My take is that flows matter more than headlines here.",
+    "draft_count": 3
+  }'
+```
+
+### Read hot events with translated fields
+```bash
+curl 'http://127.0.0.1:8000/api/v1/content/hot-events?hours=24&limit=20&lang=zh-CN'
+```
+
 ### Exposure helper
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/exposure/analyze \
@@ -147,15 +164,16 @@ curl -X POST http://127.0.0.1:8000/api/v1/exposure/analyze \
 
 ## Notes
 - The app reads configuration only from the JSON file passed to `uv run python -m app.run -c ...`; `.env` and environment-variable overrides are no longer used.
-- LLM provider selection is config-file based via `app.llm_provider`; the HTTP API does not expose a per-request provider override.
-- `app.llm_http_proxy` configures the proxy for outbound LLM requests (OpenAI/Gemini). `app.twitter_data_proxy` configures the proxy for Twitter data API requests. Either can be left empty to disable proxying.
+- LLM provider selection is config-file based via `llm.provider`; the HTTP API does not expose a per-request provider override.
+- `llm.http_proxy` configures the proxy for outbound LLM requests (OpenAI/Gemini). `twitter.data_proxy` configures the proxy for Twitter data API requests. Either can be left empty to disable proxying.
+- Hot events are stored as DB-backed snapshots, refreshed in the background, and exposed with optional translated fields via `lang=...`.
 - Persona-related public APIs now require the target username to exist in the database-backed trial whitelist. Internal whitelist management lives under `/admin/api/v1/...`.
 - The LLM integration now lives under the `app/llm/` package while keeping supported imports such as `from app.llm import LLMClient, GeminiClient, OpenAIClient, create_llm_client`.
 - `app.llm` does not re-export third-party modules. Tests that mock outbound LLM HTTP calls should patch `app.llm.base_client.requests.post`.
 - The app now emits structured runtime logs to stdout and, by default, to `data/app.log`.
 - Logs are JSON-per-line with an `event` field; API requests include a `request_id` that is propagated into upstream and LLM logs for correlation.
-- Prompts and model responses are not logged in full by default; snippets are truncated via `app.log_max_body_chars`. Set `app.log_enable_file=false` to disable file logging.
-- LLM provider calls now retry transient failures only (timeouts, connection errors, and 5xx). Score requests use `app.llm_score_timeout_seconds`, which is shorter than the main generation timeout by default.
+- Prompts and model responses are not logged in full by default; snippets are truncated via `log.max_body_chars`. Set `log.enable_file=false` to disable file logging.
+- LLM provider calls now retry transient failures only (timeouts, connection errors, and 5xx). Score requests use `llm.score_timeout_seconds`, which is shorter than the main generation timeout by default.
 - Gemini JSON parsing now safely handles fenced JSON blocks and wrapped JSON text, but still fails on genuinely malformed payloads.
 - The upstream tweet endpoint paginates with `cursor` and returns `next_cursor`; this app handles that pagination internally and does not expose cursor on its own ingest API.
 - The MVP stores raw upstream payloads in SQLite for debugging and reuse.

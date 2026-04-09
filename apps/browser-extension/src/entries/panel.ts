@@ -81,6 +81,9 @@ interface PanelHotEventsPayload {
 	last_attempted_at?: string;
 	refresh_interval_seconds?: number;
 	is_stale?: boolean;
+	refreshing?: boolean;
+	throttled?: boolean;
+	next_refresh_available_in_seconds?: number;
 	last_refresh_error?: string;
 	source_status?: Record<
 		string,
@@ -103,14 +106,14 @@ interface PanelComposerResponse {
 	} | null;
 }
 
-interface PanelLocalConversationCapability {
+interface PanelLocalTrendingCapability {
 	supported: boolean;
 	message: string;
 	checkedAt: string;
 }
 
-interface PanelLocalConversationCapabilityResponse {
-	result: PanelLocalConversationCapability;
+interface PanelLocalTrendingCapabilityResponse {
+	result: PanelLocalTrendingCapability;
 }
 
 interface GenerationProgress {
@@ -120,7 +123,7 @@ interface GenerationProgress {
 
 type PanelView = "main" | "settings";
 type PanelSettingsPage = "home" | "api";
-type PanelTab = "profile" | "draft" | "conversation";
+type PanelTab = "profile" | "draft" | "trending";
 type HealthState = "loading" | "ready" | "error";
 type PanelStatusKind = "" | "warn";
 type PanelDraftLike = StakedMediaDraftRecord | string;
@@ -129,6 +132,9 @@ interface PanelHotEventRecord {
 	id: string;
 	title?: string;
 	summary?: string;
+	title_translated?: string;
+	summary_translated?: string;
+	is_translated?: boolean;
 	url?: string;
 	source?: string;
 	source_domain?: string;
@@ -169,12 +175,17 @@ interface PanelState {
 	hotEventsLastAttemptedAt: string;
 	hotEventsRefreshIntervalSeconds: number;
 	hotEventsIsStale: boolean;
+	hotEventsRefreshing: boolean;
+	hotEventsThrottled: boolean;
+	hotEventsNextRefreshAvailableInSeconds: number;
 	hotEventsLastRefreshError: string;
 	hotEventsLoading: boolean;
+	hotEventsShowOriginal: Record<string, boolean>;
+	hotEventsExpandedSummary: Record<string, boolean>;
 	selectedHotEventId: string;
-	conversationGenerated: StakedMediaDraftSource | null;
-	lastConversationDurationMs: number | null;
-	conversationErrorHint: string;
+	trendingGenerated: StakedMediaDraftSource | null;
+	lastTrendingDurationMs: number | null;
+	trendingErrorHint: string;
 }
 
 interface PanelUi {
@@ -205,12 +216,13 @@ interface PanelUi {
 	profileInfo: HTMLElement;
 	hotEventsMeta: HTMLElement;
 	hotEvents: HTMLElement;
-	conversationComment: HTMLTextAreaElement;
-	conversationDraftCount: HTMLInputElement;
-	generateConversationButton: HTMLButtonElement;
+	selectedHotEventInfo: HTMLElement;
+	trendingComment: HTMLTextAreaElement;
+	trendingDraftCount: HTMLInputElement;
+	generateTrendingButton: HTMLButtonElement;
 	sendToDraftButton: HTMLButtonElement;
 	sendToDraftHint: HTMLElement;
-	conversationResults: HTMLElement;
+	trendingResults: HTMLElement;
 	views: NodeListOf<HTMLElement>;
 	settingsPages: NodeListOf<HTMLElement>;
 }
@@ -227,8 +239,12 @@ interface PanelUi {
 		sendRuntimeMessage,
 		t,
 	} = panelWindow.StakedMediaExtensionShared;
-	const { buildPanelShell, deriveConnectionIndicator, isWhitelistDeniedError } =
-		panelWindow.StakedMediaPanelHelpers;
+	const {
+		buildPanelShell,
+		deriveConnectionIndicator,
+		deriveHotEventsStateNotice,
+		isWhitelistDeniedError,
+	} = panelWindow.StakedMediaPanelHelpers;
 	const params = new URLSearchParams(window.location.search);
 	const HOST_MODE = params.get("host") === "popup" ? "popup" : "sidepanel";
 	const systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -264,12 +280,17 @@ interface PanelUi {
 		hotEventsLastAttemptedAt: "",
 		hotEventsRefreshIntervalSeconds: 0,
 		hotEventsIsStale: false,
+		hotEventsRefreshing: false,
+		hotEventsThrottled: false,
+		hotEventsNextRefreshAvailableInSeconds: 0,
 		hotEventsLastRefreshError: "",
 		hotEventsLoading: false,
+		hotEventsShowOriginal: {},
+		hotEventsExpandedSummary: {},
 		selectedHotEventId: "",
-		conversationGenerated: null,
-		lastConversationDurationMs: null,
-		conversationErrorHint: "",
+		trendingGenerated: null,
+		lastTrendingDurationMs: null,
+		trendingErrorHint: "",
 	};
 
 	const root = document.getElementById("app") as HTMLElement;
@@ -342,14 +363,17 @@ interface PanelUi {
 			'[data-slot="hot-events-meta"]',
 		) as HTMLElement,
 		hotEvents: root.querySelector('[data-slot="hot-events"]') as HTMLElement,
-		conversationComment: root.querySelector(
-			'[data-field="conversationComment"]',
+		selectedHotEventInfo: root.querySelector(
+			'[data-slot="selected-hot-event-info"]',
+		) as HTMLElement,
+		trendingComment: root.querySelector(
+			'[data-field="trendingComment"]',
 		) as HTMLTextAreaElement,
-		conversationDraftCount: root.querySelector(
-			'[data-field="conversationDraftCount"]',
+		trendingDraftCount: root.querySelector(
+			'[data-field="trendingDraftCount"]',
 		) as HTMLInputElement,
-		generateConversationButton: root.querySelector(
-			'[data-action="generate-conversation"]',
+		generateTrendingButton: root.querySelector(
+			'[data-action="generate-trending"]',
 		) as HTMLButtonElement,
 		sendToDraftButton: root.querySelector(
 			'[data-action="send-to-draft"]',
@@ -357,8 +381,8 @@ interface PanelUi {
 		sendToDraftHint: root.querySelector(
 			'[data-slot="send-to-draft-hint"]',
 		) as HTMLElement,
-		conversationResults: root.querySelector(
-			'[data-slot="conversation-results"]',
+		trendingResults: root.querySelector(
+			'[data-slot="trending-results"]',
 		) as HTMLElement,
 		views: root.querySelectorAll("[data-view]") as NodeListOf<HTMLElement>,
 		settingsPages: root.querySelectorAll(
@@ -432,7 +456,7 @@ interface PanelUi {
 		renderUsernameError("");
 	});
 
-	ui.conversationComment.addEventListener("input", () => {
+	ui.trendingComment.addEventListener("input", () => {
 		renderSendToDraftButton();
 	});
 
@@ -457,9 +481,9 @@ interface PanelUi {
 		});
 
 	root
-		.querySelector('[data-action="generate-conversation"]')
+		.querySelector('[data-action="generate-trending"]')
 		.addEventListener("click", async () => {
-			await handleConversationGenerate();
+			await handleTrendingGenerate();
 		});
 
 	root
@@ -469,12 +493,12 @@ interface PanelUi {
 		});
 
 	root
-		.querySelector('[data-action="clear-conversation-results"]')
+		.querySelector('[data-action="clear-trending-results"]')
 		.addEventListener("click", () => {
-			STATE.conversationGenerated = null;
-			STATE.lastConversationDurationMs = null;
-			STATE.conversationErrorHint = "";
-			renderConversationResults();
+			STATE.trendingGenerated = null;
+			STATE.lastTrendingDurationMs = null;
+			STATE.trendingErrorHint = "";
+			renderTrendingResults();
 			renderSendToDraftButton();
 		});
 
@@ -516,8 +540,8 @@ interface PanelUi {
 		let nextTab: PanelTab = "profile";
 		if (tabName === "draft") {
 			nextTab = "draft";
-		} else if (tabName === "conversation") {
-			nextTab = "conversation";
+		} else if (tabName === "trending") {
+			nextTab = "trending";
 		}
 		STATE.activeTab = nextTab;
 		(
@@ -539,14 +563,14 @@ interface PanelUi {
 			);
 		});
 		if (
-			nextTab === "conversation" &&
+			nextTab === "trending" &&
 			!STATE.hotEventsLoading &&
 			STATE.hotEvents.length === 0
 		) {
 			void loadHotEvents(false);
 		}
-		if (nextTab === "conversation") {
-			void ensureLocalConversationCapability(false);
+		if (nextTab === "trending") {
+			void ensureLocalTrendingCapability(false);
 		}
 	}
 
@@ -598,7 +622,7 @@ interface PanelUi {
 		hydrateInputs();
 		await refreshHealth();
 		await refreshComposerState();
-		await ensureLocalConversationCapability(true);
+		await ensureLocalTrendingCapability(true);
 		render();
 	}
 
@@ -618,33 +642,33 @@ interface PanelUi {
 		renderConnectionDot();
 	}
 
-	async function ensureLocalConversationCapability(
+	async function ensureLocalTrendingCapability(
 		forceRefresh: boolean,
 	): Promise<void> {
 		try {
 			const response =
-				await sendRuntimeMessage<PanelLocalConversationCapabilityResponse>({
-					type: "check_local_conversation_capability",
+				await sendRuntimeMessage<PanelLocalTrendingCapabilityResponse>({
+					type: "check_local_trending_capability",
 					payload: { refresh: forceRefresh },
 				});
 			const supported = Boolean(response?.result?.supported);
 			if (!supported) {
-				STATE.conversationErrorHint =
+				STATE.trendingErrorHint =
 					String(response?.result?.message || "").trim() ||
 					`Configured backend is outdated. Update or restart ${getConfiguredBackendBaseUrl()} with the latest code.`;
-				renderConversationResults();
+				renderTrendingResults();
 				renderSendToDraftButton();
 				return;
 			}
-			if (!STATE.conversationGenerated) {
-				STATE.conversationErrorHint = "";
-				renderConversationResults();
+			if (!STATE.trendingGenerated) {
+				STATE.trendingErrorHint = "";
+				renderTrendingResults();
 				renderSendToDraftButton();
 			}
 		} catch (_error) {
-			if (!STATE.conversationGenerated) {
-				STATE.conversationErrorHint = `Unable to verify backend capability. Make sure ${getConfiguredBackendBaseUrl()} is reachable.`;
-				renderConversationResults();
+			if (!STATE.trendingGenerated) {
+				STATE.trendingErrorHint = `Unable to verify backend capability. Make sure ${getConfiguredBackendBaseUrl()} is reachable.`;
+				renderTrendingResults();
 				renderSendToDraftButton();
 			}
 		}
@@ -1066,10 +1090,12 @@ interface PanelUi {
 	async function loadHotEvents(forceRefresh: boolean): Promise<void> {
 		if (!forceRefresh && hasFreshHotEventsCache()) {
 			renderHotEvents();
+			renderSelectedHotEventInfo();
 			return;
 		}
 		STATE.hotEventsLoading = true;
 		renderHotEvents();
+		renderSelectedHotEventInfo();
 		try {
 			const response = await sendRuntimeMessage<PanelHotEventsResponse>({
 				type: "get_hot_events",
@@ -1077,6 +1103,7 @@ interface PanelUi {
 					hours: 24,
 					limit: 50,
 					refresh: forceRefresh,
+					lang: getResolvedLocale(),
 				},
 			});
 			const rawItems = Array.isArray(response.result?.items)
@@ -1102,9 +1129,26 @@ interface PanelUi {
 				? Number(response.result?.refresh_interval_seconds)
 				: 0;
 			STATE.hotEventsIsStale = Boolean(response.result?.is_stale);
+			STATE.hotEventsRefreshing = Boolean(response.result?.refreshing);
+			STATE.hotEventsThrottled = Boolean(response.result?.throttled);
+			STATE.hotEventsNextRefreshAvailableInSeconds = Number.isFinite(
+				Number(response.result?.next_refresh_available_in_seconds),
+			)
+				? Number(response.result?.next_refresh_available_in_seconds)
+				: 0;
 			STATE.hotEventsLastRefreshError = String(
 				response.result?.last_refresh_error || "",
 			).trim();
+			STATE.hotEventsShowOriginal = Object.fromEntries(
+				Object.entries(STATE.hotEventsShowOriginal).filter(([eventId]) =>
+					nextItems.some((item) => getHotEventId(item) === eventId),
+				),
+			);
+			STATE.hotEventsExpandedSummary = Object.fromEntries(
+				Object.entries(STATE.hotEventsExpandedSummary).filter(([eventId]) =>
+					nextItems.some((item) => getHotEventId(item) === eventId),
+				),
+			);
 			if (
 				STATE.selectedHotEventId &&
 				!STATE.hotEvents.find(
@@ -1115,19 +1159,28 @@ interface PanelUi {
 				renderSendToDraftButton();
 			}
 			renderHotEvents();
+			renderSelectedHotEventInfo();
 			renderStatus("", "");
 		} catch (error) {
 			renderStatus(formatApiError(error), "error");
 		} finally {
 			STATE.hotEventsLoading = false;
 			renderHotEvents();
+			renderSelectedHotEventInfo();
 		}
 	}
 
-	function renderHotEvents(): void {
+	function renderHotEvents(preserveScroll = false): void {
 		if (!ui.hotEvents || !ui.hotEventsMeta) {
 			return;
 		}
+		const previousHotEventsList = ui.hotEvents.querySelector(
+			'[data-slot="hot-events-list"]',
+		) as HTMLElement | null;
+		const preservedScrollTop =
+			preserveScroll && previousHotEventsList
+				? previousHotEventsList.scrollTop
+				: 0;
 		if (STATE.hotEventsLoading) {
 			ui.hotEventsMeta.innerHTML = "Loading 24h hot events...";
 			ui.hotEvents.innerHTML =
@@ -1154,8 +1207,8 @@ interface PanelUi {
 		const stateNoticeHtml = renderHotEventsStateNotice();
 		ui.hotEventsMeta.innerHTML = `<div>${summaryLabel}</div>${stateNoticeHtml}${warningHtml}`;
 		ui.hotEvents.innerHTML = `
-      <div class="smc-hot-carousel-shell">
-        <div class="smc-hot-carousel-track" data-slot="hot-events-track">
+      <div class="smc-hot-list-frame">
+        <div class="smc-hot-list" data-slot="hot-events-list">
           ${STATE.hotEvents
 						.map((event, index) => {
 							const eventId = getHotEventId(event);
@@ -1163,8 +1216,13 @@ interface PanelUi {
 								return "";
 							}
 							const isSelected = eventId === STATE.selectedHotEventId;
-							const title = escapeHtml(event.title || "Untitled event");
-							const summary = escapeHtml(event.summary || "");
+							const display = getDisplayedHotEventText(event);
+							const title = escapeHtml(display.title || "Untitled event");
+							const summaryState = getHotEventSummaryState(
+								eventId,
+								display.summary,
+							);
+							const summary = escapeHtml(summaryState.text);
 							const contentType =
 								String(event.content_type || "").toLowerCase() === "tweet"
 									? "tweet"
@@ -1181,19 +1239,59 @@ interface PanelUi {
 							const heatScore = Number.isFinite(Number(event.heat_score))
 								? Number(event.heat_score).toFixed(1)
 								: "0.0";
+							const translationToggleTitle = event.is_translated
+								? escapeHtml(
+										isShowingOriginalHotEvent(eventId)
+											? tr("action.showTranslationEvent")
+											: tr("action.showOriginalEvent"),
+									)
+								: "";
+							const summaryToggleLabel = summaryState.truncated
+								? escapeHtml(
+										summaryState.expanded
+											? tr("action.showLess")
+											: tr("action.showMore"),
+									)
+								: "";
 							return `
               <article class="smc-hot-event-card ${isSelected ? "smc-hot-event-selected" : ""}" data-action="select-hot-event-card" data-hot-event-id="${escapeHtml(eventId)}" role="button" tabindex="0">
                 <div class="smc-hot-event-head">
-                  <span class="smc-hot-event-rank">#${index + 1}</span>
-                  <span class="smc-hot-event-type smc-hot-event-type-${contentType}">${contentType}</span>
-                  <span class="smc-hot-event-meta">${sourceLabel} | ${relativeAge}</span>
-                  <span class="smc-hot-event-score">${heatScore}</span>
+                  <div class="smc-hot-event-head-main">
+                    <span class="smc-hot-event-rank">#${index + 1}</span>
+                    <span class="smc-hot-event-type smc-hot-event-type-${contentType}">${contentType}</span>
+                    <span class="smc-hot-event-meta">${sourceLabel} | ${relativeAge}</span>
+                  </div>
+                  <div class="smc-hot-event-score-group">
+                    <span class="smc-hot-event-score">${heatScore}</span>
+                    ${
+											event.is_translated
+												? `<button class="smc-hot-translate-button ${isShowingOriginalHotEvent(eventId) ? "smc-hot-translate-button-muted" : ""}" data-action="toggle-hot-event-original" data-hot-event-id="${escapeHtml(eventId)}" type="button" title="${translationToggleTitle}" aria-label="${translationToggleTitle}" aria-pressed="${isShowingOriginalHotEvent(eventId) ? "true" : "false"}">
+                        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                          <path d="M3.5 3.5h5m-2.5 0c0 4-1.3 6.5-3.2 8m3.2-8c.8 1.7 2 3.3 3.6 4.8m-5.5 1.2h5.8m2.2 0 1.2 3m-1.2-3-1.2-3-1.2 3m2.4 0h-2.4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2"/>
+                        </svg>
+                      </button>`
+												: ""
+										}
+                  </div>
                 </div>
                 <h3 class="smc-hot-event-title">${title}</h3>
-                ${summary ? `<p class="smc-hot-event-summary">${summary}</p>` : ""}
+                ${
+									summary
+										? `<p class="smc-hot-event-summary">${summary}${
+												summaryState.truncated
+													? ` <button class="smc-hot-summary-toggle" data-action="toggle-hot-event-summary" data-hot-event-id="${escapeHtml(eventId)}" type="button">${summaryToggleLabel}</button>`
+													: ""
+											}</p>`
+										: ""
+								}
                 <div class="smc-hot-event-actions">
-                  <button class="smc-outline-button" data-action="select-hot-event" data-hot-event-id="${escapeHtml(eventId)}" type="button">
-                    ${escapeHtml(isSelected ? tr("action.selected") : tr("action.select"))}
+                  <button class="smc-hot-select-button ${isSelected ? "smc-hot-select-button-selected" : ""}" data-action="select-hot-event" data-hot-event-id="${escapeHtml(eventId)}" type="button" aria-pressed="${isSelected ? "true" : "false"}">
+                    ${
+											isSelected
+												? '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.2 8.4 6.3 11.5 12.8 5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg>'
+												: ""
+										}
+                    <span>${escapeHtml(isSelected ? tr("action.selected") : tr("action.select"))}</span>
                   </button>
                 </div>
               </article>
@@ -1209,15 +1307,52 @@ interface PanelUi {
 			if (!normalizedEventId) {
 				return;
 			}
-			STATE.selectedHotEventId = normalizedEventId;
-			renderHotEvents();
+			STATE.selectedHotEventId =
+				STATE.selectedHotEventId === normalizedEventId ? "" : normalizedEventId;
+			renderHotEvents(true);
+			renderSelectedHotEventInfo();
 			renderSendToDraftButton();
-			renderStatus("Hot event selected. Add your take and generate.", "info");
 		};
-		const hotEventsTrack = ui.hotEvents.querySelector(
-			'[data-slot="hot-events-track"]',
-		) as HTMLElement | null;
-		let isDragNavigating = false;
+		(
+			ui.hotEvents.querySelectorAll(
+				'[data-action="toggle-hot-event-original"]',
+			) as NodeListOf<HTMLButtonElement>
+		).forEach((button) => {
+			button.addEventListener("pointerdown", (pointerEvent) => {
+				pointerEvent.stopPropagation();
+			});
+			button.addEventListener("click", (clickEvent) => {
+				clickEvent.stopPropagation();
+				const eventId = String(button.getAttribute("data-hot-event-id") || "");
+				if (!eventId) {
+					return;
+				}
+				STATE.hotEventsShowOriginal[eventId] =
+					!isShowingOriginalHotEvent(eventId);
+				renderHotEvents(true);
+				renderSelectedHotEventInfo();
+			});
+		});
+		(
+			ui.hotEvents.querySelectorAll(
+				'[data-action="toggle-hot-event-summary"]',
+			) as NodeListOf<HTMLButtonElement>
+		).forEach((button) => {
+			button.addEventListener("pointerdown", (pointerEvent) => {
+				pointerEvent.stopPropagation();
+			});
+			button.addEventListener("click", (clickEvent) => {
+				clickEvent.stopPropagation();
+				const eventId = String(button.getAttribute("data-hot-event-id") || "");
+				if (!eventId) {
+					return;
+				}
+				STATE.hotEventsExpandedSummary[eventId] =
+					!isHotEventSummaryExpanded(eventId);
+				renderHotEvents(true);
+				renderSelectedHotEventInfo();
+			});
+		});
 		(
 			ui.hotEvents.querySelectorAll(
 				'[data-action="select-hot-event"]',
@@ -1228,9 +1363,6 @@ interface PanelUi {
 			});
 			button.addEventListener("click", (clickEvent) => {
 				clickEvent.stopPropagation();
-				if (isDragNavigating) {
-					return;
-				}
 				pickHotEvent(String(button.getAttribute("data-hot-event-id") || ""));
 			});
 		});
@@ -1240,9 +1372,6 @@ interface PanelUi {
 			) as NodeListOf<HTMLElement>
 		).forEach((card) => {
 			card.addEventListener("click", () => {
-				if (isDragNavigating) {
-					return;
-				}
 				pickHotEvent(String(card.getAttribute("data-hot-event-id") || ""));
 			});
 			card.addEventListener("keydown", (keyboardEvent) => {
@@ -1253,83 +1382,14 @@ interface PanelUi {
 				pickHotEvent(String(card.getAttribute("data-hot-event-id") || ""));
 			});
 		});
-		if (!hotEventsTrack) {
-			return;
+		if (preservedScrollTop > 0) {
+			const nextHotEventsList = ui.hotEvents.querySelector(
+				'[data-slot="hot-events-list"]',
+			) as HTMLElement | null;
+			if (nextHotEventsList) {
+				nextHotEventsList.scrollTop = preservedScrollTop;
+			}
 		}
-		hotEventsTrack.addEventListener(
-			"wheel",
-			(wheelEvent) => {
-				if (Math.abs(wheelEvent.deltaY) <= Math.abs(wheelEvent.deltaX)) {
-					return;
-				}
-				wheelEvent.preventDefault();
-				hotEventsTrack.scrollBy({
-					left: wheelEvent.deltaY,
-					behavior: "auto",
-				});
-			},
-			{ passive: false },
-		);
-
-		let pointerActive = false;
-		let pointerStartX = 0;
-		let pointerStartScrollLeft = 0;
-		let movedDistance = 0;
-		const endPointerDrag = (pointerId?: number): void => {
-			if (!pointerActive) {
-				return;
-			}
-			pointerActive = false;
-			hotEventsTrack.classList.remove("smc-hot-carousel-track-dragging");
-			if (pointerId != null && hotEventsTrack.hasPointerCapture(pointerId)) {
-				hotEventsTrack.releasePointerCapture(pointerId);
-			}
-			if (movedDistance > 8) {
-				isDragNavigating = true;
-				window.setTimeout(() => {
-					isDragNavigating = false;
-				}, 80);
-			}
-		};
-
-		hotEventsTrack.addEventListener("pointerdown", (pointerEvent) => {
-			if (pointerEvent.pointerType === "mouse" && pointerEvent.button !== 0) {
-				return;
-			}
-			const pointerTarget = pointerEvent.target as Element | null;
-			if (
-				pointerTarget?.closest(
-					'[data-action="select-hot-event"],button,input,textarea,select,a,label',
-				)
-			) {
-				return;
-			}
-			pointerActive = true;
-			pointerStartX = pointerEvent.clientX;
-			pointerStartScrollLeft = hotEventsTrack.scrollLeft;
-			movedDistance = 0;
-			hotEventsTrack.classList.add("smc-hot-carousel-track-dragging");
-			hotEventsTrack.setPointerCapture(pointerEvent.pointerId);
-		});
-
-		hotEventsTrack.addEventListener("pointermove", (pointerEvent) => {
-			if (!pointerActive) {
-				return;
-			}
-			const delta = pointerEvent.clientX - pointerStartX;
-			movedDistance = Math.max(movedDistance, Math.abs(delta));
-			hotEventsTrack.scrollLeft = pointerStartScrollLeft - delta;
-		});
-
-		hotEventsTrack.addEventListener("pointerup", (pointerEvent) => {
-			endPointerDrag(pointerEvent.pointerId);
-		});
-		hotEventsTrack.addEventListener("pointercancel", (pointerEvent) => {
-			endPointerDrag(pointerEvent.pointerId);
-		});
-		hotEventsTrack.addEventListener("pointerleave", () => {
-			endPointerDrag();
-		});
 	}
 
 	function renderHotWarnings(): string {
@@ -1347,29 +1407,17 @@ interface PanelUi {
 	}
 
 	function renderHotEventsStateNotice(): string {
-		if (!STATE.hotEventsIsStale && !STATE.hotEventsLastRefreshError) {
-			return "";
-		}
-		const parts: string[] = [];
-		if (STATE.hotEventsIsStale) {
-			if (STATE.hotEventsLastRefreshedAt) {
-				parts.push(
-					`Using cached snapshot from ${formatHotEventsTimestamp(
-						STATE.hotEventsLastRefreshedAt,
-					)}.`,
-				);
-			} else {
-				parts.push("Using the latest cached snapshot.");
-			}
-		}
-		if (STATE.hotEventsLastRefreshError) {
-			const attemptedAt = STATE.hotEventsLastAttemptedAt
-				? ` Latest refresh attempt at ${formatHotEventsTimestamp(
-						STATE.hotEventsLastAttemptedAt,
-					)} failed.`
-				: " Latest refresh attempt failed.";
-			parts.push(`${attemptedAt} ${STATE.hotEventsLastRefreshError}`.trim());
-		}
+		const parts = deriveHotEventsStateNotice({
+			refreshing: STATE.hotEventsRefreshing,
+			isStale: STATE.hotEventsIsStale,
+			throttled: STATE.hotEventsThrottled,
+			nextRefreshAvailableInSeconds:
+				STATE.hotEventsNextRefreshAvailableInSeconds,
+			lastRefreshedAt: STATE.hotEventsLastRefreshedAt,
+			lastAttemptedAt: STATE.hotEventsLastAttemptedAt,
+			lastRefreshError: STATE.hotEventsLastRefreshError,
+			formatTimestamp: formatHotEventsTimestamp,
+		});
 		if (!parts.length) {
 			return "";
 		}
@@ -1434,8 +1482,98 @@ interface PanelUi {
 		return {
 			...event,
 			id: getHotEventId(event),
+			title_translated:
+				String(event?.title_translated || "").trim() || undefined,
+			summary_translated:
+				String(event?.summary_translated || "").trim() || undefined,
+			is_translated: Boolean(event?.is_translated),
 			author_handle: String(event?.author_handle || "").trim() || undefined,
 		};
+	}
+
+	function isShowingOriginalHotEvent(eventId: string): boolean {
+		return Boolean(STATE.hotEventsShowOriginal[String(eventId || "").trim()]);
+	}
+
+	function isHotEventSummaryExpanded(eventId: string): boolean {
+		return Boolean(
+			STATE.hotEventsExpandedSummary[String(eventId || "").trim()],
+		);
+	}
+
+	function getHotEventSummaryState(
+		eventId: string,
+		summary: string,
+		maxChars = 50,
+	): {
+		text: string;
+		truncated: boolean;
+		expanded: boolean;
+	} {
+		const normalizedSummary = String(summary || "").trim();
+		if (!normalizedSummary) {
+			return {
+				text: "",
+				truncated: false,
+				expanded: false,
+			};
+		}
+		const expanded = isHotEventSummaryExpanded(eventId);
+		if (expanded || normalizedSummary.length <= maxChars) {
+			return {
+				text: normalizedSummary,
+				truncated: normalizedSummary.length > maxChars,
+				expanded,
+			};
+		}
+		return {
+			text: `${normalizedSummary.slice(0, maxChars).trimEnd()}...`,
+			truncated: true,
+			expanded: false,
+		};
+	}
+
+	function getDisplayedHotEventText(event: PanelHotEventRecord): {
+		title: string;
+		summary: string;
+	} {
+		const eventId = getHotEventId(event);
+		const showOriginal = isShowingOriginalHotEvent(eventId);
+		if (event.is_translated && !showOriginal) {
+			return {
+				title: String(event.title_translated || event.title || "").trim(),
+				summary: String(event.summary_translated || event.summary || "").trim(),
+			};
+		}
+		return {
+			title: String(event.title || "").trim(),
+			summary: String(event.summary || "").trim(),
+		};
+	}
+
+	function renderSelectedHotEventInfo(): void {
+		if (!ui.selectedHotEventInfo) {
+			return;
+		}
+		const selectedEvent = STATE.hotEvents.find(
+			(item) => getHotEventId(item) === STATE.selectedHotEventId,
+		);
+		if (!selectedEvent) {
+			ui.selectedHotEventInfo.innerHTML = "";
+			ui.selectedHotEventInfo.hidden = true;
+			return;
+		}
+		const display = getDisplayedHotEventText(selectedEvent);
+		const title = escapeHtml(display.title || "Untitled event");
+		ui.selectedHotEventInfo.innerHTML = `
+      <div class="smc-selected-event-info">
+        <div class="smc-selected-event-status">${escapeHtml(
+					tr("hint.hotEventSelected"),
+				)}</div>
+        <div class="smc-selected-event-title">${title}</div>
+      </div>
+    `;
+		ui.selectedHotEventInfo.hidden = false;
 	}
 
 	function formatRelativeAge(
@@ -1466,7 +1604,7 @@ interface PanelUi {
 		return `${days}d ago`;
 	}
 
-	async function handleConversationGenerate(): Promise<void> {
+	async function handleTrendingGenerate(): Promise<void> {
 		const username = ui.username.value.trim();
 		if (!username) {
 			renderStatus("Username is required.", "error");
@@ -1483,15 +1621,15 @@ interface PanelUi {
 			username,
 			event_id: getHotEventId(selectedEvent),
 			event_payload: selectedEvent,
-			comment: ui.conversationComment.value || "",
-			draft_count: ui.conversationDraftCount.value || "3",
+			comment: ui.trendingComment.value || "",
+			draft_count: ui.trendingDraftCount.value || "3",
 		};
 		renderUsernameError("");
 		renderStatus("", "");
-		await runConversationGeneration(payload);
+		await runTrendingGeneration(payload);
 	}
 
-	async function runConversationGeneration(payload: {
+	async function runTrendingGeneration(payload: {
 		username: string;
 		event_id: string;
 		event_payload: PanelHotEventRecord;
@@ -1500,45 +1638,43 @@ interface PanelUi {
 	}): Promise<void> {
 		setLoading(true);
 		const startedAt = performance.now();
-		STATE.conversationErrorHint = "";
+		STATE.trendingErrorHint = "";
 		try {
 			const response = await sendRuntimeMessage<PanelGenerateResponse>({
-				type: "conversation_generate",
+				type: "trending_generate",
 				payload,
 			});
-			STATE.conversationGenerated = response.result;
-			STATE.lastConversationDurationMs = Math.round(
-				performance.now() - startedAt,
-			);
-			const draftCount = extractDrafts(STATE.conversationGenerated).length;
+			STATE.trendingGenerated = response.result;
+			STATE.lastTrendingDurationMs = Math.round(performance.now() - startedAt);
+			const draftCount = extractDrafts(STATE.trendingGenerated).length;
 			if (!draftCount) {
-				STATE.lastConversationDurationMs = null;
-				STATE.conversationErrorHint =
-					"Conversation request completed but returned no drafts. Please refresh hot events and try again.";
-				renderStatus(STATE.conversationErrorHint, "warn");
-				renderConversationResults();
+				STATE.lastTrendingDurationMs = null;
+				STATE.trendingErrorHint =
+					"Trending request completed but returned no drafts. Please refresh hot events and try again.";
+				renderStatus(STATE.trendingErrorHint, "warn");
+				renderTrendingResults();
 				renderSendToDraftButton();
 				return;
 			}
 			const durationLabel =
-				STATE.lastConversationDurationMs != null
-					? ` in ${STATE.lastConversationDurationMs} ms`
+				STATE.lastTrendingDurationMs != null
+					? ` in ${STATE.lastTrendingDurationMs} ms`
 					: "";
 			renderStatus(
-				`Generated ${draftCount} conversation draft${draftCount === 1 ? "" : "s"}${durationLabel}.`,
+				`Generated ${draftCount} trending draft${draftCount === 1 ? "" : "s"}${durationLabel}.`,
 				"success",
 			);
-			renderConversationResults();
+			renderTrendingResults();
 			renderSendToDraftButton();
 		} catch (error) {
-			STATE.conversationGenerated = null;
-			STATE.lastConversationDurationMs = null;
-			STATE.conversationErrorHint = formatApiError(error);
+			STATE.trendingGenerated = null;
+			STATE.lastTrendingDurationMs = null;
+			STATE.trendingErrorHint = formatApiError(error);
 			if (isWhitelistDeniedError(error)) {
 				renderUsernameError(formatRuntimeError(error));
 			}
-			renderStatus(STATE.conversationErrorHint, "error");
-			renderConversationResults();
+			renderStatus(STATE.trendingErrorHint, "error");
+			renderTrendingResults();
 			renderSendToDraftButton();
 		} finally {
 			setLoading(false);
@@ -1546,9 +1682,9 @@ interface PanelUi {
 	}
 
 	function handleSendToDraft(): void {
-		const draftIdea = getCurrentConversationConclusion();
+		const draftIdea = getCurrentTrendingConclusion();
 		if (!draftIdea) {
-			renderStatus("No conversation content available to send.", "error");
+			renderStatus("No trending content available to send.", "error");
 			renderSendToDraftButton();
 			return;
 		}
@@ -1569,7 +1705,7 @@ interface PanelUi {
 
 	function buildFallbackDraftIdea(): string {
 		const selectedEvent = getSelectedHotEventRecord();
-		const comment = String(ui.conversationComment.value || "").trim();
+		const comment = String(ui.trendingComment.value || "").trim();
 		if (!selectedEvent) {
 			return "";
 		}
@@ -1596,15 +1732,13 @@ interface PanelUi {
 			.join("\n\n");
 	}
 
-	function getGeneratedConversationConclusion(): string {
-		const drafts = extractDrafts(
-			STATE.conversationGenerated,
-		) as PanelDraftLike[];
+	function getGeneratedTrendingConclusion(): string {
+		const drafts = extractDrafts(STATE.trendingGenerated) as PanelDraftLike[];
 		return getDraftText(drafts, 0).trim();
 	}
 
-	function getCurrentConversationConclusion(): string {
-		const generatedConclusion = getGeneratedConversationConclusion();
+	function getCurrentTrendingConclusion(): string {
+		const generatedConclusion = getGeneratedTrendingConclusion();
 		if (generatedConclusion) {
 			return generatedConclusion;
 		}
@@ -1636,8 +1770,8 @@ interface PanelUi {
 		if (!ui.draftCount.value) {
 			ui.draftCount.value = "3";
 		}
-		if (!ui.conversationDraftCount.value) {
-			ui.conversationDraftCount.value = "3";
+		if (!ui.trendingDraftCount.value) {
+			ui.trendingDraftCount.value = "3";
 		}
 	}
 
@@ -1650,7 +1784,8 @@ interface PanelUi {
 		renderProfileInfo();
 		renderResults();
 		renderHotEvents();
-		renderConversationResults();
+		renderSelectedHotEventInfo();
+		renderTrendingResults();
 		renderSendToDraftButton();
 		renderComposerState();
 	}
@@ -1848,29 +1983,29 @@ interface PanelUi {
 		});
 	}
 
-	function renderConversationResults(): void {
+	function renderTrendingResults(): void {
 		renderDraftCards({
-			target: ui.conversationResults,
-			source: STATE.conversationGenerated,
-			durationMs: STATE.lastConversationDurationMs,
-			emptyMessage: getConversationEmptyMessage(),
+			target: ui.trendingResults,
+			source: STATE.trendingGenerated,
+			durationMs: STATE.lastTrendingDurationMs,
+			emptyMessage: getTrendingEmptyMessage(),
 		});
 	}
 
-	function getConversationEmptyMessage(): string {
-		const hint = String(STATE.conversationErrorHint || "").trim();
+	function getTrendingEmptyMessage(): string {
+		const hint = String(STATE.trendingErrorHint || "").trim();
 		if (hint) {
 			return hint;
 		}
-		return "No conversation drafts yet.";
+		return "No trending drafts yet.";
 	}
 
 	function renderSendToDraftButton(): void {
 		if (!ui.sendToDraftButton) {
 			return;
 		}
-		const generatedConclusion = getGeneratedConversationConclusion();
-		const sendableDraftIdea = getCurrentConversationConclusion();
+		const generatedConclusion = getGeneratedTrendingConclusion();
+		const sendableDraftIdea = getCurrentTrendingConclusion();
 		const hasDraftIdea = Boolean(sendableDraftIdea);
 		ui.sendToDraftButton.disabled = !hasDraftIdea || STATE.loading;
 		if (!ui.sendToDraftHint) {
@@ -1878,11 +2013,11 @@ interface PanelUi {
 		}
 		let hint = "";
 		if (STATE.loading) {
-			hint = "Generating conversation result...";
+			hint = "Generating trending result...";
 		} else if (!hasDraftIdea) {
 			hint =
-				String(STATE.conversationErrorHint || "").trim() ||
-				"Select a hot event first, then add your take or generate conversation.";
+				String(STATE.trendingErrorHint || "").trim() ||
+				"Select a hot event first, then add your take or generate trending.";
 		} else if (!generatedConclusion) {
 			hint = "Will send event focus + your take to Draft.";
 		}
@@ -2148,11 +2283,11 @@ interface PanelUi {
 				}
 				return `Configured backend does not expose hot-events. Start or update backend at ${configuredBaseUrl}.`;
 			}
-			if (path.startsWith("/api/v1/conversation/generate")) {
+			if (path.startsWith("/api/v1/trending/generate")) {
 				if (detailText.includes("selected hot event was not found")) {
 					return "Selected hot event expired. Refresh hot events and select again.";
 				}
-				return `Conversation endpoint is unavailable on the configured backend. Start or update backend at ${configuredBaseUrl}.`;
+				return `Trending endpoint is unavailable on the configured backend. Start or update backend at ${configuredBaseUrl}.`;
 			}
 			if (path === "/openapi.json") {
 				return `Configured backend OpenAPI route is unavailable. Start or update backend at ${configuredBaseUrl}.`;

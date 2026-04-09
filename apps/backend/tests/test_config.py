@@ -26,17 +26,26 @@ class ConfigTestCase(unittest.TestCase):
             config_path.write_text(
                 json.dumps(
                     {
+                        "app_env": "development",
                         "server": {
                             "host": "127.0.0.1",
                             "port": 9100,
                             "reload": True,
                         },
-                        "app": {
-                            "llm_provider": " GEMINI ",
-                            "gemini_api_key": "gemini-key",
-                            "database_url": "sqlite:///./db/mvp.db",
-                            "log_file_path": "logs/app.log",
-                            "hot_events_fusion": {
+                        "database": {
+                            "url": "sqlite:///./db/mvp.db",
+                        },
+                        "llm": {
+                            "provider": " GEMINI ",
+                            "gemini": {
+                                "api_key": "gemini-key",
+                            },
+                        },
+                        "log": {
+                            "file_path": "logs/app.log",
+                        },
+                        "hot_events": {
+                            "fusion": {
                                 "source_weight_news": 0.9,
                                 "source_weight_tweet": 1.3,
                                 "tweet_weight_retweet": 2.0,
@@ -73,8 +82,10 @@ class ConfigTestCase(unittest.TestCase):
             config_path.write_text(
                 json.dumps(
                     {
-                        "app": {
-                            "openai_api_key": "openai-key",
+                        "llm": {
+                            "openai": {
+                                "api_key": "openai-key",
+                            }
                         }
                     }
                 ),
@@ -94,7 +105,10 @@ class ConfigTestCase(unittest.TestCase):
     def test_runtime_config_pointer_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
-            config_path.write_text(json.dumps({"app": {"openai_api_key": "openai-key"}}), encoding="utf-8")
+            config_path.write_text(
+                json.dumps({"llm": {"openai": {"api_key": "openai-key"}}}),
+                encoding="utf-8",
+            )
             runtime_pointer_path = Path(temp_dir) / "runtime-config-path.json"
 
             written_path = set_runtime_config_path(config_path, runtime_config_path=runtime_pointer_path)

@@ -20,13 +20,16 @@ class RunModuleTestCase(unittest.TestCase):
             config_path.write_text(
                 json.dumps(
                     {
+                        "app_env": "development",
                         "server": {
                             "host": "127.0.0.1",
                             "port": 8123,
                             "reload": False,
                         },
-                        "app": {
-                            "openai_api_key": "openai-key",
+                        "llm": {
+                            "openai": {
+                                "api_key": "openai-key",
+                            }
                         },
                     }
                 ),

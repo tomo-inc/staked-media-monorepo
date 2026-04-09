@@ -104,6 +104,16 @@ ON hot_events(content_type);
 CREATE INDEX IF NOT EXISTS idx_hot_events_last_refreshed_at
 ON hot_events(last_refreshed_at DESC);
 
+CREATE TABLE IF NOT EXISTS hot_event_translations (
+    event_id TEXT NOT NULL,
+    target_language TEXT NOT NULL,
+    title_translated TEXT NOT NULL,
+    summary_translated TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (event_id, target_language),
+    FOREIGN KEY(event_id) REFERENCES hot_events(id)
+);
+
 CREATE TABLE IF NOT EXISTS allowed_usernames (
     username TEXT PRIMARY KEY
 );
@@ -400,6 +410,63 @@ class Database:
         if row is None:
             return ""
         return str(row["last_refreshed_at"] or "")
+
+    def get_hot_event_translations(self, event_ids: Iterable[str], target_language: str) -> dict[str, dict[str, Any]]:
+        normalized_event_ids = [str(event_id or "").strip() for event_id in event_ids if str(event_id or "").strip()]
+        if not normalized_event_ids:
+            return {}
+
+        params: list[Any] = [str(target_language or "").strip(), json.dumps(normalized_event_ids)]
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT event_id, target_language, title_translated, summary_translated, created_at
+                FROM hot_event_translations
+                WHERE target_language = ?
+                  AND event_id IN (SELECT value FROM json_each(?))
+                """,
+                params,
+            ).fetchall()
+        return {
+            str(row["event_id"]): {
+                "event_id": str(row["event_id"]),
+                "target_language": str(row["target_language"]),
+                "title_translated": str(row["title_translated"] or ""),
+                "summary_translated": str(row["summary_translated"] or ""),
+                "created_at": str(row["created_at"] or ""),
+            }
+            for row in rows
+        }
+
+    def save_hot_event_translations(self, rows: Iterable[dict[str, Any]]) -> int:
+        count = 0
+        with self.connect() as connection:
+            for row in rows:
+                connection.execute(
+                    """
+                    INSERT INTO hot_event_translations (
+                        event_id,
+                        target_language,
+                        title_translated,
+                        summary_translated,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(event_id, target_language) DO UPDATE SET
+                        title_translated=excluded.title_translated,
+                        summary_translated=excluded.summary_translated,
+                        created_at=excluded.created_at
+                    """,
+                    (
+                        str(row.get("event_id") or "").strip(),
+                        str(row.get("target_language") or "").strip(),
+                        str(row.get("title_translated") or ""),
+                        str(row.get("summary_translated") or ""),
+                        str(row.get("created_at") or ""),
+                    ),
+                )
+                count += 1
+            connection.commit()
+        return count
 
     def list_allowed_usernames(self) -> list[str]:
         with self.connect() as connection:

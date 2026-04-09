@@ -27,13 +27,15 @@ class GeminiClient(LLMClient):
         purpose: str = "generation",
         timeout_seconds: float | None = None,
     ) -> Any:
-        if not self.settings.gemini_api_key:
+        if not self.settings.llm.gemini.api_key:
             raise LLMError("Gemini API key is not configured")
 
-        endpoint = f"{self.settings.gemini_base_url.rstrip('/')}/models/{self.settings.gemini_model}:generateContent"
+        endpoint = (
+            f"{self.settings.llm.gemini.base_url.rstrip('/')}/models/{self.settings.llm.gemini.model}:generateContent"
+        )
         body = self._post_json_with_retries(
             endpoint=endpoint,
-            params={"key": self.settings.gemini_api_key},
+            params={"key": self.settings.llm.gemini.api_key},
             headers={"Content-Type": "application/json"},
             json_payload={
                 "system_instruction": {
@@ -50,7 +52,7 @@ class GeminiClient(LLMClient):
                     "responseMimeType": "application/json",
                 },
             },
-            model=self.settings.gemini_model,
+            model=self.settings.llm.gemini.model,
             request_id=request_id,
             purpose=purpose,
             timeout_seconds=timeout_seconds,
@@ -63,7 +65,7 @@ class GeminiClient(LLMClient):
                 "llm_provider_missing_candidates",
                 request_id=request_id,
                 provider=self.provider_name,
-                model=self.settings.gemini_model,
+                model=self.settings.llm.gemini.model,
             )
             raise LLMError("Gemini response did not include any candidates")
 
@@ -76,7 +78,7 @@ class GeminiClient(LLMClient):
                 "llm_provider_empty_content",
                 request_id=request_id,
                 provider=self.provider_name,
-                model=self.settings.gemini_model,
+                model=self.settings.llm.gemini.model,
             )
             raise LLMError("Gemini response content was empty")
 
@@ -84,5 +86,5 @@ class GeminiClient(LLMClient):
             content_text,
             provider_name="Gemini",
             request_id=request_id,
-            max_body_chars=self.settings.log_max_body_chars,
+            max_body_chars=self.settings.log.max_body_chars,
         )
