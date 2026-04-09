@@ -679,7 +679,7 @@ interface PanelUi {
 	): string {
 		let template = tr(key);
 		for (const [name, value] of Object.entries(values)) {
-			template = template.replaceAll(`{${name}}`, String(value ?? ""));
+			template = template.split(`{${name}}`).join(String(value ?? ""));
 		}
 		return template;
 	}
@@ -1760,8 +1760,7 @@ interface PanelUi {
 	function renderProfileInfo(): void {
 		if (!ui.profileInfo) return;
 		if (STATE.profileLoading) {
-			ui.profileInfo.innerHTML =
-				`<div class="smc-profile-hint">${escapeHtml(tr("profile.loading"))}</div>`;
+			ui.profileInfo.innerHTML = `<div class="smc-profile-hint">${escapeHtml(tr("profile.loading"))}</div>`;
 			return;
 		}
 		if (!STATE.profile) {
@@ -1769,15 +1768,13 @@ interface PanelUi {
 			return;
 		}
 		if (!STATE.profile.exists) {
-			ui.profileInfo.innerHTML =
-				`<div class="smc-profile-hint smc-profile-hint-warn">${escapeHtml(tr("profile.notFound"))}</div>`;
+			ui.profileInfo.innerHTML = `<div class="smc-profile-hint smc-profile-hint-warn">${escapeHtml(tr("profile.notFound"))}</div>`;
 			return;
 		}
 		const p = STATE.profile.profile || {};
 
 		if (!STATE.profile.personaReady) {
-			ui.profileInfo.innerHTML =
-				`<div class="smc-profile-hint smc-profile-hint-warn">${escapeHtml(tr("profile.personaMissing"))}</div>`;
+			ui.profileInfo.innerHTML = `<div class="smc-profile-hint smc-profile-hint-warn">${escapeHtml(tr("profile.personaMissing"))}</div>`;
 			return;
 		}
 

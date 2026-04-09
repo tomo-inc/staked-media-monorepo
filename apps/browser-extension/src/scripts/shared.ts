@@ -198,7 +198,8 @@ interface StakedMediaExtensionSharedHost {
 				"profile.usernameRequired": "用户名不能为空。",
 				"profile.loading": "正在加载档案...",
 				"profile.notFound": "未找到档案。点击“采集”以抓取推文并生成人设。",
-				"profile.personaMissing": "档案已加载，但人设缺失。点击“采集”以生成人设。",
+				"profile.personaMissing":
+					"档案已加载，但人设缺失。点击“采集”以生成人设。",
 				"profile.cardTitle": "档案",
 				"profile.followers": "粉丝",
 				"profile.following": "关注",
@@ -255,7 +256,8 @@ interface StakedMediaExtensionSharedHost {
 				"profile.usernameRequired": "使用者名稱不可為空。",
 				"profile.loading": "正在載入檔案...",
 				"profile.notFound": "找不到檔案。點擊「匯入」以抓取推文並建立人設。",
-				"profile.personaMissing": "檔案已載入，但人設缺失。點擊「匯入」以建立人設。",
+				"profile.personaMissing":
+					"檔案已載入，但人設缺失。點擊「匯入」以建立人設。",
 				"profile.cardTitle": "檔案",
 				"profile.followers": "粉絲",
 				"profile.following": "追蹤中",
@@ -326,7 +328,8 @@ interface StakedMediaExtensionSharedHost {
 				"profile.summary": "要約",
 				"profile.voice": "文体",
 				"profile.topics": "トピック",
-				"profile.ingestSuccess": "{count} 件の投稿を取り込み、ペルソナを作成しました。",
+				"profile.ingestSuccess":
+					"{count} 件の投稿を取り込み、ペルソナを作成しました。",
 			},
 			ko: {
 				"app.title": "X Copilot",
@@ -385,7 +388,8 @@ interface StakedMediaExtensionSharedHost {
 				"profile.summary": "요약",
 				"profile.voice": "톤",
 				"profile.topics": "주제",
-				"profile.ingestSuccess": "게시물 {count}개를 수집했고 페르소나가 준비되었습니다.",
+				"profile.ingestSuccess":
+					"게시물 {count}개를 수집했고 페르소나가 준비되었습니다.",
 			},
 			es: {
 				"app.title": "X Copilot",
