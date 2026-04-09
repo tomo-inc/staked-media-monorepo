@@ -8,7 +8,7 @@
     "build:scripts": "node scripts/build-scripts.mjs",
     "build:tests": "tsc -p tsconfig.tests.json && node scripts/write-tests-package.mjs",
     "build:styles": "tailwindcss -c tailwind.config.cjs -i src/styles/panel.tailwind.css -o dist/panel.css --minify",
-    "copy:static": "cp public/manifest.json public/panel.html public/options.html dist/",
+    "copy:static": "cp public/manifest.json public/panel.html public/options.html dist/ && cp -R public/icons dist/",
     "build": "npm run clean && npm run build:scripts && npm run build:styles && npm run copy:static",
     "lint": "biome check src/ tests/",
     "lint:fix": "biome check --write src/ tests/",

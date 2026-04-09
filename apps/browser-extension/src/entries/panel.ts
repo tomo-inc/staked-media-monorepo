@@ -673,6 +673,17 @@ interface PanelUi {
 		return t(key, getResolvedLocale());
 	}
 
+	function trf(
+		key: string,
+		values: Record<string, string | number | null | undefined>,
+	): string {
+		let template = tr(key);
+		for (const [name, value] of Object.entries(values)) {
+			template = template.split(`{${name}}`).join(String(value ?? ""));
+		}
+		return template;
+	}
+
 	function applyLocalizedContent(): void {
 		const locale = getResolvedLocale();
 		(root.querySelectorAll("[data-i18n]") as NodeListOf<HTMLElement>).forEach(
@@ -919,7 +930,7 @@ interface PanelUi {
 	async function handleLoadProfile(): Promise<void> {
 		const username = ui.username.value.trim();
 		if (!username) {
-			renderStatus("Username is required.", "error");
+			renderStatus(tr("profile.usernameRequired"), "error");
 			return;
 		}
 		renderUsernameError("");
@@ -952,7 +963,7 @@ interface PanelUi {
 	async function handleIngestProfile(): Promise<void> {
 		const username = ui.username.value.trim();
 		if (!username) {
-			renderStatus("Username is required.", "error");
+			renderStatus(tr("profile.usernameRequired"), "error");
 			return;
 		}
 		renderUsernameError("");
@@ -977,7 +988,9 @@ interface PanelUi {
 			renderUsernameError("");
 			renderProfileInfo();
 			renderStatus(
-				`Ingested ${response.result.fetched_tweet_count} tweets. Persona ready.`,
+				trf("profile.ingestSuccess", {
+					count: response.result.fetched_tweet_count ?? 0,
+				}),
 				"success",
 			);
 		} catch (error) {
@@ -1747,8 +1760,7 @@ interface PanelUi {
 	function renderProfileInfo(): void {
 		if (!ui.profileInfo) return;
 		if (STATE.profileLoading) {
-			ui.profileInfo.innerHTML =
-				'<div class="smc-profile-hint">Loading profile...</div>';
+			ui.profileInfo.innerHTML = `<div class="smc-profile-hint">${escapeHtml(tr("profile.loading"))}</div>`;
 			return;
 		}
 		if (!STATE.profile) {
@@ -1756,19 +1768,19 @@ interface PanelUi {
 			return;
 		}
 		if (!STATE.profile.exists) {
-			ui.profileInfo.innerHTML =
-				'<div class="smc-profile-hint smc-profile-hint-warn">Profile not found. Click Ingest to fetch tweets and build persona.</div>';
+			ui.profileInfo.innerHTML = `<div class="smc-profile-hint smc-profile-hint-warn">${escapeHtml(tr("profile.notFound"))}</div>`;
 			return;
 		}
 		const p = STATE.profile.profile || {};
 
 		if (!STATE.profile.personaReady) {
-			ui.profileInfo.innerHTML =
-				'<div class="smc-profile-hint smc-profile-hint-warn">Profile loaded, but persona is missing. Click Ingest to build persona.</div>';
+			ui.profileInfo.innerHTML = `<div class="smc-profile-hint smc-profile-hint-warn">${escapeHtml(tr("profile.personaMissing"))}</div>`;
 			return;
 		}
 
-		const personaStatus = STATE.profile.personaReady ? "Ready" : "Missing";
+		const personaStatus = STATE.profile.personaReady
+			? tr("profile.personaReady")
+			: tr("profile.personaMissingStatus");
 		const personaClass = STATE.profile.personaReady
 			? "smc-profile-status-ok"
 			: "smc-profile-status-warn";
@@ -1781,12 +1793,12 @@ interface PanelUi {
 			const persona = STATE.profile.latestPersonaSnapshot.persona;
 			personaSection = `
         <div class="smc-persona-section">
-          <div class="smc-persona-title">Persona Portrait</div>
-          ${persona.author_summary ? `<div class="smc-persona-item"><strong>Summary:</strong> ${escapeHtml(persona.author_summary)}</div>` : ""}
-          ${persona.voice_traits?.length ? `<div class="smc-persona-item"><strong>Voice:</strong> ${escapeHtml(persona.voice_traits.join(", "))}</div>` : ""}
+          <div class="smc-persona-title">${escapeHtml(tr("profile.personaPortrait"))}</div>
+          ${persona.author_summary ? `<div class="smc-persona-item"><strong>${escapeHtml(tr("profile.summary"))}:</strong> ${escapeHtml(persona.author_summary)}</div>` : ""}
+          ${persona.voice_traits?.length ? `<div class="smc-persona-item"><strong>${escapeHtml(tr("profile.voice"))}:</strong> ${escapeHtml(persona.voice_traits.join(", "))}</div>` : ""}
           ${
 						persona.topic_clusters?.length
-							? `<div class="smc-persona-item"><strong>Topics:</strong> ${escapeHtml(
+							? `<div class="smc-persona-item"><strong>${escapeHtml(tr("profile.topics"))}:</strong> ${escapeHtml(
 									persona.topic_clusters
 										.map((t) => t.label || t.name || "")
 										.filter(Boolean)
@@ -1801,26 +1813,26 @@ interface PanelUi {
 		ui.profileInfo.innerHTML = `
       <div class="smc-profile-card">
         <div class="smc-profile-header">
-          <strong>Profile</strong>
+          <strong>${escapeHtml(tr("profile.cardTitle"))}</strong>
           <span class="smc-profile-username">@${escapeHtml(STATE.profile.username)}</span>
         </div>
         <div class="smc-profile-row">
           <div class="smc-profile-stat">
-            <span class="smc-profile-stat-label">Followers</span>
+            <span class="smc-profile-stat-label">${escapeHtml(tr("profile.followers"))}</span>
             <span class="smc-profile-stat-value">${escapeHtml(String(p.followers_count || 0))}</span>
           </div>
           <div class="smc-profile-stat">
-            <span class="smc-profile-stat-label">Following</span>
+            <span class="smc-profile-stat-label">${escapeHtml(tr("profile.following"))}</span>
             <span class="smc-profile-stat-value">${escapeHtml(String(p.following_count || 0))}</span>
           </div>
           <div class="smc-profile-stat">
-            <span class="smc-profile-stat-label">Tweets</span>
+            <span class="smc-profile-stat-label">${escapeHtml(tr("profile.tweets"))}</span>
             <span class="smc-profile-stat-value">${escapeHtml(String(STATE.profile.storedTweetCount || 0))}</span>
           </div>
         </div>
         ${personaSection}
         <div class="smc-profile-footer">
-          <span class="smc-profile-status ${personaClass}">Persona: ${personaStatus}</span>
+          <span class="smc-profile-status ${personaClass}">${escapeHtml(tr("profile.persona"))}: ${escapeHtml(personaStatus)}</span>
         </div>
       </div>
     `;
