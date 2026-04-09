@@ -52,7 +52,7 @@ interface RequestJsonOptions {
 	unreachableMessage?: string;
 }
 
-interface LocalConversationCapability {
+interface LocalTrendingCapability {
 	supported: boolean;
 	message: string;
 	checkedAt: string;
@@ -100,12 +100,12 @@ const API = {
 	contentGenerate: "/api/v1/content/generate",
 	hotEvents: "/api/v1/content/hot-events",
 	contentIdeas: "/api/v1/content/ideas",
-	conversationGenerate: "/api/v1/conversation/generate",
+	trendingGenerate: "/api/v1/trending/generate",
 	exposureAnalyze: "/api/v1/exposure/analyze",
 };
 const LOCAL_CAPABILITY_CACHE_TTL_MS = 60 * 1000;
-let cachedLocalConversationCapability:
-	| (LocalConversationCapability & { checkedAtMs: number; baseUrl: string })
+let cachedLocalTrendingCapability:
+	| (LocalTrendingCapability & { checkedAtMs: number; baseUrl: string })
 	| null = null;
 
 initializeHostBehavior();
@@ -157,13 +157,11 @@ async function handleMessage(
 			get_hot_events: async (payload) => ({
 				result: await getHotEvents(payload || {}),
 			}),
-			check_local_conversation_capability: async (payload) => ({
-				result: await checkLocalConversationCapability(
-					Boolean(payload?.refresh),
-				),
+			check_local_trending_capability: async (payload) => ({
+				result: await checkLocalTrendingCapability(Boolean(payload?.refresh)),
 			}),
-			conversation_generate: async (payload) => ({
-				result: await generateConversation(payload || {}),
+			trending_generate: async (payload) => ({
+				result: await generateTrending(payload || {}),
 			}),
 			suggest_ideas: async (payload) => ({
 				result: await suggestIdeas(payload || {}),
@@ -198,7 +196,7 @@ async function saveConfig(
 		{ strictBackendBaseUrl: true },
 	);
 	if (nextConfig.backendBaseUrl !== currentConfig.backendBaseUrl) {
-		cachedLocalConversationCapability = null;
+		cachedLocalTrendingCapability = null;
 	}
 	await storageSet(nextConfig);
 	await applyHostMode(nextConfig.hostMode);
@@ -332,19 +330,18 @@ async function getHotEvents(
 	const hours = clampInt(payload.hours || 24, 1, 72);
 	const limit = clampInt(payload.limit || 50, 1, 200);
 	const refresh = Boolean(payload.refresh);
-	const query = `hours=${hours}&limit=${limit}&refresh=${refresh ? "true" : "false"}`;
+	const lang = String(payload.lang || "en").trim() || "en";
+	const query = `hours=${hours}&limit=${limit}&refresh=${refresh ? "true" : "false"}&lang=${encodeURIComponent(lang)}`;
 	const baseUrl = await getBackendBaseUrl();
 	return requestJson<Record<string, unknown> | null>({
 		path: `${API.hotEvents}?${query}`,
 		method: "GET",
 		baseUrlOverride: baseUrl,
-		unreachableMessage: formatConversationBackendUnreachableMessage(baseUrl),
+		unreachableMessage: formatTrendingBackendUnreachableMessage(baseUrl),
 	});
 }
 
-async function generateConversation(
-	payload: BackgroundPayload,
-): Promise<unknown> {
+async function generateTrending(payload: BackgroundPayload): Promise<unknown> {
 	const username = assertNonEmpty(payload.username, "username");
 	const body: Record<string, unknown> = {
 		username,
@@ -362,12 +359,12 @@ async function generateConversation(
 	let result: unknown;
 	try {
 		result = await requestJson<unknown>({
-			path: API.conversationGenerate,
+			path: API.trendingGenerate,
 			method: "POST",
 			body,
 			deniedUsername: username,
 			baseUrlOverride: baseUrl,
-			unreachableMessage: formatConversationBackendUnreachableMessage(baseUrl),
+			unreachableMessage: formatTrendingBackendUnreachableMessage(baseUrl),
 		});
 	} catch (error) {
 		const runtimeError = error as RuntimeErrorWithStatus;
@@ -376,7 +373,7 @@ async function generateConversation(
 			runtimeError?.status === 409 &&
 			detailText.includes("persona not found")
 		) {
-			const capability = await checkLocalConversationCapability(false);
+			const capability = await checkLocalTrendingCapability(false);
 			if (!capability.supported) {
 				throw createRuntimeError(
 					`${capability.message} Update or restart the configured backend and try again.`,
@@ -393,8 +390,7 @@ async function generateConversation(
 					body: { username },
 					deniedUsername: username,
 					baseUrlOverride: baseUrl,
-					unreachableMessage:
-						formatConversationBackendUnreachableMessage(baseUrl),
+					unreachableMessage: formatTrendingBackendUnreachableMessage(baseUrl),
 				});
 			} catch (rebuildError) {
 				const rebuildRuntimeError = rebuildError as RuntimeErrorWithStatus;
@@ -415,13 +411,12 @@ async function generateConversation(
 				throw rebuildError;
 			}
 			result = await requestJson<unknown>({
-				path: API.conversationGenerate,
+				path: API.trendingGenerate,
 				method: "POST",
 				body,
 				deniedUsername: username,
 				baseUrlOverride: baseUrl,
-				unreachableMessage:
-					formatConversationBackendUnreachableMessage(baseUrl),
+				unreachableMessage: formatTrendingBackendUnreachableMessage(baseUrl),
 			});
 		} else {
 			throw error;
@@ -614,8 +609,8 @@ async function requestJson<TResponse = unknown>({
 	return payload as TResponse;
 }
 
-function formatConversationBackendUnreachableMessage(baseUrl: string): string {
-	return `Conversation backend is unreachable at ${baseUrl}. Start or update the configured API server first.`;
+function formatTrendingBackendUnreachableMessage(baseUrl: string): string {
+	return `Trending backend is unreachable at ${baseUrl}. Start or update the configured API server first.`;
 }
 
 function extractErrorDetailText(payload: unknown): string {
@@ -628,22 +623,22 @@ function extractErrorDetailText(payload: unknown): string {
 	return "";
 }
 
-async function checkLocalConversationCapability(
+async function checkLocalTrendingCapability(
 	forceRefresh: boolean,
-): Promise<LocalConversationCapability> {
+): Promise<LocalTrendingCapability> {
 	const now = Date.now();
 	const baseUrl = await getBackendBaseUrl();
 	if (
 		!forceRefresh &&
-		cachedLocalConversationCapability &&
-		cachedLocalConversationCapability.baseUrl === baseUrl &&
-		now - cachedLocalConversationCapability.checkedAtMs <
+		cachedLocalTrendingCapability &&
+		cachedLocalTrendingCapability.baseUrl === baseUrl &&
+		now - cachedLocalTrendingCapability.checkedAtMs <
 			LOCAL_CAPABILITY_CACHE_TTL_MS
 	) {
 		return {
-			supported: cachedLocalConversationCapability.supported,
-			message: cachedLocalConversationCapability.message,
-			checkedAt: cachedLocalConversationCapability.checkedAt,
+			supported: cachedLocalTrendingCapability.supported,
+			message: cachedLocalTrendingCapability.message,
+			checkedAt: cachedLocalTrendingCapability.checkedAt,
 		};
 	}
 
@@ -652,17 +647,17 @@ async function checkLocalConversationCapability(
 			path: "/openapi.json",
 			method: "GET",
 			baseUrlOverride: baseUrl,
-			unreachableMessage: formatConversationBackendUnreachableMessage(baseUrl),
+			unreachableMessage: formatTrendingBackendUnreachableMessage(baseUrl),
 		});
 		const supported = hasRebuildPersonaPost(openApi);
-		const capability: LocalConversationCapability = {
+		const capability: LocalTrendingCapability = {
 			supported,
 			message: supported
-				? "Conversation capability check passed."
+				? "Trending capability check passed."
 				: "Configured backend is outdated: /api/v1/profiles/rebuild-persona (POST) is missing.",
 			checkedAt: new Date().toISOString(),
 		};
-		cachedLocalConversationCapability = {
+		cachedLocalTrendingCapability = {
 			...capability,
 			baseUrl,
 			checkedAtMs: now,
@@ -670,14 +665,14 @@ async function checkLocalConversationCapability(
 		return capability;
 	} catch (error) {
 		const runtimeError = error as RuntimeErrorWithStatus;
-		const capability: LocalConversationCapability = {
+		const capability: LocalTrendingCapability = {
 			supported: false,
 			message:
 				runtimeError?.message ||
 				"Failed to verify backend capability from /openapi.json.",
 			checkedAt: new Date().toISOString(),
 		};
-		cachedLocalConversationCapability = {
+		cachedLocalTrendingCapability = {
 			...capability,
 			baseUrl,
 			checkedAtMs: now,

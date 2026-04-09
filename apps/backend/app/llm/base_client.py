@@ -71,8 +71,8 @@ class LLMClient:
         if timeout_seconds is not None:
             return timeout_seconds
         if purpose == "score":
-            return float(self.settings.llm_score_timeout_seconds)
-        return float(self.settings.request_timeout_seconds)
+            return float(self.settings.llm.score_timeout_seconds)
+        return float(self.settings.llm.request_timeout_seconds)
 
     def _post_json_with_retries(
         self,
@@ -90,7 +90,7 @@ class LLMClient:
             purpose=purpose,
             timeout_seconds=timeout_seconds,
         )
-        max_attempts = max(1, self.settings.llm_max_retries + 1)
+        max_attempts = max(1, self.settings.llm.max_retries + 1)
 
         for attempt in range(1, max_attempts + 1):
             started_at = time.perf_counter()
@@ -122,7 +122,7 @@ class LLMClient:
                         )
                     )
                 ),
-                proxy_enabled=bool(self.settings.llm_proxies),
+                proxy_enabled=bool(self.settings.llm.proxies),
                 attempt=attempt,
                 max_attempts=max_attempts,
                 purpose=purpose,
@@ -134,7 +134,7 @@ class LLMClient:
                     params=params,
                     headers=headers,
                     json=json_payload,
-                    proxies=self.settings.llm_proxies,
+                    proxies=self.settings.llm.proxies,
                     timeout=resolved_timeout,
                 )
                 response.raise_for_status()
@@ -143,7 +143,7 @@ class LLMClient:
                 detail = (exc.response.text if exc.response is not None else "")[:1000]
                 duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
                 if status_code is not None and status_code >= 500 and attempt < max_attempts:
-                    backoff_seconds = round(self.settings.llm_retry_backoff_seconds * (2 ** (attempt - 1)), 3)
+                    backoff_seconds = round(self.settings.llm.retry_backoff_seconds * (2 ** (attempt - 1)), 3)
                     log_event(
                         logger,
                         logging.WARNING,
@@ -173,7 +173,7 @@ class LLMClient:
                     purpose=purpose,
                     status_code=status_code,
                     duration_ms=duration_ms,
-                    response_snippet=redact_for_log(detail, self.settings.log_max_body_chars),
+                    response_snippet=redact_for_log(detail, self.settings.log.max_body_chars),
                 )
                 provider_label = "OpenAI" if self.provider_name == "openai" else "Gemini"
                 raise LLMTransportError(
@@ -184,7 +184,7 @@ class LLMClient:
                 duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
                 retry_reason = type(exc).__name__
                 if attempt < max_attempts:
-                    backoff_seconds = round(self.settings.llm_retry_backoff_seconds * (2 ** (attempt - 1)), 3)
+                    backoff_seconds = round(self.settings.llm.retry_backoff_seconds * (2 ** (attempt - 1)), 3)
                     log_event(
                         logger,
                         logging.WARNING,
@@ -350,7 +350,7 @@ class LLMClient:
             provider=self.provider_name,
             draft_count=draft_count,
             prompt_len=len(prompt),
-            prompt_snippet=redact_for_log(prompt, self.settings.log_max_body_chars),
+            prompt_snippet=redact_for_log(prompt, self.settings.log.max_body_chars),
             source_text_count=len(source_texts),
             tweet_row_count=len(tweet_rows),
         )
@@ -386,7 +386,7 @@ class LLMClient:
         )
 
         candidates_per_round = min(draft_count * 2, 5)
-        max_rounds = self.settings.max_generation_attempts
+        max_rounds = self.settings.content.max_generation_attempts
         all_candidates: list[dict[str, Any]] = []
         attempts: list[dict[str, Any]] = []
         seen_texts: set[str] = set()
@@ -460,7 +460,7 @@ class LLMClient:
                     provider=self.provider_name,
                     round_index=round_index,
                     error=str(exc),
-                    payload_snippet=redact_for_log(normalized_payload, self.settings.log_max_body_chars),
+                    payload_snippet=redact_for_log(normalized_payload, self.settings.log.max_body_chars),
                 )
                 raise LLMError(f"Draft schema validation failed: {exc}") from exc
 
@@ -776,7 +776,7 @@ class LLMClient:
             temperature=0.2,
             request_id=request_id,
             purpose="score",
-            timeout_seconds=float(self.settings.llm_score_timeout_seconds),
+            timeout_seconds=float(self.settings.llm.score_timeout_seconds),
         )
         normalized_payload = self._normalize_score_payload(payload, request_id=request_id)
         score = normalized_payload.get("score", 0)
@@ -853,7 +853,7 @@ class LLMClient:
             temperature=0.2,
             request_id=request_id,
             purpose="score_batch",
-            timeout_seconds=float(self.settings.llm_score_timeout_seconds) + len(candidate_texts) * 3,
+            timeout_seconds=float(self.settings.llm.score_timeout_seconds) + len(candidate_texts) * 3,
         )
         scores_raw = payload.get("scores") if isinstance(payload, dict) else None
         if not isinstance(scores_raw, list):
@@ -888,6 +888,62 @@ class LLMClient:
                     "issues": _as_string_list(item.get("issues")),
                     "must_fix": _as_string_list(item.get("must_fix")),
                 }
+        return results
+
+    def translate_hot_events_batch(
+        self,
+        *,
+        items: dict[str, dict[str, str]],
+        target_language: str,
+        request_id: str | None = None,
+    ) -> dict[str, dict[str, str]]:
+        if not items:
+            return {}
+
+        payload = self._chat_completion_json(
+            system_prompt=(
+                "You translate hot event titles and summaries for a UI. "
+                "Preserve meaning, proper nouns, tickers, and URLs. "
+                "Return strict JSON with key 'items': an object keyed by event id. "
+                "Each value must contain translated 'title' and 'summary' strings."
+            ),
+            user_prompt=json.dumps(
+                {
+                    "target_language": target_language,
+                    "items": {
+                        str(event_id): {
+                            "title": str(item.get("title") or ""),
+                            "summary": str(item.get("summary") or ""),
+                        }
+                        for event_id, item in items.items()
+                        if str(event_id or "").strip()
+                    },
+                },
+                ensure_ascii=True,
+            ),
+            temperature=0.1,
+            request_id=request_id,
+            purpose="translation",
+            timeout_seconds=float(self.settings.llm.request_timeout_seconds) + len(items),
+        )
+
+        raw_items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(raw_items, dict):
+            raise LLMError("Translation schema validation failed: expected an items object keyed by event id")
+
+        results: dict[str, dict[str, str]] = {}
+        for raw_event_id, raw_item in raw_items.items():
+            event_id = str(raw_event_id or "").strip()
+            if not event_id or event_id not in items:
+                continue
+            if not isinstance(raw_item, dict):
+                continue
+            translated_title = clean_text(str(raw_item.get("title") or raw_item.get("title_translated") or ""))
+            translated_summary = clean_text(str(raw_item.get("summary") or raw_item.get("summary_translated") or ""))
+            results[event_id] = {
+                "title_translated": translated_title,
+                "summary_translated": translated_summary,
+            }
         return results
 
     @staticmethod
@@ -1003,7 +1059,7 @@ class LLMClient:
                     "strengths": [],
                 }
 
-        if is_too_similar(candidate_text, source_texts, self.settings.similarity_threshold):
+        if is_too_similar(candidate_text, source_texts, self.settings.content.similarity_threshold):
             return {
                 "score": 0.0,
                 "passed": False,
@@ -1228,7 +1284,7 @@ class LLMClient:
                 request_id=request_id,
                 provider=self.provider_name,
                 payload_type=type(payload).__name__,
-                payload_snippet=redact_for_log(payload, self.settings.log_max_body_chars),
+                payload_snippet=redact_for_log(payload, self.settings.log.max_body_chars),
             )
             raise LLMError(f"Score schema validation failed: expected object, got {type(payload).__name__}")
 

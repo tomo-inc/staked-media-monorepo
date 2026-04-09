@@ -1,43 +1,65 @@
 {
+  "app_env": "development",
   "server": {
     "host": "0.0.0.0",
     "port": 8000,
     "reload": false
   },
-  "app": {
-    "app_env": "development",
-    "database_url": "sqlite:///./data/mvp.db",
-    "twitter_data_url": "",
-    "twitter_data_proxy": "",
-    "provider_6551_token": "",
-    "llm_http_proxy": "",
-    "llm_provider": "openai",
-    "openai_api_key": "",
-    "openai_model": "gpt-4.1-mini",
-    "openai_base_url": "https://api.openai.com/v1",
-    "gemini_api_key": "",
-    "gemini_model": "gemini-2.0-flash",
-    "gemini_base_url": "https://generativelanguage.googleapis.com/v1beta",
-    "log_level": "INFO",
-    "log_file_path": "data/app.log",
-    "log_max_body_chars": 500,
-    "log_enable_file": true,
-    "llm_max_retries": 2,
-    "llm_retry_backoff_seconds": 1.0,
-    "llm_score_timeout_seconds": 20,
-    "request_timeout_seconds": 30,
-    "similarity_threshold": 0.92,
-    "persona_sample_size": 40,
-    "web_enrichment_enabled": true,
-    "web_enrichment_timeout_seconds": 8.0,
-    "web_enrichment_max_items": 12,
-    "web_enrichment_recency_hours": 24,
+  "database": {
+    "url": "sqlite:///./data/mvp.db"
+  },
+  "twitter": {
+    "data_url": "http://52.76.50.165:8081",
+    "data_proxy": "",
     "max_ingest_tweets": 100,
-    "content_rewrite_max_rounds": 3,
+    "persona_sample_size": 40
+  },
+  "llm": {
+    "provider": "openai",
+    "http_proxy": "",
+    "max_retries": 2,
+    "retry_backoff_seconds": 1.0,
+    "score_timeout_seconds": 20,
+    "request_timeout_seconds": 30,
+    "openai": {
+      "api_key": "",
+      "model": "gpt-4.1-mini",
+      "base_url": "https://api.openai.com/v1"
+    },
+    "gemini": {
+      "api_key": "",
+      "model": "gemini-2.0-flash",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta"
+    }
+  },
+  "log": {
+    "level": "INFO",
+    "file_path": "data/app.log",
+    "max_body_chars": 500,
+    "enable_file": true
+  },
+  "content": {
+    "similarity_threshold": 0.92,
+    "rewrite_max_rounds": 3,
     "max_generation_attempts": 3,
     "evaluation_max_workers": 4,
-    "variant_max_workers": 3,
-    "hot_events_fusion": {
+    "variant_max_workers": 3
+  },
+  "web_enrichment": {
+    "enabled": true,
+    "timeout_seconds": 8.0,
+    "max_items": 12,
+    "recency_hours": 24
+  },
+  "hot_events": {
+    "provider_6551_token": "",
+    "auto_refresh_interval_seconds": 300,
+    "min_refresh_cooldown_seconds": 60,
+    "pre_translate_languages": [
+      "zh-CN",
+      "en"
+    ],
+    "fusion": {
       "source_weight_news": 1.0,
       "source_weight_tweet": 1.0,
       "tweet_weight_retweet": 1.5,

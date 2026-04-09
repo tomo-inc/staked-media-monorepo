@@ -20,7 +20,7 @@ class UpstreamClient:
         self.settings = settings
         self.session = session or requests.Session()
         # Avoid implicit Windows/system proxy leakage (for example Internet Settings proxy).
-        # Upstream proxy must be controlled only by `app.twitter_data_proxy`.
+        # Upstream proxy must be controlled only by `twitter.data_proxy`.
         if isinstance(self.session, requests.Session):
             self.session.trust_env = False
 
@@ -60,7 +60,7 @@ class UpstreamClient:
         *,
         request_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        max_tweets = max_tweets or self.settings.max_ingest_tweets
+        max_tweets = max_tweets or self.settings.twitter.max_ingest_tweets
         log_event(
             logger,
             logging.INFO,
@@ -152,14 +152,14 @@ class UpstreamClient:
                 path=path,
                 attempt=attempt + 1,
                 params=params or {},
-                proxy_enabled=bool(self.settings.twitter_data_proxies),
+                proxy_enabled=bool(self.settings.twitter.data_proxies),
             )
             try:
                 response = self.session.get(
-                    f"{self.settings.twitter_data_url.rstrip('/')}{path}",
+                    f"{self.settings.twitter.data_url.rstrip('/')}{path}",
                     params=params,
-                    proxies=self.settings.twitter_data_proxies,
-                    timeout=self.settings.request_timeout_seconds,
+                    proxies=self.settings.twitter.data_proxies,
+                    timeout=self.settings.llm.request_timeout_seconds,
                 )
             except requests.RequestException as exc:
                 last_error = exc
@@ -208,7 +208,7 @@ class UpstreamClient:
                     path=path,
                     attempt=attempt + 1,
                     status_code=response.status_code,
-                    body_snippet=redact_for_log(detail, self.settings.log_max_body_chars),
+                    body_snippet=redact_for_log(detail, self.settings.log.max_body_chars),
                 )
                 raise UpstreamError(f"Upstream request failed: {detail}") from exc
 
@@ -234,7 +234,7 @@ class UpstreamClient:
                     request_id=request_id,
                     path=path,
                     attempt=attempt + 1,
-                    body_snippet=redact_for_log(snippet, self.settings.log_max_body_chars),
+                    body_snippet=redact_for_log(snippet, self.settings.log.max_body_chars),
                 )
                 raise UpstreamError("Upstream response is not valid JSON") from exc
             if payload.get("code") not in (None, 200):
@@ -257,7 +257,7 @@ class UpstreamClient:
                     request_id=request_id,
                     path=path,
                     payload_code=payload.get("code"),
-                    body_snippet=redact_for_log(payload, self.settings.log_max_body_chars),
+                    body_snippet=redact_for_log(payload, self.settings.log.max_body_chars),
                 )
                 raise last_error
             log_event(
@@ -278,7 +278,7 @@ class UpstreamClient:
                 "upstream_request_exhausted",
                 request_id=request_id,
                 path=path,
-                body_snippet=redact_for_log(response.text[:1000], self.settings.log_max_body_chars),
+                body_snippet=redact_for_log(response.text[:1000], self.settings.log.max_body_chars),
             )
             raise UpstreamError(f"Upstream request failed: {response.text[:1000]}") from last_error
         log_event(

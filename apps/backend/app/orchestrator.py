@@ -4,11 +4,12 @@ import concurrent.futures
 import logging
 import re
 import threading
+import time
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.config import Settings
+from app.config import SUPPORTED_TRANSLATION_LANGUAGES, Settings
 from app.database import Database
 from app.hot_events import HotEventsService
 from app.llm import LLMClient, LLMError
@@ -20,10 +21,28 @@ from app.persona import (
     extract_top_theme_keywords,
     select_theme_tweets,
 )
-from app.schemas import ContentGenerateRequest, ContentVariantType, ConversationGenerateRequest
+from app.schemas import ContentGenerateRequest, ContentVariantType, TrendingGenerateRequest
 from app.web_enrichment import WebEnricher
 
 logger = get_logger(__name__)
+_HIRAGANA_KATAKANA_RE = re.compile(r"[\u3040-\u30ff]")
+_HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_SPANISH_HINT_RE = re.compile(r"[ñáéíóúü¿¡]", flags=re.IGNORECASE)
+_SPANISH_STOPWORDS = {
+    "de",
+    "la",
+    "el",
+    "que",
+    "y",
+    "en",
+    "los",
+    "las",
+    "por",
+    "para",
+    "con",
+    "del",
+}
 
 
 class ContentOrchestrator:
@@ -42,17 +61,23 @@ class ContentOrchestrator:
         self.database = database
         self.llm = llm
         self.web_enricher = web_enricher or WebEnricher(
-            timeout_seconds=settings.web_enrichment_timeout_seconds,
-            max_items=settings.web_enrichment_max_items,
-            recency_hours=settings.web_enrichment_recency_hours,
+            timeout_seconds=settings.web_enrichment.timeout_seconds,
+            max_items=settings.web_enrichment.max_items,
+            recency_hours=settings.web_enrichment.recency_hours,
         )
         self.hot_events_service = hot_events_service or HotEventsService(
-            timeout_seconds=settings.web_enrichment_timeout_seconds,
+            timeout_seconds=settings.web_enrichment.timeout_seconds,
             cache_ttl_seconds=120,
-            api_token=settings.provider_6551_token,
-            fusion_settings=settings.hot_events_fusion,
+            api_token=settings.hot_events.provider_6551_token,
+            fusion_settings=settings.hot_events.fusion,
         )
         self._hot_events_refresh_lock = threading.Lock()
+        self._hot_events_refreshing = threading.Event()
+        self._hot_events_last_refresh_monotonic: float = 0.0
+        self._hot_events_last_attempted_at: str = ""
+        self._hot_events_last_refresh_error: str = ""
+        self._hot_events_last_warnings: list[str] = []
+        self._hot_events_last_source_status: dict[str, Any] = {}
         self._debug_runs: dict[str, dict[str, Any]] = {}
 
     def suggest_ideas(self, *, direction: str, domain: str, topic_hint: str, limit: int) -> dict[str, Any]:
@@ -76,34 +101,84 @@ class ContentOrchestrator:
             "suggested_keywords": enrichment.get("keywords", [])[:20],
         }
 
-    def list_hot_events(self, *, hours: int, limit: int, refresh: bool) -> dict[str, Any]:
+    def list_hot_events(self, *, hours: int, limit: int, refresh: bool, language: str | None = None) -> dict[str, Any]:
         bounded_hours = self._bound_hot_events_hours(hours)
         bounded_limit = self._bound_hot_events_limit(limit)
         if refresh:
             try:
-                return self.refresh_hot_events_snapshot(hours=bounded_hours, limit=bounded_limit)
+                return self.refresh_hot_events_snapshot(
+                    hours=bounded_hours,
+                    limit=bounded_limit,
+                    language=language,
+                )
             except RuntimeError as exc:
+                self._hot_events_last_refresh_error = str(exc)
+                self._hot_events_last_attempted_at = self._utc_now_iso()
                 fallback = self._get_hot_events_response(
                     hours=bounded_hours,
                     limit=bounded_limit,
                     warnings=[f"hot events refresh failed: {exc}"],
                     last_refresh_error=str(exc),
                     force_stale=True,
+                    language=language,
                 )
                 if not fallback["items"]:
                     raise
                 return fallback
-        return self._get_hot_events_response(hours=bounded_hours, limit=bounded_limit)
+        return self._get_hot_events_response(hours=bounded_hours, limit=bounded_limit, language=language)
 
-    def refresh_hot_events_snapshot(self, *, hours: int = 24, limit: int = 200) -> dict[str, Any]:
+    def refresh_hot_events_snapshot(
+        self,
+        *,
+        hours: int = 24,
+        limit: int = 200,
+        language: str | None = None,
+    ) -> dict[str, Any]:
         bounded_hours = self._bound_hot_events_hours(hours)
         bounded_limit = self._bound_hot_events_limit(limit)
-        with self._hot_events_refresh_lock:
-            refreshed_at = self._utc_now_iso()
+        if not self._hot_events_refresh_lock.acquire(blocking=False):
+            currently_refreshing = self._hot_events_refreshing.is_set()
+            attempted_at = self._utc_now_iso()
+            self._hot_events_last_attempted_at = attempted_at
+            return self._get_hot_events_response(
+                hours=bounded_hours,
+                limit=bounded_limit,
+                last_attempted_at=attempted_at,
+                last_refresh_error=self._hot_events_last_refresh_error,
+                refreshing=currently_refreshing,
+                allow_live_translation=not currently_refreshing,
+                language=language,
+            )
+
+        try:
+            attempted_at = self._utc_now_iso()
+            self._hot_events_last_attempted_at = attempted_at
+            throttled, next_refresh_available_in_seconds = self._get_hot_events_refresh_throttle()
+            if throttled:
+                return self._get_hot_events_response(
+                    hours=bounded_hours,
+                    limit=bounded_limit,
+                    last_attempted_at=attempted_at,
+                    last_refresh_error=self._hot_events_last_refresh_error,
+                    throttled=True,
+                    next_refresh_available_in_seconds=next_refresh_available_in_seconds,
+                    refreshing=False,
+                    language=language,
+                )
+
+            self._hot_events_refreshing.set()
+            refreshed_at = attempted_at
             payload = self.hot_events_service.list_hot_events(hours=bounded_hours, limit=200, refresh=True)
             items_value = payload.get("items")
             items = [item for item in items_value if isinstance(item, dict)] if isinstance(items_value, list) else []
             stored_count = self.database.upsert_hot_events(items, refreshed_at)
+            self._hot_events_last_refresh_monotonic = time.monotonic()
+            self._hot_events_last_refresh_error = ""
+            warnings = self._coerce_string_list(payload.get("warnings"))
+            source_status = self._coerce_dict(payload.get("source_status"))
+            translation_warnings = self._pre_translate_hot_events(items)
+            self._hot_events_last_warnings = warnings + translation_warnings
+            self._hot_events_last_source_status = source_status
             log_level = logging.WARNING if payload.get("warnings") else logging.INFO
             log_event(
                 logger,
@@ -111,21 +186,28 @@ class ContentOrchestrator:
                 "hot_events_refresh_persisted",
                 hours=bounded_hours,
                 stored_count=stored_count,
-                warnings=payload.get("warnings", []),
-                source_status=payload.get("source_status", {}),
+                warnings=self._hot_events_last_warnings,
+                source_status=source_status,
             )
-        return self._get_hot_events_response(
-            hours=bounded_hours,
-            limit=bounded_limit,
-            warnings=self._coerce_string_list(payload.get("warnings")),
-            source_status=self._coerce_dict(payload.get("source_status")),
-            last_refreshed_at=refreshed_at,
-            last_attempted_at=refreshed_at,
-            force_stale=False,
-        )
+            return self._get_hot_events_response(
+                hours=bounded_hours,
+                limit=bounded_limit,
+                warnings=self._hot_events_last_warnings,
+                source_status=self._hot_events_last_source_status,
+                last_refreshed_at=refreshed_at,
+                last_attempted_at=attempted_at,
+                force_stale=False,
+                throttled=False,
+                next_refresh_available_in_seconds=0,
+                refreshing=False,
+                language=language,
+            )
+        finally:
+            self._hot_events_refreshing.clear()
+            self._hot_events_refresh_lock.release()
 
-    def generate_conversation_content(self, payload: ConversationGenerateRequest, request_id: str) -> dict[str, Any]:
-        selected_event = self._resolve_conversation_event(payload)
+    def generate_trending_content(self, payload: TrendingGenerateRequest, request_id: str) -> dict[str, Any]:
+        selected_event = self._resolve_trending_event(payload)
         topic = str(selected_event.get("title") or "").strip()
         summary = str(selected_event.get("summary") or "").strip()
         if not topic:
@@ -210,7 +292,7 @@ class ContentOrchestrator:
         web_enrichment_used = False
         web_keywords: list[str] = []
         source_facts: list[dict[str, Any]] = []
-        if len(matched) < 3 and self.settings.web_enrichment_enabled:
+        if len(matched) < 3 and self.settings.web_enrichment.enabled:
             web = self.web_enricher.search_recent_topic_signals(topic, base_keywords)
             web_keywords = web.get("keywords", [])
             source_facts = web.get("facts", [])
@@ -229,7 +311,7 @@ class ContentOrchestrator:
         variant_failures: list[dict[str, str]] = []
         quality_gate_event = threading.Event()
         with concurrent.futures.ThreadPoolExecutor(
-            max_workers=min(self.settings.variant_max_workers, len(self.VARIANTS)),
+            max_workers=min(self.settings.content.variant_max_workers, len(self.VARIANTS)),
         ) as executor:
             future_to_variant = {
                 executor.submit(
@@ -366,7 +448,7 @@ class ContentOrchestrator:
         local_source_facts = list(source_facts)
         local_used_keywords = list(used_keywords)
 
-        for round_index in range(1, self.settings.content_rewrite_max_rounds + 1):
+        for round_index in range(1, self.settings.content.rewrite_max_rounds + 1):
             if quality_gate_event is not None and quality_gate_event.is_set() and best_result is not None:
                 break
             prompt = self._build_generation_prompt(
@@ -428,7 +510,7 @@ class ContentOrchestrator:
                     quality_gate_event.set()
                 break
 
-            if self.settings.web_enrichment_enabled:
+            if self.settings.web_enrichment.enabled:
                 web = self.web_enricher.search_recent_topic_signals(topic, local_used_keywords)
                 extra_keywords = web.get("keywords", [])
                 extra_facts = web.get("facts", [])
@@ -466,7 +548,7 @@ class ContentOrchestrator:
         }
         return {"output": output, "debug": debug}
 
-    def _resolve_conversation_event(self, payload: ConversationGenerateRequest) -> dict[str, Any]:
+    def _resolve_trending_event(self, payload: TrendingGenerateRequest) -> dict[str, Any]:
         event_payload = payload.event_payload
         if isinstance(event_payload, dict):
             title = str(event_payload.get("title") or "").strip()
@@ -525,31 +607,54 @@ class ContentOrchestrator:
         last_refreshed_at: str | None = None,
         last_attempted_at: str | None = None,
         force_stale: bool | None = None,
+        throttled: bool = False,
+        next_refresh_available_in_seconds: int = 0,
+        refreshing: bool | None = None,
+        allow_live_translation: bool | None = None,
+        language: str | None = None,
     ) -> dict[str, Any]:
+        resolved_refreshing = self._hot_events_refreshing.is_set() if refreshing is None else bool(refreshing)
+        resolved_allow_live_translation = (
+            not resolved_refreshing if allow_live_translation is None else bool(allow_live_translation)
+        )
         items = self.database.list_hot_events(
             published_since=self._hot_events_cutoff_iso(hours),
             limit=self._bound_hot_events_limit(limit),
         )
         latest_refresh_time = str(last_refreshed_at or self.database.get_latest_hot_events_refresh_time() or "")
-        response_items = [self._public_hot_event_item(item) for item in items]
-        refresh_interval_seconds = max(1, int(self.settings.hot_events_refresh_interval_seconds))
+        response_items, translation_warnings = self._build_translated_hot_event_items(
+            items,
+            language=language,
+            allow_live_translation=resolved_allow_live_translation,
+        )
+        refresh_interval_seconds = max(1, int(self.settings.hot_events.auto_refresh_interval_seconds))
         is_stale = (
             bool(force_stale)
             if force_stale is not None
             else self._is_hot_events_refresh_stale(latest_refresh_time, refresh_interval_seconds)
+        )
+        resolved_warnings = (
+            self._coerce_string_list(warnings) if warnings is not None else list(self._hot_events_last_warnings)
+        )
+        resolved_warnings.extend(translation_warnings)
+        resolved_source_status = (
+            self._coerce_dict(source_status) if source_status is not None else dict(self._hot_events_last_source_status)
         )
 
         return {
             "hours": hours,
             "count": len(response_items),
             "items": response_items,
-            "warnings": self._coerce_string_list(warnings),
-            "source_status": self._coerce_dict(source_status),
+            "warnings": resolved_warnings,
+            "source_status": resolved_source_status,
             "last_refreshed_at": latest_refresh_time,
-            "last_attempted_at": str(last_attempted_at or latest_refresh_time),
+            "last_attempted_at": str(last_attempted_at or self._hot_events_last_attempted_at or latest_refresh_time),
             "refresh_interval_seconds": refresh_interval_seconds,
             "is_stale": is_stale,
-            "last_refresh_error": str(last_refresh_error or ""),
+            "refreshing": resolved_refreshing,
+            "throttled": bool(throttled),
+            "next_refresh_available_in_seconds": max(0, int(next_refresh_available_in_seconds)),
+            "last_refresh_error": str(last_refresh_error or self._hot_events_last_refresh_error or ""),
         }
 
     def _is_hot_events_refresh_stale(self, last_refreshed_at: Any, refresh_interval_seconds: int) -> bool:
@@ -572,11 +677,19 @@ class ContentOrchestrator:
         return value
 
     @staticmethod
-    def _public_hot_event_item(item: dict[str, Any]) -> dict[str, Any]:
+    def _public_hot_event_item(
+        item: dict[str, Any],
+        *,
+        translation: dict[str, str] | None = None,
+        is_translated: bool = False,
+    ) -> dict[str, Any]:
         return {
             "id": str(item.get("id") or ""),
             "title": str(item.get("title") or ""),
             "summary": str(item.get("summary") or ""),
+            "title_translated": str((translation or {}).get("title_translated") or item.get("title") or ""),
+            "summary_translated": str((translation or {}).get("summary_translated") or item.get("summary") or ""),
+            "is_translated": bool(is_translated),
             "url": str(item.get("url") or ""),
             "source": str(item.get("source") or ""),
             "source_domain": str(item.get("source_domain") or ""),
@@ -588,6 +701,165 @@ class ContentOrchestrator:
             "content_type": str(item.get("content_type") or "news"),
             "author_handle": str(item.get("author_handle") or ""),
         }
+
+    def _get_hot_events_refresh_throttle(self) -> tuple[bool, int]:
+        cooldown_seconds = max(0, int(self.settings.hot_events.min_refresh_cooldown_seconds))
+        if cooldown_seconds <= 0 or self._hot_events_last_refresh_monotonic <= 0:
+            return False, 0
+        remaining_seconds = cooldown_seconds - (time.monotonic() - self._hot_events_last_refresh_monotonic)
+        if remaining_seconds <= 0:
+            return False, 0
+        return True, int(remaining_seconds + 0.999)
+
+    def _pre_translate_hot_events(self, items: list[dict[str, Any]]) -> list[str]:
+        warnings: list[str] = []
+        for language in self.settings.hot_events.pre_translate_languages:
+            try:
+                self._ensure_hot_event_translations(
+                    items,
+                    target_language=language,
+                    request_id=f"hot-events-pretranslate-{language}",
+                )
+            except LLMError as exc:
+                warnings.append(f"hot events pre-translation failed for {language}: {exc}")
+        return warnings
+
+    def _build_translated_hot_event_items(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        language: str | None,
+        allow_live_translation: bool = True,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        target_language = self._normalize_hot_events_language(language)
+        warnings: list[str] = []
+        event_ids = [str(item.get("id") or "").strip() for item in items if str(item.get("id") or "").strip()]
+        translations = self.database.get_hot_event_translations(event_ids, target_language)
+        if allow_live_translation:
+            try:
+                translations = self._ensure_hot_event_translations(
+                    items,
+                    target_language=target_language,
+                    request_id=f"hot-events-request-{target_language}",
+                )
+            except LLMError as exc:
+                warnings.append(f"hot events translation failed for {target_language}: {exc}")
+
+        response_items: list[dict[str, Any]] = []
+        for item in items:
+            event_id = str(item.get("id") or "")
+            translation = translations.get(event_id)
+            source_matches_target = self._hot_event_matches_target_language(item, target_language)
+            response_items.append(
+                self._public_hot_event_item(
+                    item,
+                    translation=translation,
+                    is_translated=bool(translation) and not source_matches_target,
+                )
+            )
+        return response_items, warnings
+
+    def _ensure_hot_event_translations(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        target_language: str,
+        request_id: str | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        normalized_target_language = self._normalize_hot_events_language(target_language)
+        event_ids = [str(item.get("id") or "").strip() for item in items if str(item.get("id") or "").strip()]
+        translations = self.database.get_hot_event_translations(event_ids, normalized_target_language)
+        missing_items = [
+            item
+            for item in items
+            if str(item.get("id") or "").strip()
+            and str(item.get("id") or "").strip() not in translations
+            and not self._hot_event_matches_target_language(item, normalized_target_language)
+        ]
+        if not missing_items:
+            return translations
+
+        translated_items = self.llm.translate_hot_events_batch(
+            items={
+                str(item.get("id") or ""): {
+                    "title": str(item.get("title") or ""),
+                    "summary": str(item.get("summary") or ""),
+                }
+                for item in missing_items
+                if str(item.get("id") or "").strip()
+            },
+            target_language=normalized_target_language,
+            request_id=request_id,
+        )
+        created_at = self._utc_now_iso()
+        rows = []
+        for item in missing_items:
+            event_id = str(item.get("id") or "").strip()
+            if not event_id:
+                continue
+            translation = translated_items.get(event_id)
+            if not isinstance(translation, dict):
+                continue
+            original_title = str(item.get("title") or "")
+            original_summary = str(item.get("summary") or "")
+            title_translated = str(translation.get("title_translated") or original_title)
+            summary_translated = str(translation.get("summary_translated") or original_summary)
+            if title_translated == original_title and summary_translated == original_summary:
+                continue
+            rows.append(
+                {
+                    "event_id": event_id,
+                    "target_language": normalized_target_language,
+                    "title_translated": title_translated,
+                    "summary_translated": summary_translated,
+                    "created_at": created_at,
+                }
+            )
+        if rows:
+            self.database.save_hot_event_translations(rows)
+            translations.update(self.database.get_hot_event_translations(event_ids, normalized_target_language))
+        return translations
+
+    def _normalize_hot_events_language(self, language: str | None) -> str:
+        normalized = str(language or "en").strip()
+        if normalized == "auto":
+            normalized = "en"
+        if normalized not in SUPPORTED_TRANSLATION_LANGUAGES:
+            supported = ", ".join(sorted(SUPPORTED_TRANSLATION_LANGUAGES))
+            raise ValueError(f"`lang` must be one of: {supported}")
+        return normalized
+
+    def _hot_event_matches_target_language(self, item: dict[str, Any], target_language: str) -> bool:
+        source_language = self._detect_hot_event_language(
+            f"{str(item.get('title') or '').strip()}\n{str(item.get('summary') or '').strip()}"
+        )
+        return source_language == self._language_family(target_language)
+
+    def _detect_hot_event_language(self, text: str) -> str:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return "unknown"
+        if _HIRAGANA_KATAKANA_RE.search(normalized):
+            return "ja"
+        if _HANGUL_RE.search(normalized):
+            return "ko"
+        if _CJK_RE.search(normalized):
+            return "zh"
+        lowered = normalized.lower()
+        if _SPANISH_HINT_RE.search(normalized):
+            return "es"
+        tokens = re.findall(r"[a-zA-ZÀ-ÿ']+", lowered)
+        if len(_SPANISH_STOPWORDS.intersection(tokens)) >= 2:
+            return "es"
+        if tokens:
+            return "en"
+        return "unknown"
+
+    @staticmethod
+    def _language_family(language: str) -> str:
+        if language in {"zh-CN", "zh-TW"}:
+            return "zh"
+        return language
 
     @staticmethod
     def _hours_delta(hours: int) -> timedelta:

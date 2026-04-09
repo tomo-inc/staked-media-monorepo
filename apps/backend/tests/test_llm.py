@@ -1218,6 +1218,87 @@ class ScoreDraftsBatchTestCase(unittest.TestCase):
         self.assertEqual(results[2]["score"], 0.0)
 
 
+class TranslateHotEventsBatchTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = OpenAIClient(Settings(openai_api_key="test-key", llm_http_proxy=""))
+
+    def test_translate_hot_events_batch_matches_by_event_id(self) -> None:
+        batch_response = {
+            "items": {
+                "news:crypto:abc2": {
+                    "title": "翻译后的标题 2",
+                    "summary": "翻译后的摘要 2",
+                },
+                "news:twitter:1380723": {
+                    "title": "翻译后的标题 1",
+                    "summary": "翻译后的摘要 1",
+                },
+            }
+        }
+        with patch.object(self.client, "_chat_completion_json", return_value=batch_response):
+            results = self.client.translate_hot_events_batch(
+                items={
+                    "news:twitter:1380723": {
+                        "title": "Original title 1",
+                        "summary": "Original summary 1",
+                    },
+                    "news:crypto:abc2": {
+                        "title": "Original title 2",
+                        "summary": "Original summary 2",
+                    },
+                },
+                target_language="zh-CN",
+            )
+
+        self.assertEqual(
+            results["news:twitter:1380723"]["title_translated"],
+            "翻译后的标题 1",
+        )
+        self.assertEqual(
+            results["news:crypto:abc2"]["summary_translated"],
+            "翻译后的摘要 2",
+        )
+
+    def test_translate_hot_events_batch_ignores_unrequested_keys(self) -> None:
+        batch_response = {
+            "items": {
+                "news:crypto:abc2": {
+                    "title": "翻译后的标题 2",
+                    "summary": "翻译后的摘要 2",
+                },
+                "unexpected": {
+                    "title": "unexpected",
+                    "summary": "unexpected",
+                },
+            }
+        }
+        with patch.object(self.client, "_chat_completion_json", return_value=batch_response):
+            results = self.client.translate_hot_events_batch(
+                items={
+                    "news:crypto:abc2": {
+                        "title": "Original title 2",
+                        "summary": "Original summary 2",
+                    }
+                },
+                target_language="zh-CN",
+            )
+
+        self.assertEqual(set(results), {"news:crypto:abc2"})
+
+    def test_translate_hot_events_batch_requires_items_object(self) -> None:
+        with patch.object(self.client, "_chat_completion_json", return_value={"items": []}):
+            with self.assertRaisesRegex(LLMError, "expected an items object"):
+                self.client.translate_hot_events_batch(
+                    items={
+                        "news:crypto:abc2": {
+                            "title": "Original title 2",
+                            "summary": "Original summary 2",
+                        }
+                    },
+                    target_language="zh-CN",
+                )
+
+
 class ComputeFinalScoreTestCase(unittest.TestCase):
     def test_weighted_blend(self) -> None:
         from app.llm.base_client import LLMClient
@@ -1230,7 +1311,7 @@ class ComputeFinalScoreTestCase(unittest.TestCase):
 
 class LlmProviderTestCase(unittest.TestCase):
     def test_settings_rejects_unknown_provider(self) -> None:
-        with self.assertRaisesRegex(ValueError, "`llm_provider` must be one of"):
+        with self.assertRaisesRegex(ValueError, "`llm.provider` must be one of"):
             Settings(llm_provider="not-a-provider")
 
     def test_settings_normalizes_provider(self) -> None:

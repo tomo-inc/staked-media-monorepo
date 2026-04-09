@@ -22,7 +22,6 @@ from app.schemas import (
     ContentGenerateResponse,
     ContentIdeasRequest,
     ContentIdeasResponse,
-    ConversationGenerateRequest,
     DraftGenerateRequest,
     DraftGenerateResponse,
     ExposureAnalyzeRequest,
@@ -34,6 +33,7 @@ from app.schemas import (
     ProfileRebuildPersonaResponse,
     ProfileResponse,
     ProfileSummary,
+    TrendingGenerateRequest,
     WhitelistUsernameRequest,
     WhitelistUsernamesResponse,
 )
@@ -41,6 +41,7 @@ from app.upstream import UpstreamClient, UpstreamError
 
 logger = get_logger(__name__)
 WHITELIST_FORBIDDEN_DETAIL = "Target username is not in the trial whitelist"
+_STARTUP_HOT_EVENTS_REFRESH_DELAY_SECONDS = 0.05
 
 
 def utc_now_iso() -> str:
@@ -78,10 +79,17 @@ def _run_hot_events_refresh_once(app: FastAPI, *, trigger: str) -> None:
     )
 
 
-def _hot_events_refresh_scheduler_loop(app: FastAPI, stop_event: threading.Event) -> None:
-    interval_seconds = max(1, int(app.state.settings.hot_events_refresh_interval_seconds))
-    while not stop_event.wait(interval_seconds):
+def _hot_events_refresh_scheduler_loop(
+    app: FastAPI,
+    stop_event: threading.Event,
+    *,
+    initial_delay_seconds: float,
+) -> None:
+    interval_seconds = max(1, int(app.state.settings.hot_events.auto_refresh_interval_seconds))
+    next_delay_seconds = max(0.0, float(initial_delay_seconds))
+    while not stop_event.wait(next_delay_seconds):
         _run_hot_events_refresh_once(app, trigger="scheduler")
+        next_delay_seconds = float(interval_seconds)
 
 
 def create_app(
@@ -93,7 +101,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings)
-    database = Database(settings.database_path)
+    database = Database(settings.database.path)
     database.init()
 
     @asynccontextmanager
@@ -103,10 +111,10 @@ def create_app(
         scheduler_thread: threading.Thread | None = None
         refresh_hot_events_snapshot = getattr(app.state.content_orchestrator, "refresh_hot_events_snapshot", None)
         if callable(refresh_hot_events_snapshot):
-            _run_hot_events_refresh_once(app, trigger="startup")
             scheduler_thread = threading.Thread(
                 target=_hot_events_refresh_scheduler_loop,
                 args=(app, stop_event),
+                kwargs={"initial_delay_seconds": _STARTUP_HOT_EVENTS_REFRESH_DELAY_SECONDS},
                 daemon=True,
                 name="hot-events-refresh-scheduler",
             )
@@ -115,14 +123,14 @@ def create_app(
             logger,
             logging.INFO,
             "app_startup_completed",
-            provider=settings.llm_provider,
-            model=settings.gemini_model if settings.llm_provider == "gemini" else settings.openai_model,
-            twitter_data_proxy_enabled=bool(settings.twitter_data_proxies),
-            llm_proxy_enabled=bool(settings.llm_proxies),
-            log_level=settings.log_level,
-            log_file_enabled=settings.log_enable_file,
-            log_file_path=settings.log_file_path if settings.log_enable_file else None,
-            hot_events_refresh_interval_seconds=settings.hot_events_refresh_interval_seconds,
+            provider=settings.llm.provider,
+            model=settings.llm.selected_model,
+            twitter_data_proxy_enabled=bool(settings.twitter.data_proxies),
+            llm_proxy_enabled=bool(settings.llm.proxies),
+            log_level=settings.log.level,
+            log_file_enabled=settings.log.enable_file,
+            log_file_path=settings.log.file_path if settings.log.enable_file else None,
+            hot_events_refresh_interval_seconds=settings.hot_events.auto_refresh_interval_seconds,
             hot_events_scheduler_enabled=callable(refresh_hot_events_snapshot),
         )
         yield
@@ -161,14 +169,14 @@ def create_app(
             "api_ingest_started",
             request_id=request_id,
             username=username,
-            max_tweets=settings.max_ingest_tweets,
+            max_tweets=settings.twitter.max_ingest_tweets,
         )
 
         try:
             user = upstream.fetch_user_by_username(username, request_id=request_id)
             tweet_items = upstream.fetch_user_tweets(
                 user["id"],
-                max_tweets=settings.max_ingest_tweets,
+                max_tweets=settings.twitter.max_ingest_tweets,
                 request_id=request_id,
             )
         except UpstreamError as exc:
@@ -184,8 +192,8 @@ def create_app(
 
         database.upsert_user(user, ingested_at)
         fetched_tweet_count = database.upsert_tweets(user["id"], tweet_items, ingested_at)
-        tweet_rows = database.get_user_tweets(user["id"], limit=settings.max_ingest_tweets)
-        corpus_stats = build_corpus_stats(user, tweet_rows, sample_size=settings.persona_sample_size)
+        tweet_rows = database.get_user_tweets(user["id"], limit=settings.twitter.max_ingest_tweets)
+        corpus_stats = build_corpus_stats(user, tweet_rows, sample_size=settings.twitter.persona_sample_size)
 
         try:
             persona = llm.generate_persona(
@@ -294,12 +302,16 @@ def create_app(
         if stored_user is None:
             raise HTTPException(status_code=404, detail="Profile not found")
 
-        tweet_rows = database.get_user_tweets(stored_user["id"], limit=settings.max_ingest_tweets)
+        tweet_rows = database.get_user_tweets(stored_user["id"], limit=settings.twitter.max_ingest_tweets)
         if not tweet_rows:
             raise HTTPException(status_code=409, detail="No tweets found. Run /api/v1/profiles/ingest first")
 
         profile_payload = _profile_payload_from_stored_user(stored_user)
-        corpus_stats = build_corpus_stats(profile_payload, tweet_rows, sample_size=settings.persona_sample_size)
+        corpus_stats = build_corpus_stats(
+            profile_payload,
+            tweet_rows,
+            sample_size=settings.twitter.persona_sample_size,
+        )
         try:
             persona = llm.generate_persona(
                 profile=profile_payload,
@@ -358,7 +370,7 @@ def create_app(
             username=username,
             draft_count=payload.draft_count,
             prompt_len=len(payload.prompt),
-            prompt_snippet=redact_for_log(payload.prompt, request.app.state.settings.log_max_body_chars),
+            prompt_snippet=redact_for_log(payload.prompt, request.app.state.settings.log.max_body_chars),
         )
 
         stored_user = database.get_user_by_username(username)
@@ -383,7 +395,10 @@ def create_app(
             )
             raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
 
-        tweet_rows = database.get_user_tweets(stored_user["id"], limit=request.app.state.settings.max_ingest_tweets)
+        tweet_rows = database.get_user_tweets(
+            stored_user["id"],
+            limit=request.app.state.settings.twitter.max_ingest_tweets,
+        )
         source_texts = [row["text"] for row in tweet_rows if row["text"]]
         log_event(
             logger,
@@ -481,10 +496,13 @@ def create_app(
         hours: int = Query(24, ge=1, le=72),
         limit: int = Query(50, ge=1, le=200),
         refresh: bool = Query(False),
+        lang: str = Query("en"),
     ) -> HotEventsResponse:
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
         try:
-            result = orchestrator.list_hot_events(hours=hours, limit=limit, refresh=refresh)
+            result = orchestrator.list_hot_events(hours=hours, limit=limit, refresh=refresh, language=lang)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except RuntimeError as exc:
@@ -537,18 +555,18 @@ def create_app(
         )
         return ContentGenerateResponse(**result)
 
-    @app.post("/api/v1/conversation/generate", response_model=ContentGenerateResponse)
-    def conversation_generate(payload: ConversationGenerateRequest, request: Request) -> ContentGenerateResponse:
+    @app.post("/api/v1/trending/generate", response_model=ContentGenerateResponse)
+    def trending_generate(payload: TrendingGenerateRequest, request: Request) -> ContentGenerateResponse:
         request_id = uuid.uuid4().hex[:12]
         started_at = time.perf_counter()
         database: Database = request.app.state.database
         username = _require_allowed_username(
-            database, payload.username, request_id=request_id, route="conversation_generate"
+            database, payload.username, request_id=request_id, route="trending_generate"
         )
         payload = payload.copy(update={"username": username})
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
         try:
-            result = orchestrator.generate_conversation_content(payload, request_id=request_id)
+            result = orchestrator.generate_trending_content(payload, request_id=request_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except LookupError as exc:
@@ -564,7 +582,7 @@ def create_app(
         database.save_draft_request(
             username=username,
             persona_snapshot_id=latest_persona_snapshot["id"],
-            prompt=payload.comment.strip() or result.get("topic", "") or "conversation_generate",
+            prompt=payload.comment.strip() or result.get("topic", "") or "trending_generate",
             draft_count=payload.draft_count,
             output=result,
             created_at=utc_now_iso(),
@@ -572,7 +590,7 @@ def create_app(
         log_event(
             logger,
             logging.INFO,
-            "api_conversation_generate_completed",
+            "api_trending_generate_completed",
             request_id=request_id,
             username=username,
             topic=result.get("topic", ""),

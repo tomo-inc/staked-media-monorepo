@@ -34,17 +34,17 @@ class OpenAIClient(LLMClient):
         purpose: str = "generation",
         timeout_seconds: float | None = None,
     ) -> Any:
-        if not self.settings.openai_api_key:
+        if not self.settings.llm.openai.api_key:
             raise LLMError("OpenAI API key is not configured")
 
-        endpoint = f"{self.settings.openai_base_url.rstrip('/')}/chat/completions"
+        endpoint = f"{self.settings.llm.openai.base_url.rstrip('/')}/chat/completions"
         normalized_system_prompt = self._ensure_json_instruction(system_prompt)
         headers = {
-            "Authorization": f"Bearer {self.settings.openai_api_key}",
+            "Authorization": f"Bearer {self.settings.llm.openai.api_key}",
             "Content-Type": "application/json",
         }
         base_payload = {
-            "model": self.settings.openai_model,
+            "model": self.settings.llm.openai.model,
             "temperature": temperature,
             "messages": [
                 {"role": "system", "content": normalized_system_prompt},
@@ -62,7 +62,7 @@ class OpenAIClient(LLMClient):
                     endpoint=endpoint,
                     headers=headers,
                     json_payload=json_payload,
-                    model=self.settings.openai_model,
+                    model=self.settings.llm.openai.model,
                     request_id=request_id,
                     purpose=purpose,
                     timeout_seconds=timeout_seconds,
@@ -76,7 +76,7 @@ class OpenAIClient(LLMClient):
                         "llm_provider_json_mode_fallback",
                         request_id=request_id,
                         provider=self.provider_name,
-                        model=self.settings.openai_model,
+                        model=self.settings.llm.openai.model,
                         reason="response_format_unsupported",
                     )
                     continue
@@ -90,7 +90,7 @@ class OpenAIClient(LLMClient):
                     "llm_provider_missing_choices",
                     request_id=request_id,
                     provider=self.provider_name,
-                    model=self.settings.openai_model,
+                    model=self.settings.llm.openai.model,
                 )
                 raise LLMError("OpenAI response did not include any choices")
 
@@ -105,7 +105,7 @@ class OpenAIClient(LLMClient):
                     "llm_provider_json_mode_fallback",
                     request_id=request_id,
                     provider=self.provider_name,
-                    model=self.settings.openai_model,
+                    model=self.settings.llm.openai.model,
                     reason="empty_content",
                 )
 
@@ -116,7 +116,7 @@ class OpenAIClient(LLMClient):
                 "llm_provider_empty_content",
                 request_id=request_id,
                 provider=self.provider_name,
-                model=self.settings.openai_model,
+                model=self.settings.llm.openai.model,
             )
             raise LLMError("OpenAI response content was empty")
 
@@ -125,7 +125,7 @@ class OpenAIClient(LLMClient):
                 content_text,
                 provider_name="OpenAI",
                 request_id=request_id,
-                max_body_chars=self.settings.log_max_body_chars,
+                max_body_chars=self.settings.log.max_body_chars,
             )
         except LLMError:
             recovered_payload = None

@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import tempfile
 import threading
+import time
 import unittest
 from datetime import UTC, datetime
 
 from app.config import Settings
 from app.database import Database
 from app.orchestrator import ContentOrchestrator
-from app.schemas import ContentGenerateRequest, ConversationGenerateRequest
+from app.schemas import ContentGenerateRequest, TrendingGenerateRequest
 
 
 class FakeLLM:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.calls = 0
+        self.translation_overrides: dict[str, dict[str, str]] = {}
 
     def generate_drafts(
         self,
@@ -42,6 +44,23 @@ class FakeLLM:
             ],
             "best_score": best_score,
             "target_score_met": best_score >= 9.0,
+        }
+
+    def translate_hot_events_batch(
+        self,
+        *,
+        items: dict[str, dict[str, str]],
+        target_language: str,
+        request_id: str | None = None,
+    ) -> dict[str, dict[str, str]]:
+        if self.translation_overrides:
+            return dict(self.translation_overrides)
+        return {
+            str(event_id): {
+                "title_translated": str(item.get("title") or ""),
+                "summary_translated": str(item.get("summary") or ""),
+            }
+            for event_id, item in items.items()
         }
 
 
@@ -75,12 +94,19 @@ class FakeHotEventsService:
         self.should_fail = False
         self.error_message = "provider unavailable"
         self.published_at = (datetime.now(UTC).replace(microsecond=0)).isoformat()
+        self.block_refresh = False
+        self.refresh_started = threading.Event()
+        self.release_refresh = threading.Event()
 
     def list_hot_events(self, *, hours: int, limit: int, refresh: bool) -> dict:
         self.calls += 1
         self.latest_refresh = refresh
         if self.should_fail:
             raise RuntimeError(self.error_message)
+        if refresh and self.block_refresh:
+            self.refresh_started.set()
+            if not self.release_refresh.wait(timeout=2.0):
+                raise RuntimeError("timed out waiting for refresh release")
         items = [
             {
                 "id": "web3::event-1",
@@ -351,6 +377,7 @@ class OrchestratorTestCase(unittest.TestCase):
         self.assertEqual(payload["source_status"]["opennews"]["status"], "ok")
         self.assertFalse(payload["is_stale"])
         self.assertEqual(payload["last_refresh_error"], "")
+        self.assertFalse(payload["refreshing"])
         self.assertEqual(self.hot.calls, 1)
         self.assertTrue(self.hot.latest_refresh)
 
@@ -362,7 +389,8 @@ class OrchestratorTestCase(unittest.TestCase):
         self.assertEqual(second["items"][0]["id"], "web3::event-1")
         self.assertEqual(self.hot.calls, 1)
         self.assertEqual(second["warnings"], [])
-        self.assertEqual(second["source_status"], {})
+        self.assertEqual(second["source_status"]["opennews"]["status"], "ok")
+        self.assertFalse(second["refreshing"])
 
     def test_list_hot_events_returns_stored_items_after_refresh_failure(self) -> None:
         self.orchestrator.list_hot_events(hours=24, limit=20, refresh=True)
@@ -371,21 +399,78 @@ class OrchestratorTestCase(unittest.TestCase):
         payload = self.orchestrator.list_hot_events(hours=24, limit=20, refresh=True)
 
         self.assertEqual(payload["count"], 1)
-        self.assertTrue(payload["is_stale"])
-        self.assertEqual(payload["last_refresh_error"], "provider unavailable")
+        self.assertFalse(payload["is_stale"])
+        self.assertTrue(payload["throttled"])
+        self.assertGreater(payload["next_refresh_available_in_seconds"], 0)
+        self.assertEqual(payload["last_refresh_error"], "")
         self.assertEqual(payload["items"][0]["id"], "web3::event-1")
-        self.assertEqual(payload["warnings"], ["hot events refresh failed: provider unavailable"])
-        self.assertEqual(self.hot.calls, 2)
+        self.assertEqual(payload["warnings"], [])
+        self.assertEqual(self.hot.calls, 1)
 
-    def test_generate_conversation_content_uses_mode_b_and_selected_event(self) -> None:
+    def test_list_hot_events_returns_immediately_while_refresh_is_in_progress(self) -> None:
+        self.hot.block_refresh = True
+        worker = threading.Thread(
+            target=self.orchestrator.refresh_hot_events_snapshot,
+            kwargs={"hours": 24, "limit": 20},
+            daemon=True,
+        )
+        worker.start()
+        self.assertTrue(self.hot.refresh_started.wait(timeout=1.0))
+
+        started_at = time.monotonic()
+        payload = self.orchestrator.list_hot_events(hours=24, limit=20, refresh=True)
+        elapsed_seconds = time.monotonic() - started_at
+
+        self.assertLess(elapsed_seconds, 0.2)
+        self.assertTrue(payload["refreshing"])
+        self.assertFalse(payload["throttled"])
+        self.assertEqual(payload["count"], 0)
+        self.assertEqual(payload["items"], [])
+        self.assertEqual(self.hot.calls, 1)
+
+        self.hot.release_refresh.set()
+        worker.join(timeout=1.0)
+        self.assertFalse(worker.is_alive())
+
+    def test_refresh_hot_events_skips_persisting_no_op_translations(self) -> None:
+        self.orchestrator.refresh_hot_events_snapshot(hours=24, limit=20, language="zh-CN")
+
+        translations = self.database.get_hot_event_translations(["web3::event-1"], "zh-CN")
+
+        self.assertEqual(translations, {})
+
+    def test_refresh_hot_events_persists_real_translations_only(self) -> None:
+        self.llm.translation_overrides = {
+            "web3::event-1": {
+                "title_translated": "比特币 ETF 资金流激增",
+                "summary_translated": "过去 24 小时 ETF 流入明显上升。",
+            },
+            "unexpected-event": {
+                "title_translated": "unexpected",
+                "summary_translated": "unexpected",
+            },
+        }
+
+        payload = self.orchestrator.refresh_hot_events_snapshot(hours=24, limit=20, language="zh-CN")
+        translations = self.database.get_hot_event_translations(["web3::event-1"], "zh-CN")
+
+        self.assertIn("web3::event-1", translations)
+        self.assertEqual(
+            translations["web3::event-1"]["title_translated"],
+            "比特币 ETF 资金流激增",
+        )
+        self.assertEqual(payload["items"][0]["title_translated"], "比特币 ETF 资金流激增")
+        self.assertTrue(payload["items"][0]["is_translated"])
+
+    def test_generate_trending_content_uses_mode_b_and_selected_event(self) -> None:
         self.orchestrator.list_hot_events(hours=24, limit=20, refresh=True)
-        payload = ConversationGenerateRequest(
+        payload = TrendingGenerateRequest(
             username="demo",
             event_id="web3::event-1",
             comment="I think this may trigger rotation into large caps.",
             draft_count=2,
         )
-        result = self.orchestrator.generate_conversation_content(payload, request_id="req-conv-1")
+        result = self.orchestrator.generate_trending_content(payload, request_id="req-conv-1")
         self.assertEqual(result["request_id"], "req-conv-1")
         self.assertEqual(result["mode"], "B")
         self.assertEqual(result["topic"], "Bitcoin ETF flow spikes")

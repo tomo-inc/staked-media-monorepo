@@ -20,6 +20,7 @@ interface StakedMediaPanelHelpersHost {
 			deriveConnectionIndicator(
 				input: ConnectionIndicatorInput,
 			): ConnectionIndicatorOutput;
+			deriveHotEventsStateNotice(input: HotEventsStateNoticeInput): string[];
 			buildPanelShell(): string;
 		}
 
@@ -33,6 +34,17 @@ interface StakedMediaPanelHelpersHost {
 			className: string;
 			title: string;
 			latencyText: string;
+		}
+
+		interface HotEventsStateNoticeInput {
+			refreshing?: boolean;
+			isStale?: boolean;
+			throttled?: boolean;
+			nextRefreshAvailableInSeconds?: number | null;
+			lastRefreshedAt?: string;
+			lastAttemptedAt?: string;
+			lastRefreshError?: string;
+			formatTimestamp?: (value: string) => string;
 		}
 
 		function isWhitelistDeniedError(
@@ -69,6 +81,50 @@ interface StakedMediaPanelHelpersHost {
 			};
 		}
 
+		function deriveHotEventsStateNotice({
+			refreshing,
+			isStale,
+			throttled,
+			nextRefreshAvailableInSeconds,
+			lastRefreshedAt,
+			lastAttemptedAt,
+			lastRefreshError,
+			formatTimestamp,
+		}: HotEventsStateNoticeInput): string[] {
+			const parts: string[] = [];
+			const renderTimestamp =
+				typeof formatTimestamp === "function"
+					? formatTimestamp
+					: (value: string) => value;
+
+			if (refreshing) {
+				parts.push("Refreshing hot events in background...");
+			}
+			if (throttled) {
+				parts.push(
+					Number(nextRefreshAvailableInSeconds) > 0
+						? `Refresh cooldown active. Try again in ${Number(nextRefreshAvailableInSeconds)}s.`
+						: "Refresh cooldown active. Using the latest cached snapshot.",
+				);
+			}
+			if (isStale) {
+				if (lastRefreshedAt) {
+					parts.push(
+						`Using cached snapshot from ${renderTimestamp(lastRefreshedAt)}.`,
+					);
+				} else {
+					parts.push("Using the latest cached snapshot.");
+				}
+			}
+			if (lastRefreshError) {
+				const attemptedAt = lastAttemptedAt
+					? ` Latest refresh attempt at ${renderTimestamp(lastAttemptedAt)} failed.`
+					: " Latest refresh attempt failed.";
+				parts.push(`${attemptedAt} ${lastRefreshError}`.trim());
+			}
+			return parts;
+		}
+
 		function buildPanelShell(): string {
 			return `
       <div class="smc-shell">
@@ -97,7 +153,7 @@ interface StakedMediaPanelHelpersHost {
             <nav class="smc-tab-bar">
               <button class="smc-tab smc-tab-active" data-tab-target="profile" data-i18n="tab.profile" type="button">Profile</button>
               <button class="smc-tab" data-tab-target="draft" data-i18n="tab.draft" type="button">Draft</button>
-              <button class="smc-tab" data-tab-target="conversation" data-i18n="tab.conversation" type="button">Conversation</button>
+              <button class="smc-tab" data-tab-target="trending" data-i18n="tab.trending" type="button">Trending</button>
             </nav>
 
             <section class="smc-section" data-slot="status-section" hidden>
@@ -143,7 +199,7 @@ interface StakedMediaPanelHelpersHost {
               </section>
             </div>
 
-            <div class="smc-tab-panel" data-tab-panel="conversation">
+            <div class="smc-tab-panel" data-tab-panel="trending">
               <section class="smc-section">
                 <div class="smc-section-head">
                   <h2 data-i18n="section.hotEvents24h">24h Hot Events</h2>
@@ -154,16 +210,17 @@ interface StakedMediaPanelHelpersHost {
               </section>
 
               <section class="smc-section">
+                <div data-slot="selected-hot-event-info"></div>
                 <label class="smc-label">
                   <span data-i18n="label.takeOptional">What is your take? (optional)</span>
-                  <textarea class="smc-textarea" data-field="conversationComment" placeholder="Anything to add before generating?"></textarea>
+                  <textarea class="smc-textarea" data-field="trendingComment" placeholder="Anything to add before generating?"></textarea>
                 </label>
                 <label class="smc-label">
                   <span data-i18n="label.draftCount">Draft Count</span>
-                  <input class="smc-input smc-input-short" data-field="conversationDraftCount" min="1" max="10" step="1" type="number" value="3">
+                  <input class="smc-input smc-input-short" data-field="trendingDraftCount" min="1" max="10" step="1" type="number" value="3">
                 </label>
                 <div class="smc-button-row">
-                  <button class="smc-button smc-button-primary" data-action="generate-conversation" data-i18n="action.generate" type="button">Generate</button>
+                  <button class="smc-button smc-button-primary" data-action="generate-trending" data-i18n="action.generate" type="button">Generate</button>
                   <button class="smc-button smc-button-secondary" data-action="send-to-draft" data-i18n="action.sendToDraft" type="button" disabled>Send to Draft</button>
                 </div>
                 <div class="smc-field-message smc-field-message-warn" data-slot="send-to-draft-hint" hidden></div>
@@ -171,12 +228,12 @@ interface StakedMediaPanelHelpersHost {
 
               <section class="smc-section">
                 <div class="smc-section-head">
-                  <h2 data-i18n="section.conversationResult">Conversation Result</h2>
+                  <h2 data-i18n="section.trendingResult">Trending Result</h2>
                   <div class="smc-section-head-right">
-                    <button class="smc-link-button" data-action="clear-conversation-results" data-i18n="action.clear" type="button">Clear</button>
+                    <button class="smc-link-button" data-action="clear-trending-results" data-i18n="action.clear" type="button">Clear</button>
                   </div>
                 </div>
-                <div data-slot="conversation-results"></div>
+                <div data-slot="trending-results"></div>
               </section>
             </div>
           </div>
@@ -296,6 +353,7 @@ interface StakedMediaPanelHelpersHost {
 		const api: PanelHelpersApi = {
 			buildPanelShell,
 			deriveConnectionIndicator,
+			deriveHotEventsStateNotice,
 			isWhitelistDeniedError,
 		};
 		return api;

@@ -8,6 +8,6 @@ from .openai_client import OpenAIClient
 
 
 def create_llm_client(settings: Settings) -> LLMClient:
-    if settings.llm_provider == "gemini":
+    if settings.llm.provider == "gemini":
         return GeminiClient(settings)
     return OpenAIClient(settings)
