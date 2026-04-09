@@ -144,6 +144,24 @@ interface StakedMediaExtensionSharedHost {
 				"action.showLess": "show less",
 				"hint.hotEventSelected":
 					"Event selected - enter your perspective below and hit Generate.",
+				"profile.usernameRequired": "Username is required.",
+				"profile.loading": "Loading profile...",
+				"profile.notFound":
+					"Profile not found. Click Ingest to fetch tweets and build persona.",
+				"profile.personaMissing":
+					"Profile loaded, but persona is missing. Click Ingest to build persona.",
+				"profile.cardTitle": "Profile",
+				"profile.followers": "Followers",
+				"profile.following": "Following",
+				"profile.tweets": "Tweets",
+				"profile.persona": "Persona",
+				"profile.personaReady": "Ready",
+				"profile.personaMissingStatus": "Missing",
+				"profile.personaPortrait": "Persona Portrait",
+				"profile.summary": "Summary",
+				"profile.voice": "Voice",
+				"profile.topics": "Topics",
+				"profile.ingestSuccess": "Ingested {count} tweets. Persona ready.",
 			},
 			"zh-CN": {
 				"app.title": "X 助手",
@@ -193,6 +211,23 @@ interface StakedMediaExtensionSharedHost {
 				"action.showLess": "收起",
 				"hint.hotEventSelected":
 					"已选择热点事件 - 在下方输入你的观点后点击生成。",
+				"profile.usernameRequired": "用户名不能为空。",
+				"profile.loading": "正在加载档案...",
+				"profile.notFound": "未找到档案。点击“采集”以抓取推文并生成人设。",
+				"profile.personaMissing":
+					"档案已加载，但人设缺失。点击“采集”以生成人设。",
+				"profile.cardTitle": "档案",
+				"profile.followers": "粉丝",
+				"profile.following": "关注",
+				"profile.tweets": "推文",
+				"profile.persona": "人设",
+				"profile.personaReady": "已就绪",
+				"profile.personaMissingStatus": "缺失",
+				"profile.personaPortrait": "人设画像",
+				"profile.summary": "总结",
+				"profile.voice": "风格",
+				"profile.topics": "主题",
+				"profile.ingestSuccess": "已采集 {count} 条推文，人设已就绪。",
 			},
 			"zh-TW": {
 				"app.title": "X 助手",
@@ -242,6 +277,23 @@ interface StakedMediaExtensionSharedHost {
 				"action.showLess": "收起",
 				"hint.hotEventSelected":
 					"已選擇熱門事件 - 在下方輸入你的觀點後點擊生成。",
+				"profile.usernameRequired": "使用者名稱不可為空。",
+				"profile.loading": "正在載入檔案...",
+				"profile.notFound": "找不到檔案。點擊「匯入」以抓取推文並建立人設。",
+				"profile.personaMissing":
+					"檔案已載入，但人設缺失。點擊「匯入」以建立人設。",
+				"profile.cardTitle": "檔案",
+				"profile.followers": "粉絲",
+				"profile.following": "追蹤中",
+				"profile.tweets": "推文",
+				"profile.persona": "人設",
+				"profile.personaReady": "已就緒",
+				"profile.personaMissingStatus": "缺失",
+				"profile.personaPortrait": "人設畫像",
+				"profile.summary": "摘要",
+				"profile.voice": "風格",
+				"profile.topics": "主題",
+				"profile.ingestSuccess": "已匯入 {count} 則推文，人設已就緒。",
 			},
 			ja: {
 				"app.title": "X Copilot",
@@ -291,6 +343,25 @@ interface StakedMediaExtensionSharedHost {
 				"action.showLess": "折りたたむ",
 				"hint.hotEventSelected":
 					"イベントを選択しました。下に視点を入力して Generate を押してください。",
+				"profile.usernameRequired": "ユーザー名は必須です。",
+				"profile.loading": "プロフィールを読み込み中...",
+				"profile.notFound":
+					"プロフィールが見つかりません。取り込みを押してポストを取得し、ペルソナを作成してください。",
+				"profile.personaMissing":
+					"プロフィールは読み込まれましたが、ペルソナがありません。取り込みを押してペルソナを作成してください。",
+				"profile.cardTitle": "プロフィール",
+				"profile.followers": "フォロワー",
+				"profile.following": "フォロー中",
+				"profile.tweets": "投稿",
+				"profile.persona": "ペルソナ",
+				"profile.personaReady": "準備完了",
+				"profile.personaMissingStatus": "未作成",
+				"profile.personaPortrait": "ペルソナ像",
+				"profile.summary": "要約",
+				"profile.voice": "文体",
+				"profile.topics": "トピック",
+				"profile.ingestSuccess":
+					"{count} 件の投稿を取り込み、ペルソナを作成しました。",
 			},
 			ko: {
 				"app.title": "X Copilot",
@@ -340,6 +411,25 @@ interface StakedMediaExtensionSharedHost {
 				"action.showLess": "접기",
 				"hint.hotEventSelected":
 					"이벤트가 선택되었습니다. 아래에 관점을 입력한 뒤 Generate를 누르세요.",
+				"profile.usernameRequired": "사용자 이름은 필수입니다.",
+				"profile.loading": "프로필을 불러오는 중...",
+				"profile.notFound":
+					"프로필을 찾을 수 없습니다. 수집을 눌러 게시물을 가져오고 페르소나를 생성하세요.",
+				"profile.personaMissing":
+					"프로필은 불러왔지만 페르소나가 없습니다. 수집을 눌러 페르소나를 생성하세요.",
+				"profile.cardTitle": "프로필",
+				"profile.followers": "팔로워",
+				"profile.following": "팔로잉",
+				"profile.tweets": "게시물",
+				"profile.persona": "페르소나",
+				"profile.personaReady": "준비됨",
+				"profile.personaMissingStatus": "없음",
+				"profile.personaPortrait": "페르소나 프로필",
+				"profile.summary": "요약",
+				"profile.voice": "톤",
+				"profile.topics": "주제",
+				"profile.ingestSuccess":
+					"게시물 {count}개를 수집했고 페르소나가 준비되었습니다.",
 			},
 			es: {
 				"app.title": "X Copilot",
@@ -389,6 +479,25 @@ interface StakedMediaExtensionSharedHost {
 				"action.showLess": "ver menos",
 				"hint.hotEventSelected":
 					"Evento seleccionado - escribe tu perspectiva abajo y pulsa Generate.",
+				"profile.usernameRequired": "El nombre de usuario es obligatorio.",
+				"profile.loading": "Cargando perfil...",
+				"profile.notFound":
+					"No se encontró el perfil. Haz clic en Ingerir para obtener publicaciones y crear la persona.",
+				"profile.personaMissing":
+					"El perfil se cargó, pero falta la persona. Haz clic en Ingerir para crearla.",
+				"profile.cardTitle": "Perfil",
+				"profile.followers": "Seguidores",
+				"profile.following": "Siguiendo",
+				"profile.tweets": "Publicaciones",
+				"profile.persona": "Persona",
+				"profile.personaReady": "Lista",
+				"profile.personaMissingStatus": "Falta",
+				"profile.personaPortrait": "Retrato de la persona",
+				"profile.summary": "Resumen",
+				"profile.voice": "Voz",
+				"profile.topics": "Temas",
+				"profile.ingestSuccess":
+					"Se ingirieron {count} publicaciones. La persona está lista.",
 			},
 		};
 

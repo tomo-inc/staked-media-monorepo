@@ -219,6 +219,15 @@ test("i18n helpers return translated labels and language options", () => {
 	assert.match(String(options[0]?.label || ""), /自动|跟随浏览器/);
 });
 
+test("profile i18n keys return localized labels", () => {
+	assert.equal(t("profile.personaPortrait", "zh-CN"), "人设画像");
+	assert.equal(t("profile.followers", "ja"), "フォロワー");
+	assert.equal(
+		t("profile.ingestSuccess", "en"),
+		"Ingested {count} tweets. Persona ready.",
+	);
+});
+
 test("extractDrafts prefers direct drafts and variant drafts", () => {
 	assert.deepEqual(extractDrafts({ drafts: [{ text: "one" }] }), [
 		{ text: "one" },
