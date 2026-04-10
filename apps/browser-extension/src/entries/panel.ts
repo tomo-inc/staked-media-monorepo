@@ -967,11 +967,13 @@ interface PanelUi {
 				payload: { username },
 			});
 			STATE.profile = response.profile;
+			renderView();
 			renderUsernameError("");
 			renderStatus("", "");
 			renderProfileInfo();
 		} catch (error) {
 			STATE.profile = null;
+			renderView();
 			renderProfileInfo();
 			if (isWhitelistDeniedError(error)) {
 				renderUsernameError(formatRuntimeError(error));
@@ -1009,6 +1011,7 @@ interface PanelUi {
 					persona: response.result.persona,
 				},
 			};
+			renderView();
 			renderUsernameError("");
 			renderProfileInfo();
 			renderStatus(
@@ -1034,6 +1037,7 @@ interface PanelUi {
 		const username = ui.username.value.trim();
 		const idea = ui.idea.value.trim();
 		if (!username) {
+			shakeHeaderTitle();
 			renderStatus("Username is required.", "error");
 			return;
 		}
@@ -1607,6 +1611,7 @@ interface PanelUi {
 	async function handleTrendingGenerate(): Promise<void> {
 		const username = ui.username.value.trim();
 		if (!username) {
+			shakeHeaderTitle();
 			renderStatus("Username is required.", "error");
 			return;
 		}
@@ -1807,7 +1812,11 @@ interface PanelUi {
 		});
 		if (ui.headerTitle) {
 			if (!isSettingsView) {
-				ui.headerTitle.textContent = t("app.title", locale);
+				if (STATE.profile?.username) {
+					ui.headerTitle.textContent = `@${STATE.profile.username}`;
+				} else {
+					ui.headerTitle.textContent = t("app.titleNoProfile", locale);
+				}
 			} else if (STATE.settingsPage === "api") {
 				ui.headerTitle.textContent = t("settings.apiPageTitle", locale);
 			} else {
@@ -1881,6 +1890,18 @@ interface PanelUi {
 		dot.className = indicator.className;
 		dot.title = indicator.title;
 		if (latencyEl) latencyEl.textContent = indicator.latencyText;
+	}
+
+	function shakeHeaderTitle(): void {
+		if (!ui.headerTitle) return;
+		ui.headerTitle.classList.remove("smc-shake");
+		void ui.headerTitle.offsetWidth;
+		ui.headerTitle.classList.add("smc-shake");
+		ui.headerTitle.addEventListener(
+			"animationend",
+			() => ui.headerTitle.classList.remove("smc-shake"),
+			{ once: true },
+		);
 	}
 
 	function renderUsernameError(text: unknown): void {

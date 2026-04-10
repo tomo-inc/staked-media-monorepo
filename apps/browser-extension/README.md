@@ -1,6 +1,6 @@
 # Browser Extension MVP
 
-This directory contains the Chrome/Edge Manifest V3 extension for Staked Media Copilot.
+This directory contains the Chrome/Edge Manifest V3 extension for FoxSpark.
 Source code and browser-loadable artifacts are fully separated:
 
 - `src/`: frontend source code (`TS/JS/Tailwind`)
@@ -21,6 +21,7 @@ Source code and browser-loadable artifacts are fully separated:
 ```bash
 cd apps/browser-extension
 npm install
+npm run generate:icons
 npm run build
 ```
 
@@ -35,6 +36,16 @@ npm run build
 ```bash
 cd apps/browser-extension
 npm test
+```
+
+## Icons
+
+- `public/icons/icon.svg` is the source-of-truth icon artwork.
+- Chrome extension manifest icons still need raster PNG files, so regenerate them after editing the SVG:
+
+```bash
+cd apps/browser-extension
+npm run generate:icons
 ```
 
 ## MVP Constraints

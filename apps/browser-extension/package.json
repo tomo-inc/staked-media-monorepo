@@ -1,13 +1,14 @@
 {
-  "name": "staked-media-extension",
+  "name": "foxspark-extension",
   "private": true,
   "version": "0.1.0",
-  "description": "Build tooling for Staked Media Copilot browser extension",
+  "description": "Build tooling for FoxSpark browser extension",
   "scripts": {
     "clean": "rm -rf dist tests-dist",
     "build:scripts": "node scripts/build-scripts.mjs",
     "build:tests": "tsc -p tsconfig.tests.json && node scripts/write-tests-package.mjs",
     "build:styles": "tailwindcss -c tailwind.config.cjs -i src/styles/panel.tailwind.css -o dist/panel.css --minify",
+    "generate:icons": "node scripts/generate-icons.mjs",
     "copy:static": "cp public/manifest.json public/panel.html public/options.html dist/ && cp -R public/icons dist/",
     "build": "npm run clean && npm run build:scripts && npm run build:styles && npm run copy:static",
     "lint": "biome check src/ tests/",
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@biomejs/biome": "^2.4.10",
+    "@resvg/resvg-js": "^2.6.2",
     "esbuild": "^0.25.5",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3"

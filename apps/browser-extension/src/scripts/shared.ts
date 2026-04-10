@@ -96,7 +96,8 @@ interface StakedMediaExtensionSharedHost {
 
 		const CORE_I18N: Record<Locale, Record<string, string>> = {
 			en: {
-				"app.title": "X Copilot",
+				"app.title": "FoxSpark",
+				"app.titleNoProfile": "Load a profile to start",
 				"settings.title": "Settings",
 				"settings.apiPageTitle": "API & Generation",
 				"settings.apiGeneration": "API & Generation",
@@ -164,7 +165,8 @@ interface StakedMediaExtensionSharedHost {
 				"profile.ingestSuccess": "Ingested {count} tweets. Persona ready.",
 			},
 			"zh-CN": {
-				"app.title": "X 助手",
+				"app.title": "FoxSpark",
+				"app.titleNoProfile": "加载用户以开始",
 				"settings.title": "设置",
 				"settings.apiPageTitle": "API 与生成",
 				"settings.apiGeneration": "API 与生成",
@@ -230,7 +232,8 @@ interface StakedMediaExtensionSharedHost {
 				"profile.ingestSuccess": "已采集 {count} 条推文，人设已就绪。",
 			},
 			"zh-TW": {
-				"app.title": "X 助手",
+				"app.title": "FoxSpark",
+				"app.titleNoProfile": "載入用戶以開始",
 				"settings.title": "設定",
 				"settings.apiPageTitle": "API 與生成",
 				"settings.apiGeneration": "API 與生成",
@@ -296,7 +299,8 @@ interface StakedMediaExtensionSharedHost {
 				"profile.ingestSuccess": "已匯入 {count} 則推文，人設已就緒。",
 			},
 			ja: {
-				"app.title": "X Copilot",
+				"app.title": "FoxSpark",
+				"app.titleNoProfile": "プロフィールを読み込んでください",
 				"settings.title": "設定",
 				"settings.apiPageTitle": "API と生成",
 				"settings.apiGeneration": "API と生成",
@@ -364,7 +368,8 @@ interface StakedMediaExtensionSharedHost {
 					"{count} 件の投稿を取り込み、ペルソナを作成しました。",
 			},
 			ko: {
-				"app.title": "X Copilot",
+				"app.title": "FoxSpark",
+				"app.titleNoProfile": "프로필을 불러오세요",
 				"settings.title": "설정",
 				"settings.apiPageTitle": "API 및 생성",
 				"settings.apiGeneration": "API 및 생성",
@@ -432,7 +437,8 @@ interface StakedMediaExtensionSharedHost {
 					"게시물 {count}개를 수집했고 페르소나가 준비되었습니다.",
 			},
 			es: {
-				"app.title": "X Copilot",
+				"app.title": "FoxSpark",
+				"app.titleNoProfile": "Carga un perfil para empezar",
 				"settings.title": "Configuración",
 				"settings.apiPageTitle": "API y Generación",
 				"settings.apiGeneration": "API y Generación",

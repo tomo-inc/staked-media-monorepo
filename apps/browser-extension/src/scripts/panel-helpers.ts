@@ -134,7 +134,7 @@ interface StakedMediaPanelHelpersHost {
               <button class="smc-icon-button smc-back-button" data-action="close-settings" type="button" aria-label="Back to main view" hidden>
                 <span aria-hidden="true">&lt;</span>
               </button>
-              <h1 class="smc-title" data-slot="header-title">X Copilot</h1>
+              <h1 class="smc-title" data-slot="header-title"></h1>
             </div>
             <div class="smc-header-right">
               <span class="smc-latency-text" data-slot="latency-text">--</span>

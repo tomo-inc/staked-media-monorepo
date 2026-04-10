@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Staked Media Copilot",
+  "name": "FoxSpark",
   "description": "MVP browser extension for generating X/Twitter drafts through the existing Python backend.",
   "version": "0.1.0",
   "permissions": [
@@ -32,7 +32,7 @@
   },
   "options_page": "options.html",
   "action": {
-    "default_title": "Staked Media Copilot",
+    "default_title": "FoxSpark",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
