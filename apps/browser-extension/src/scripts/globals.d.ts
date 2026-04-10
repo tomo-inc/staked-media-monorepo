@@ -72,6 +72,7 @@ interface StakedMediaPanelHelpersApi {
 interface StakedMediaExtensionSharedApi {
 	DEFAULT_CONFIG: Readonly<StakedMediaExtensionConfig>;
 	ALLOWED_BACKEND_HOSTS: ReadonlySet<string>;
+	DEFAULT_PUBLIC_ERROR_MESSAGE: string;
 	FALLBACK_BACKEND_BASE_URL: string;
 	coerceWindowId(value: unknown): number | null;
 	escapeHtml(value: unknown): string;
@@ -95,6 +96,10 @@ interface StakedMediaExtensionSharedApi {
 		config: Partial<StakedMediaExtensionConfig> | null | undefined,
 		options?: StakedMediaNormalizeOptions,
 	): StakedMediaExtensionConfig;
+	sanitizeUserVisibleErrorMessage(
+		message: unknown,
+		fallbackMessage?: string,
+	): string;
 	sendRuntimeMessage<TResponse = unknown>(message: unknown): Promise<TResponse>;
 	t(key: string, locale: StakedMediaLocale): string;
 	listLanguageOptions(
@@ -139,6 +144,10 @@ interface ChromeRuntimeOnMessageLike {
 
 interface ChromeRuntimeLike {
 	lastError?: ChromeRuntimeLastError | null;
+	getManifest(): {
+		version?: string;
+		name?: string;
+	};
 	sendMessage<TResponse = unknown>(
 		message: unknown,
 		callback?: (response: TResponse) => void,

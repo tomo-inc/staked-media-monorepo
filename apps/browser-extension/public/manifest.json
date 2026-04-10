@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FoxSpark",
-  "description": "MVP browser extension for generating X/Twitter drafts through the existing Python backend.",
+  "description": "Generate persona-aware social post drafts from a loaded profile and trending events.",
   "version": "0.1.0",
   "permissions": [
     "storage",

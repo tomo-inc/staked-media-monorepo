@@ -125,6 +125,8 @@ type PanelView = "main" | "settings";
 type PanelSettingsPage = "home" | "api";
 type PanelTab = "profile" | "draft" | "trending";
 type HealthState = "loading" | "ready" | "error";
+type LoadingAction = "" | "draft" | "trending";
+type ProfileLoadingAction = "" | "load" | "ingest";
 type PanelStatusKind = "" | "warn";
 type PanelDraftLike = StakedMediaDraftRecord | string;
 
@@ -155,6 +157,7 @@ interface PanelState {
 	generated: StakedMediaDraftSource | null;
 	lastGenerateDurationMs: number | null;
 	loading: boolean;
+	loadingAction: LoadingAction;
 	composerAvailable: boolean;
 	composerMessage: string;
 	currentWindowId: number | null;
@@ -164,6 +167,7 @@ interface PanelState {
 	activeTab: PanelTab;
 	profile: PanelProfileState | null;
 	profileLoading: boolean;
+	profileLoadingAction: ProfileLoadingAction;
 	usernameError: string;
 	generationProgress: GenerationProgress | null;
 	generationProgressTimer: number | null;
@@ -186,17 +190,27 @@ interface PanelState {
 	trendingGenerated: StakedMediaDraftSource | null;
 	lastTrendingDurationMs: number | null;
 	trendingErrorHint: string;
+	hasUnreadDraftResult: boolean;
+	debugModeUnlocked: boolean;
+	debugTapCount: number;
+	debugTapStartedAt: number;
 }
 
 interface PanelUi {
 	headerTitle: HTMLElement;
+	draftTabButton: HTMLButtonElement;
 	username: HTMLInputElement;
 	idea: HTMLTextAreaElement;
 	draftCount: HTMLInputElement;
 	generateButton: HTMLButtonElement;
+	loadProfileButton: HTMLButtonElement;
+	ingestProfileButton: HTMLButtonElement;
 	openSettingsButton: HTMLButtonElement;
 	closeSettingsButton: HTMLButtonElement;
 	openApiSettingsButton: HTMLButtonElement;
+	unlockDebugButton: HTMLButtonElement;
+	settingsVersion: HTMLElement;
+	settingsVersionMode: HTMLElement;
 	toggleOpenModeButton: HTMLButtonElement;
 	statusSection: HTMLElement;
 	status: HTMLElement;
@@ -236,6 +250,7 @@ interface PanelUi {
 		extractDrafts,
 		listLanguageOptions,
 		resolveLocale,
+		sanitizeUserVisibleErrorMessage,
 		sendRuntimeMessage,
 		t,
 	} = panelWindow.StakedMediaExtensionShared;
@@ -248,6 +263,8 @@ interface PanelUi {
 	const params = new URLSearchParams(window.location.search);
 	const HOST_MODE = params.get("host") === "popup" ? "popup" : "sidepanel";
 	const systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+	const EXTENSION_VERSION = chrome.runtime.getManifest().version || "0.0.0";
+	const DEBUG_UNLOCK_TAP_WINDOW_MS = 3000;
 
 	const SETTINGS_DEFAULTS = { ...DEFAULT_CONFIG };
 	const HOT_EVENTS_CACHE_TTL_MS = 120 * 1000;
@@ -260,6 +277,7 @@ interface PanelUi {
 		generated: null,
 		lastGenerateDurationMs: null,
 		loading: false,
+		loadingAction: "",
 		composerAvailable: false,
 		composerMessage: "Open the X composer to insert drafts.",
 		currentWindowId: null,
@@ -269,6 +287,7 @@ interface PanelUi {
 		activeTab: "profile",
 		profile: null,
 		profileLoading: false,
+		profileLoadingAction: "",
 		usernameError: "",
 		generationProgress: null,
 		generationProgressTimer: null,
@@ -291,6 +310,10 @@ interface PanelUi {
 		trendingGenerated: null,
 		lastTrendingDurationMs: null,
 		trendingErrorHint: "",
+		hasUnreadDraftResult: false,
+		debugModeUnlocked: false,
+		debugTapCount: 0,
+		debugTapStartedAt: 0,
 	};
 
 	const root = document.getElementById("app") as HTMLElement;
@@ -301,6 +324,9 @@ interface PanelUi {
 		headerTitle: root.querySelector(
 			'[data-slot="header-title"]',
 		) as HTMLElement,
+		draftTabButton: root.querySelector(
+			'[data-tab-target="draft"]',
+		) as HTMLButtonElement,
 		username: root.querySelector('[data-field="username"]') as HTMLInputElement,
 		idea: root.querySelector('[data-field="idea"]') as HTMLTextAreaElement,
 		draftCount: root.querySelector(
@@ -308,6 +334,12 @@ interface PanelUi {
 		) as HTMLInputElement,
 		generateButton: root.querySelector(
 			'[data-action="generate"]',
+		) as HTMLButtonElement,
+		loadProfileButton: root.querySelector(
+			'[data-action="load-profile"]',
+		) as HTMLButtonElement,
+		ingestProfileButton: root.querySelector(
+			'[data-action="ingest-profile"]',
 		) as HTMLButtonElement,
 		openSettingsButton: root.querySelector(
 			'[data-action="open-settings"]',
@@ -318,6 +350,15 @@ interface PanelUi {
 		openApiSettingsButton: root.querySelector(
 			'[data-action="open-api-settings"]',
 		) as HTMLButtonElement,
+		unlockDebugButton: root.querySelector(
+			'[data-action="unlock-debug"]',
+		) as HTMLButtonElement,
+		settingsVersion: root.querySelector(
+			'[data-slot="settings-version"]',
+		) as HTMLElement,
+		settingsVersionMode: root.querySelector(
+			'[data-slot="settings-version-mode"]',
+		) as HTMLElement,
 		toggleOpenModeButton: root.querySelector(
 			'[data-action="toggle-open-mode"]',
 		) as HTMLButtonElement,
@@ -389,6 +430,11 @@ interface PanelUi {
 			"[data-settings-view]",
 		) as NodeListOf<HTMLElement>,
 	};
+	const hotEventTooltip = document.createElement("div");
+	hotEventTooltip.className = "smc-floating-tooltip";
+	hotEventTooltip.hidden = true;
+	document.body.appendChild(hotEventTooltip);
+	let activeTooltipTarget: HTMLElement | null = null;
 
 	applyApiModeGuard();
 
@@ -411,6 +457,10 @@ interface PanelUi {
 
 	ui.openApiSettingsButton.addEventListener("click", () => {
 		openApiSettingsPage();
+	});
+
+	ui.unlockDebugButton.addEventListener("click", () => {
+		handleDebugUnlockTap();
 	});
 
 	ui.toggleOpenModeButton.addEventListener("click", async () => {
@@ -471,6 +521,7 @@ interface PanelUi {
 		.addEventListener("click", () => {
 			STATE.generated = null;
 			STATE.lastGenerateDurationMs = null;
+			STATE.hasUnreadDraftResult = false;
 			render();
 		});
 
@@ -535,8 +586,12 @@ interface PanelUi {
 			}
 		});
 	}
+	window.addEventListener("resize", () => {
+		positionHotEventTooltip();
+	});
 
 	function switchTab(tabName: string | null): void {
+		hideHotEventTooltip();
 		let nextTab: PanelTab = "profile";
 		if (tabName === "draft") {
 			nextTab = "draft";
@@ -544,6 +599,9 @@ interface PanelUi {
 			nextTab = "trending";
 		}
 		STATE.activeTab = nextTab;
+		if (nextTab === "draft") {
+			STATE.hasUnreadDraftResult = false;
+		}
 		(
 			root.querySelectorAll(
 				"[data-tab-target]",
@@ -562,6 +620,7 @@ interface PanelUi {
 				panel.getAttribute("data-tab-panel") === nextTab,
 			);
 		});
+		renderTabNotifications();
 		if (
 			nextTab === "trending" &&
 			!STATE.hotEventsLoading &&
@@ -578,14 +637,17 @@ interface PanelUi {
 		STATE.currentView = "settings";
 		STATE.settingsPage = "home";
 		loadSettingsUI({ syncApiForm: true });
-		renderView();
+		render();
 	}
 
 	function openApiSettingsPage(): void {
+		if (!STATE.debugModeUnlocked) {
+			return;
+		}
 		STATE.currentView = "settings";
 		STATE.settingsPage = "api";
 		loadSettingsUI({ syncApiForm: true });
-		renderView();
+		render();
 	}
 
 	async function closeSettingsView(): Promise<void> {
@@ -598,11 +660,11 @@ interface PanelUi {
 				return;
 			}
 			STATE.settingsPage = "home";
-			renderView();
+			render();
 			return;
 		}
 		STATE.currentView = "main";
-		renderView();
+		render();
 	}
 
 	async function bootstrap(): Promise<void> {
@@ -616,10 +678,14 @@ interface PanelUi {
 		const configResponse = await sendRuntimeMessage<PanelConfigResponse>({
 			type: "get_config",
 		});
-		STATE.config = configResponse.config;
+		STATE.config = configResponse.config || SETTINGS_DEFAULTS;
+		await ensureReleaseBackendDefaults();
 		await enforceDraftsApiMode();
 		applyTheme(STATE.config?.theme);
 		hydrateInputs();
+		if (STATE.config?.defaultUsername) {
+			await handleLoadProfile();
+		}
 		await refreshHealth();
 		await refreshComposerState();
 		await ensureLocalTrendingCapability(true);
@@ -653,9 +719,15 @@ interface PanelUi {
 				});
 			const supported = Boolean(response?.result?.supported);
 			if (!supported) {
-				STATE.trendingErrorHint =
-					String(response?.result?.message || "").trim() ||
-					`Configured backend is outdated. Update or restart ${getConfiguredBackendBaseUrl()} with the latest code.`;
+				const capabilityMessage = String(
+					response?.result?.message || "",
+				).trim();
+				STATE.trendingErrorHint = capabilityMessage
+					? sanitizeUserVisibleErrorMessage(
+							capabilityMessage,
+							tr("error.serviceUnavailable"),
+						)
+					: `Configured backend is outdated. Update or restart ${getConfiguredBackendBaseUrl()} with the latest code.`;
 				renderTrendingResults();
 				renderSendToDraftButton();
 				return;
@@ -665,9 +737,12 @@ interface PanelUi {
 				renderTrendingResults();
 				renderSendToDraftButton();
 			}
-		} catch (_error) {
+		} catch (error) {
 			if (!STATE.trendingGenerated) {
-				STATE.trendingErrorHint = `Unable to verify backend capability. Make sure ${getConfiguredBackendBaseUrl()} is reachable.`;
+				STATE.trendingErrorHint = sanitizeUserVisibleErrorMessage(
+					(error as Error | undefined)?.message || "",
+					tr("error.serviceUnavailable"),
+				);
 				renderTrendingResults();
 				renderSendToDraftButton();
 			}
@@ -695,6 +770,60 @@ interface PanelUi {
 
 	function tr(key: string): string {
 		return t(key, getResolvedLocale());
+	}
+
+	function getVersionLabel(
+		locale: StakedMediaLocale = getResolvedLocale(),
+	): string {
+		return `${t("settings.versionLabel", locale)}: v${EXTENSION_VERSION}`;
+	}
+
+	function getDebugModeLabel(
+		locale: StakedMediaLocale = getResolvedLocale(),
+	): string {
+		return STATE.debugModeUnlocked
+			? t("settings.debugMode", locale)
+			: t("settings.productionMode", locale);
+	}
+
+	async function ensureReleaseBackendDefaults(): Promise<void> {
+		if (!STATE.config) {
+			return;
+		}
+		// Release builds always boot against the hosted Drafts API, even if an
+		// older local/debug backend setting was persisted. Debug mode only
+		// re-exposes the hidden settings UI; it does not bypass this reset.
+		const needsHostedBackend =
+			STATE.config.backendBaseUrl !== SETTINGS_DEFAULTS.backendBaseUrl ||
+			STATE.config.apiMode !== "drafts";
+		if (!needsHostedBackend) {
+			return;
+		}
+		const response = await sendRuntimeMessage<PanelConfigResponse>({
+			type: "save_config",
+			payload: {
+				backendBaseUrl: SETTINGS_DEFAULTS.backendBaseUrl,
+				apiMode: "drafts",
+			},
+		});
+		STATE.config = response.config;
+	}
+
+	function handleDebugUnlockTap(): void {
+		const now = Date.now();
+		const withinTapWindow =
+			STATE.debugTapStartedAt > 0 &&
+			now - STATE.debugTapStartedAt <= DEBUG_UNLOCK_TAP_WINDOW_MS;
+		STATE.debugTapCount = withinTapWindow ? STATE.debugTapCount + 1 : 1;
+		STATE.debugTapStartedAt = now;
+		if (STATE.debugTapCount < 5) {
+			return;
+		}
+		STATE.debugModeUnlocked = !STATE.debugModeUnlocked;
+		STATE.debugTapCount = 0;
+		STATE.debugTapStartedAt = 0;
+		loadSettingsUI({ syncApiForm: true });
+		render();
 	}
 
 	function trf(
@@ -789,6 +918,15 @@ interface PanelUi {
 				merged.hostMode,
 				getResolvedLocale(),
 			);
+		}
+		if (ui.settingsVersion) {
+			ui.settingsVersion.textContent = getVersionLabel();
+		}
+		if (ui.settingsVersionMode) {
+			ui.settingsVersionMode.textContent = getDebugModeLabel();
+		}
+		if (ui.openApiSettingsButton) {
+			ui.openApiSettingsButton.hidden = !STATE.debugModeUnlocked;
 		}
 	}
 
@@ -952,6 +1090,9 @@ interface PanelUi {
 	}
 
 	async function handleLoadProfile(): Promise<void> {
+		if (hasOperationInFlight()) {
+			return;
+		}
 		const username = ui.username.value.trim();
 		if (!username) {
 			renderStatus(tr("profile.usernameRequired"), "error");
@@ -960,6 +1101,8 @@ interface PanelUi {
 		renderUsernameError("");
 		renderStatus("", "");
 		STATE.profileLoading = true;
+		STATE.profileLoadingAction = "load";
+		renderProfileButtons();
 		renderProfileInfo();
 		try {
 			const response = await sendRuntimeMessage<PanelCheckProfileResponse>({
@@ -982,11 +1125,16 @@ interface PanelUi {
 			}
 		} finally {
 			STATE.profileLoading = false;
+			STATE.profileLoadingAction = "";
+			renderProfileButtons();
 			renderProfileInfo();
 		}
 	}
 
 	async function handleIngestProfile(): Promise<void> {
+		if (hasOperationInFlight()) {
+			return;
+		}
 		const username = ui.username.value.trim();
 		if (!username) {
 			renderStatus(tr("profile.usernameRequired"), "error");
@@ -995,6 +1143,8 @@ interface PanelUi {
 		renderUsernameError("");
 		renderStatus("", "");
 		STATE.profileLoading = true;
+		STATE.profileLoadingAction = "ingest";
+		renderProfileButtons();
 		renderProfileInfo();
 		try {
 			const response = await sendRuntimeMessage<PanelIngestProfileResponse>({
@@ -1021,6 +1171,7 @@ interface PanelUi {
 				"success",
 			);
 		} catch (error) {
+			renderView();
 			renderProfileInfo();
 			if (isWhitelistDeniedError(error)) {
 				renderUsernameError(formatRuntimeError(error));
@@ -1029,16 +1180,21 @@ interface PanelUi {
 			}
 		} finally {
 			STATE.profileLoading = false;
+			STATE.profileLoadingAction = "";
+			renderProfileButtons();
 			renderProfileInfo();
 		}
 	}
 
 	async function handleGenerate(): Promise<void> {
+		if (hasOperationInFlight()) {
+			return;
+		}
 		const username = ui.username.value.trim();
 		const idea = ui.idea.value.trim();
-		if (!username) {
+		if (!username || !STATE.profile) {
 			shakeHeaderTitle();
-			renderStatus("Username is required.", "error");
+			renderStatus("", "");
 			return;
 		}
 		if (!idea) {
@@ -1060,7 +1216,8 @@ interface PanelUi {
 		idea: string;
 		draft_count: string;
 	}): Promise<void> {
-		setLoading(true);
+		STATE.hasUnreadDraftResult = false;
+		setLoading(true, "draft");
 		const startedAt = performance.now();
 		try {
 			const response = await sendRuntimeMessage<PanelGenerateResponse>({
@@ -1074,6 +1231,7 @@ interface PanelUi {
 				STATE.lastGenerateDurationMs != null
 					? ` in ${STATE.lastGenerateDurationMs} ms`
 					: "";
+			STATE.hasUnreadDraftResult = STATE.activeTab !== "draft";
 			renderStatus(
 				`Generated ${draftCount} draft${draftCount === 1 ? "" : "s"}${durationLabel}.`,
 				"success",
@@ -1174,10 +1332,69 @@ interface PanelUi {
 		}
 	}
 
+	function showHotEventTooltip(target: HTMLElement, text: string): void {
+		const nextText = String(text || "").trim();
+		if (!nextText) {
+			hideHotEventTooltip();
+			return;
+		}
+		activeTooltipTarget = target;
+		hotEventTooltip.textContent = nextText;
+		hotEventTooltip.hidden = false;
+		hotEventTooltip.setAttribute("data-visible", "true");
+		positionHotEventTooltip();
+	}
+
+	function hideHotEventTooltip(): void {
+		activeTooltipTarget = null;
+		hotEventTooltip.hidden = true;
+		hotEventTooltip.textContent = "";
+		hotEventTooltip.removeAttribute("data-visible");
+		hotEventTooltip.style.removeProperty("left");
+		hotEventTooltip.style.removeProperty("top");
+		hotEventTooltip.style.removeProperty("--smc-tooltip-arrow-left");
+	}
+
+	function positionHotEventTooltip(): void {
+		if (!activeTooltipTarget || hotEventTooltip.hidden) {
+			return;
+		}
+		const targetRect = activeTooltipTarget.getBoundingClientRect();
+		if (targetRect.width <= 0 || targetRect.height <= 0) {
+			hideHotEventTooltip();
+			return;
+		}
+		const margin = 8;
+		hotEventTooltip.style.left = "0px";
+		hotEventTooltip.style.top = "0px";
+		const tooltipWidth = hotEventTooltip.offsetWidth;
+		const tooltipHeight = hotEventTooltip.offsetHeight;
+		const maxLeft = Math.max(margin, window.innerWidth - tooltipWidth - margin);
+		const left = Math.min(
+			Math.max(targetRect.right - tooltipWidth, margin),
+			maxLeft,
+		);
+		const top = Math.min(
+			targetRect.bottom + 8,
+			Math.max(margin, window.innerHeight - tooltipHeight - margin),
+		);
+		const arrowLeft = Math.min(
+			Math.max(targetRect.right - left - 12, 12),
+			Math.max(12, tooltipWidth - 12),
+		);
+		hotEventTooltip.style.left = `${Math.round(left)}px`;
+		hotEventTooltip.style.top = `${Math.round(top)}px`;
+		hotEventTooltip.style.setProperty(
+			"--smc-tooltip-arrow-left",
+			`${Math.round(arrowLeft)}px`,
+		);
+	}
+
 	function renderHotEvents(preserveScroll = false): void {
 		if (!ui.hotEvents || !ui.hotEventsMeta) {
 			return;
 		}
+		hideHotEventTooltip();
 		const previousHotEventsList = ui.hotEvents.querySelector(
 			'[data-slot="hot-events-list"]',
 		) as HTMLElement | null;
@@ -1243,13 +1460,17 @@ interface PanelUi {
 							const heatScore = Number.isFinite(Number(event.heat_score))
 								? Number(event.heat_score).toFixed(1)
 								: "0.0";
+							const showingOriginal = isShowingOriginalHotEvent(eventId);
 							const translationToggleTitle = event.is_translated
 								? escapeHtml(
-										isShowingOriginalHotEvent(eventId)
-											? tr("action.showTranslationEvent")
-											: tr("action.showOriginalEvent"),
+										showingOriginal
+											? tr("action.showTranslation")
+											: tr("action.showOriginal"),
 									)
 								: "";
+							const translationToggleClass = showingOriginal
+								? "smc-hot-translate-button-original"
+								: "smc-hot-translate-button-translated";
 							const summaryToggleLabel = summaryState.truncated
 								? escapeHtml(
 										summaryState.expanded
@@ -1269,7 +1490,7 @@ interface PanelUi {
                     <span class="smc-hot-event-score">${heatScore}</span>
                     ${
 											event.is_translated
-												? `<button class="smc-hot-translate-button ${isShowingOriginalHotEvent(eventId) ? "smc-hot-translate-button-muted" : ""}" data-action="toggle-hot-event-original" data-hot-event-id="${escapeHtml(eventId)}" type="button" title="${translationToggleTitle}" aria-label="${translationToggleTitle}" aria-pressed="${isShowingOriginalHotEvent(eventId) ? "true" : "false"}">
+												? `<button class="smc-hot-translate-button ${translationToggleClass}" data-action="toggle-hot-event-original" data-hot-event-id="${escapeHtml(eventId)}" data-tooltip-label="${translationToggleTitle}" type="button" aria-label="${translationToggleTitle}" aria-pressed="${showingOriginal ? "true" : "false"}">
                         <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
                           <path d="M3.5 3.5h5m-2.5 0c0 4-1.3 6.5-3.2 8m3.2-8c.8 1.7 2 3.3 3.6 4.8m-5.5 1.2h5.8m2.2 0 1.2 3m-1.2-3-1.2-3-1.2 3m2.4 0h-2.4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2"/>
                         </svg>
@@ -1313,6 +1534,7 @@ interface PanelUi {
 			}
 			STATE.selectedHotEventId =
 				STATE.selectedHotEventId === normalizedEventId ? "" : normalizedEventId;
+			STATE.trendingErrorHint = "";
 			renderHotEvents(true);
 			renderSelectedHotEventInfo();
 			renderSendToDraftButton();
@@ -1324,9 +1546,29 @@ interface PanelUi {
 		).forEach((button) => {
 			button.addEventListener("pointerdown", (pointerEvent) => {
 				pointerEvent.stopPropagation();
+				hideHotEventTooltip();
+			});
+			button.addEventListener("mouseenter", () => {
+				showHotEventTooltip(
+					button,
+					String(button.getAttribute("data-tooltip-label") || ""),
+				);
+			});
+			button.addEventListener("mouseleave", () => {
+				hideHotEventTooltip();
+			});
+			button.addEventListener("focus", () => {
+				showHotEventTooltip(
+					button,
+					String(button.getAttribute("data-tooltip-label") || ""),
+				);
+			});
+			button.addEventListener("blur", () => {
+				hideHotEventTooltip();
 			});
 			button.addEventListener("click", (clickEvent) => {
 				clickEvent.stopPropagation();
+				hideHotEventTooltip();
 				const eventId = String(button.getAttribute("data-hot-event-id") || "");
 				if (!eventId) {
 					return;
@@ -1394,6 +1636,12 @@ interface PanelUi {
 				nextHotEventsList.scrollTop = preservedScrollTop;
 			}
 		}
+		const currentHotEventsList = ui.hotEvents.querySelector(
+			'[data-slot="hot-events-list"]',
+		) as HTMLElement | null;
+		currentHotEventsList?.addEventListener("scroll", () => {
+			hideHotEventTooltip();
+		});
 	}
 
 	function renderHotWarnings(): string {
@@ -1401,7 +1649,10 @@ interface PanelUi {
 			return "";
 		}
 		const body = STATE.hotEventsWarnings
-			.filter((item) => item)
+			.filter(
+				(item) =>
+					item && !/^opentwitter unavailable:/i.test(String(item || "").trim()),
+			)
 			.map((item) => escapeHtml(item))
 			.join(" | ");
 		if (!body) {
@@ -1609,17 +1860,23 @@ interface PanelUi {
 	}
 
 	async function handleTrendingGenerate(): Promise<void> {
+		if (hasOperationInFlight()) {
+			return;
+		}
 		const username = ui.username.value.trim();
-		if (!username) {
+		if (!username || !STATE.profile) {
 			shakeHeaderTitle();
-			renderStatus("Username is required.", "error");
+			renderStatus("", "");
 			return;
 		}
 		const selectedEvent = STATE.hotEvents.find(
 			(item) => getHotEventId(item) === STATE.selectedHotEventId,
 		);
 		if (!selectedEvent) {
-			renderStatus("Select a hot event first.", "error");
+			STATE.trendingErrorHint = tr("hint.selectHotEventBeforeGenerate");
+			renderStatus("", "");
+			renderSendToDraftButton();
+			shakeTrendingHint();
 			return;
 		}
 		const payload = {
@@ -1641,7 +1898,7 @@ interface PanelUi {
 		comment: string;
 		draft_count: string;
 	}): Promise<void> {
-		setLoading(true);
+		setLoading(true, "trending");
 		const startedAt = performance.now();
 		STATE.trendingErrorHint = "";
 		try {
@@ -1687,6 +1944,13 @@ interface PanelUi {
 	}
 
 	function handleSendToDraft(): void {
+		if (!getSelectedHotEventRecord()) {
+			STATE.trendingErrorHint = tr("hint.selectHotEventBeforeGenerate");
+			renderStatus("", "");
+			renderSendToDraftButton();
+			shakeTrendingHint();
+			return;
+		}
 		const draftIdea = getCurrentTrendingConclusion();
 		if (!draftIdea) {
 			renderStatus("No trending content available to send.", "error");
@@ -1782,7 +2046,10 @@ interface PanelUi {
 
 	function render(): void {
 		applyLocalizedContent();
+		renderSettingsControls();
 		renderView();
+		renderTabNotifications();
+		renderProfileButtons();
 		renderGenerateButton();
 		renderConnectionDot();
 		renderUsernameError(STATE.usernameError);
@@ -1795,9 +2062,34 @@ interface PanelUi {
 		renderComposerState();
 	}
 
+	function renderSettingsControls(): void {
+		if (ui.settingsVersion) {
+			ui.settingsVersion.textContent = getVersionLabel();
+		}
+		if (ui.settingsVersionMode) {
+			ui.settingsVersionMode.textContent = getDebugModeLabel();
+		}
+		if (ui.openApiSettingsButton) {
+			ui.openApiSettingsButton.hidden = !STATE.debugModeUnlocked;
+		}
+	}
+
+	function renderTabNotifications(): void {
+		if (!ui.draftTabButton) {
+			return;
+		}
+		ui.draftTabButton.setAttribute(
+			"data-has-notification",
+			STATE.hasUnreadDraftResult ? "true" : "false",
+		);
+	}
+
 	function renderView(): void {
 		const locale = getResolvedLocale();
 		const isSettingsView = STATE.currentView === "settings";
+		if (STATE.settingsPage === "api" && !STATE.debugModeUnlocked) {
+			STATE.settingsPage = "home";
+		}
 		ui.views.forEach((view) => {
 			view.classList.toggle(
 				"smc-view-active",
@@ -1814,13 +2106,17 @@ interface PanelUi {
 			if (!isSettingsView) {
 				if (STATE.profile?.username) {
 					ui.headerTitle.textContent = `@${STATE.profile.username}`;
+					ui.headerTitle.classList.remove("smc-title-attention");
 				} else {
-					ui.headerTitle.textContent = t("app.titleNoProfile", locale);
+					ui.headerTitle.textContent = `* ${t("app.titleNoProfile", locale)}`;
+					ui.headerTitle.classList.add("smc-title-attention");
 				}
-			} else if (STATE.settingsPage === "api") {
+			} else if (STATE.settingsPage === "api" && STATE.debugModeUnlocked) {
 				ui.headerTitle.textContent = t("settings.apiPageTitle", locale);
+				ui.headerTitle.classList.remove("smc-title-attention");
 			} else {
-				ui.headerTitle.textContent = t("settings.title", locale);
+				ui.headerTitle.textContent = t("app.title", locale);
+				ui.headerTitle.classList.remove("smc-title-attention");
 			}
 		}
 		if (ui.openSettingsButton) {
@@ -1862,19 +2158,67 @@ interface PanelUi {
 		return STATE.config?.hostMode === "popup" ? "sidepanel" : "popup";
 	}
 
+	function hasOperationInFlight(): boolean {
+		return STATE.loading || STATE.profileLoading;
+	}
+
+	function getLoadingIndicatorDots(): string {
+		if (!STATE.generationStartedAt) {
+			return ".";
+		}
+		const elapsedMs = Date.now() - STATE.generationStartedAt;
+		const frame = Math.floor(elapsedMs / 400) % 3;
+		return ".".repeat(frame + 1);
+	}
+
+	function getThinkingLabel(): string {
+		return `${tr("action.generating")}${getLoadingIndicatorDots()}`;
+	}
+
+	function renderProfileButtons(): void {
+		const operationBusy = hasOperationInFlight();
+		const buttons = [
+			{
+				element: ui.loadProfileButton,
+				busy: STATE.profileLoading && STATE.profileLoadingAction === "load",
+				label: tr("action.load"),
+			},
+			{
+				element: ui.ingestProfileButton,
+				busy: STATE.profileLoading && STATE.profileLoadingAction === "ingest",
+				label: tr("action.ingest"),
+			},
+		];
+
+		buttons.forEach(({ element, busy, label }) => {
+			if (!element) {
+				return;
+			}
+			element.disabled = operationBusy;
+			element.classList.toggle("smc-button-loading", busy);
+			element.setAttribute("aria-busy", busy ? "true" : "false");
+			element.innerHTML = busy
+				? `<span class="smc-button-content"><span class="smc-button-spinner" aria-hidden="true"></span><span>${escapeHtml(
+						label,
+					)}</span></span>`
+				: escapeHtml(label);
+		});
+	}
+
 	function renderGenerateButton(): void {
 		if (!ui.generateButton) {
 			return;
 		}
-		ui.generateButton.classList.toggle("smc-button-loading", STATE.loading);
+		const operationBusy = hasOperationInFlight();
+		const isDraftLoading = STATE.loading;
+		ui.generateButton.disabled = operationBusy;
+		ui.generateButton.classList.toggle("smc-button-loading", isDraftLoading);
 		ui.generateButton.setAttribute(
 			"aria-busy",
-			STATE.loading ? "true" : "false",
+			isDraftLoading ? "true" : "false",
 		);
-		ui.generateButton.innerHTML = STATE.loading
-			? `<span class="smc-button-content"><span class="smc-button-spinner" aria-hidden="true"></span><span>${escapeHtml(
-					tr("action.generating"),
-				)}</span></span>`
+		ui.generateButton.innerHTML = isDraftLoading
+			? `<span class="smc-button-content"><span>${escapeHtml(getThinkingLabel())}</span></span>`
 			: tr("action.generate");
 	}
 
@@ -1893,13 +2237,21 @@ interface PanelUi {
 	}
 
 	function shakeHeaderTitle(): void {
-		if (!ui.headerTitle) return;
-		ui.headerTitle.classList.remove("smc-shake");
-		void ui.headerTitle.offsetWidth;
-		ui.headerTitle.classList.add("smc-shake");
-		ui.headerTitle.addEventListener(
+		shakeElement(ui.headerTitle);
+	}
+
+	function shakeTrendingHint(): void {
+		shakeElement(ui.sendToDraftHint);
+	}
+
+	function shakeElement(element: HTMLElement | null | undefined): void {
+		if (!element) return;
+		element.classList.remove("smc-shake");
+		void element.offsetWidth;
+		element.classList.add("smc-shake");
+		element.addEventListener(
 			"animationend",
-			() => ui.headerTitle.classList.remove("smc-shake"),
+			() => element.classList.remove("smc-shake"),
 			{ once: true },
 		);
 	}
@@ -2022,25 +2374,58 @@ interface PanelUi {
 	}
 
 	function renderSendToDraftButton(): void {
-		if (!ui.sendToDraftButton) {
+		if (!ui.sendToDraftButton || !ui.generateTrendingButton) {
 			return;
 		}
+		const operationBusy = hasOperationInFlight();
+		const selectedEvent = getSelectedHotEventRecord();
+		const hasSelectedEvent = Boolean(selectedEvent);
+		const isTrendingLoading = STATE.loading;
 		const generatedConclusion = getGeneratedTrendingConclusion();
 		const sendableDraftIdea = getCurrentTrendingConclusion();
 		const hasDraftIdea = Boolean(sendableDraftIdea);
-		ui.sendToDraftButton.disabled = !hasDraftIdea || STATE.loading;
+		ui.generateTrendingButton.disabled = operationBusy;
+		ui.sendToDraftButton.disabled =
+			operationBusy || (hasSelectedEvent && !hasDraftIdea);
+		ui.generateTrendingButton.classList.toggle(
+			"smc-button-loading",
+			isTrendingLoading,
+		);
+		ui.generateTrendingButton.classList.toggle(
+			"smc-button-guarded",
+			!hasSelectedEvent && !operationBusy,
+		);
+		ui.sendToDraftButton.classList.toggle(
+			"smc-button-guarded",
+			!hasSelectedEvent && !operationBusy,
+		);
+		ui.generateTrendingButton.setAttribute(
+			"aria-disabled",
+			!hasSelectedEvent && !operationBusy ? "true" : "false",
+		);
+		ui.sendToDraftButton.setAttribute(
+			"aria-disabled",
+			!hasSelectedEvent && !operationBusy ? "true" : "false",
+		);
+		ui.generateTrendingButton.setAttribute(
+			"aria-busy",
+			isTrendingLoading ? "true" : "false",
+		);
+		ui.generateTrendingButton.innerHTML = isTrendingLoading
+			? `<span class="smc-button-content"><span>${escapeHtml(getThinkingLabel())}</span></span>`
+			: tr("action.generate");
 		if (!ui.sendToDraftHint) {
 			return;
 		}
 		let hint = "";
-		if (STATE.loading) {
+		if (isTrendingLoading) {
 			hint = "Generating trending result...";
-		} else if (!hasDraftIdea) {
+		} else if (!hasSelectedEvent) {
 			hint =
 				String(STATE.trendingErrorHint || "").trim() ||
-				"Select a hot event first, then add your take or generate trending.";
+				tr("hint.selectHotEventBeforeGenerate");
 		} else if (!generatedConclusion) {
-			hint = "Will send event focus + your take to Draft.";
+			hint = tr("hint.sendSelectedEventToDraft");
 		}
 		ui.sendToDraftHint.textContent = hint;
 		ui.sendToDraftHint.hidden = !hint;
@@ -2165,25 +2550,17 @@ interface PanelUi {
 		return String(draft.text || "");
 	}
 
-	function setLoading(nextLoading: boolean): void {
+	function setLoading(nextLoading: boolean, action: LoadingAction = ""): void {
 		STATE.loading = nextLoading;
+		STATE.loadingAction = nextLoading ? action : "";
 		if (nextLoading) {
 			startGenerationProgress();
 		} else {
 			stopGenerationProgress();
 		}
-		(root.querySelectorAll("button") as NodeListOf<HTMLButtonElement>).forEach(
-			(button) => {
-				if (
-					button.hasAttribute("data-copy-index") ||
-					button.hasAttribute("data-insert-index")
-				) {
-					return;
-				}
-				button.disabled = nextLoading;
-			},
-		);
+		renderProfileButtons();
 		renderGenerateButton();
+		renderSendToDraftButton();
 	}
 
 	function startGenerationProgress(): void {
@@ -2205,6 +2582,8 @@ interface PanelUi {
 				nextPercent === STATE.generationProgress?.percent &&
 				nextMessage === STATE.generationProgress?.message
 			) {
+				renderGenerateButton();
+				renderSendToDraftButton();
 				return;
 			}
 			STATE.generationProgress = {
@@ -2212,6 +2591,8 @@ interface PanelUi {
 				message: nextMessage,
 			};
 			renderGenerationProgress();
+			renderGenerateButton();
+			renderSendToDraftButton();
 		}, 120);
 	}
 
@@ -2347,8 +2728,9 @@ interface PanelUi {
 	}
 
 	function formatRuntimeError(error: unknown): string {
-		return String(
-			(error as Error | undefined)?.message || error || "Unknown error",
+		return sanitizeUserVisibleErrorMessage(
+			(error as Error | undefined)?.message || error || "",
+			tr("error.serviceUnavailable"),
 		);
 	}
 

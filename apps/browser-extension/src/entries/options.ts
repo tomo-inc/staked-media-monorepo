@@ -2,6 +2,7 @@ const {
 	DEFAULT_CONFIG: OPTIONS_DEFAULT_CONFIG,
 	listLanguageOptions,
 	resolveLocale,
+	sanitizeUserVisibleErrorMessage,
 	sendRuntimeMessage,
 	t,
 } = window.StakedMediaExtensionShared;
@@ -19,6 +20,9 @@ interface OptionsFields {
 	homePage: HTMLElement;
 	apiPage: HTMLElement;
 	openApiSettingsButton: HTMLButtonElement;
+	versionButton: HTMLButtonElement;
+	versionLabel: HTMLElement;
+	versionMode: HTMLElement;
 	backendBaseUrl: HTMLInputElement;
 	apiModeDrafts: HTMLInputElement;
 	apiModeContent: HTMLInputElement;
@@ -32,14 +36,22 @@ interface OptionsFields {
 interface OptionsState {
 	config: StakedMediaExtensionConfig | null;
 	page: OptionsPage;
+	debugModeUnlocked: boolean;
+	debugTapCount: number;
+	debugTapStartedAt: number;
 }
 
 const DEFAULTS = { ...OPTIONS_DEFAULT_CONFIG };
 const systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+const EXTENSION_VERSION = chrome.runtime.getManifest().version || "0.0.0";
+const DEBUG_UNLOCK_TAP_WINDOW_MS = 3000;
 
 const state: OptionsState = {
 	config: null,
 	page: "home",
+	debugModeUnlocked: false,
+	debugTapCount: 0,
+	debugTapStartedAt: 0,
 };
 
 const fields: OptionsFields = {
@@ -50,6 +62,9 @@ const fields: OptionsFields = {
 	openApiSettingsButton: document.getElementById(
 		"openApiSettingsButton",
 	) as HTMLButtonElement,
+	versionButton: document.getElementById("versionButton") as HTMLButtonElement,
+	versionLabel: document.getElementById("versionLabel") as HTMLElement,
+	versionMode: document.getElementById("versionMode") as HTMLElement,
 	backendBaseUrl: document.getElementById("backendBaseUrl") as HTMLInputElement,
 	apiModeDrafts: document.getElementById("apiModeDrafts") as HTMLInputElement,
 	apiModeContent: document.getElementById("apiModeContent") as HTMLInputElement,
@@ -73,8 +88,15 @@ fields.backButton.addEventListener("click", async () => {
 });
 
 fields.openApiSettingsButton.addEventListener("click", () => {
+	if (!state.debugModeUnlocked) {
+		return;
+	}
 	state.page = "api";
 	renderPage();
+});
+
+fields.versionButton.addEventListener("click", () => {
+	handleDebugUnlockTap();
 });
 
 fields.toggleOpenModeButton.addEventListener("click", async () => {
@@ -126,6 +148,7 @@ async function init() {
 		type: "get_config",
 	});
 	state.config = response.config || DEFAULTS;
+	await ensureReleaseBackendDefaults();
 	await enforceDraftsApiMode();
 	applyConfig(state.config, { syncApiForm: true });
 	renderPage();
@@ -143,9 +166,63 @@ function tr(key: string): string {
 	return t(key, getResolvedLocale());
 }
 
+function getVersionLabel(
+	locale: StakedMediaLocale = getResolvedLocale(),
+): string {
+	return `${t("settings.versionLabel", locale)}: v${EXTENSION_VERSION}`;
+}
+
+function getDebugModeLabel(
+	locale: StakedMediaLocale = getResolvedLocale(),
+): string {
+	return state.debugModeUnlocked
+		? t("settings.debugMode", locale)
+		: t("settings.productionMode", locale);
+}
+
 function applyApiModeGuard(): void {
 	fields.backendBaseUrl.readOnly = false;
 	fields.apiModeContent.disabled = true;
+}
+
+async function ensureReleaseBackendDefaults(): Promise<void> {
+	if (!state.config) {
+		return;
+	}
+	// Release builds always boot against the hosted Drafts API, even if an older
+	// local/debug backend setting was persisted. Debug mode only re-exposes the
+	// hidden settings UI; it does not bypass this production default reset.
+	const needsHostedBackend =
+		state.config.backendBaseUrl !== DEFAULTS.backendBaseUrl ||
+		state.config.apiMode !== "drafts";
+	if (!needsHostedBackend) {
+		return;
+	}
+	const response = await sendRuntimeMessage<OptionsConfigResponse>({
+		type: "save_config",
+		payload: {
+			backendBaseUrl: DEFAULTS.backendBaseUrl,
+			apiMode: "drafts",
+		},
+	});
+	state.config = response.config || DEFAULTS;
+}
+
+function handleDebugUnlockTap(): void {
+	const now = Date.now();
+	const withinTapWindow =
+		state.debugTapStartedAt > 0 &&
+		now - state.debugTapStartedAt <= DEBUG_UNLOCK_TAP_WINDOW_MS;
+	state.debugTapCount = withinTapWindow ? state.debugTapCount + 1 : 1;
+	state.debugTapStartedAt = now;
+	if (state.debugTapCount < 5) {
+		return;
+	}
+	state.debugModeUnlocked = !state.debugModeUnlocked;
+	state.debugTapCount = 0;
+	state.debugTapStartedAt = 0;
+	applyConfig(state.config || DEFAULTS, { syncApiForm: true });
+	renderPage();
 }
 
 async function enforceDraftsApiMode(): Promise<void> {
@@ -185,6 +262,9 @@ function applyConfig(
 	fields.theme.value = next.theme || "light";
 	fields.language.value = next.language || "auto";
 	applyLocalizedContent();
+	fields.versionLabel.textContent = getVersionLabel();
+	fields.versionMode.textContent = getDebugModeLabel();
+	fields.openApiSettingsButton.hidden = !state.debugModeUnlocked;
 	fields.hostModeTitle.textContent = getOpenModeToggleLabel(
 		next.hostMode,
 		getResolvedLocale(),
@@ -232,6 +312,9 @@ function applyLocalizedContent(): void {
 }
 
 function renderPage(): void {
+	if (state.page === "api" && !state.debugModeUnlocked) {
+		state.page = "home";
+	}
 	const isApiPage = state.page === "api";
 	fields.homePage.hidden = isApiPage;
 	fields.apiPage.hidden = !isApiPage;
@@ -242,7 +325,7 @@ function renderPage(): void {
 	);
 	fields.headerTitle.textContent = isApiPage
 		? tr("settings.apiPageTitle")
-		: tr("settings.title");
+		: tr("app.title");
 }
 
 async function closeCurrentPage(): Promise<void> {
@@ -379,7 +462,8 @@ function setStatus(message: unknown, kind: StatusKind): void {
 }
 
 function formatRuntimeError(error: unknown): string {
-	return String(
-		(error as Error | undefined)?.message || error || "Unknown error",
+	return sanitizeUserVisibleErrorMessage(
+		(error as Error | undefined)?.message || error || "",
+		tr("error.serviceUnavailable"),
 	);
 }

@@ -122,6 +122,8 @@ body {
 }
 
 .smc-panel {
+	display: flex;
+	flex-direction: column;
 	min-height: 100vh;
 	padding: 0;
 	background: var(--smc-card);
@@ -144,6 +146,10 @@ body {
 	font-size: 18px;
 	font-weight: 700;
 	color: var(--smc-ink);
+}
+
+.smc-title-attention {
+	color: var(--smc-error);
 }
 
 .smc-header-right {
@@ -258,6 +264,10 @@ body {
 }
 
 .smc-tab {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	padding: 10px 16px;
 	font-size: 13px;
 	font-weight: 600;
@@ -270,6 +280,18 @@ body {
 	transition:
 		color 0.15s,
 		border-color 0.15s;
+}
+
+.smc-tab[data-has-notification="true"]::after {
+	content: "";
+	position: absolute;
+	top: 9px;
+	right: 7px;
+	width: 7px;
+	height: 7px;
+	border-radius: 999px;
+	background: var(--smc-primary);
+	box-shadow: 0 0 0 2px var(--smc-card);
 }
 
 .smc-tab:hover {
@@ -290,6 +312,16 @@ body {
 
 .smc-view-active {
 	display: block;
+}
+
+.smc-settings-view.smc-view-active {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+}
+
+.smc-settings-body {
+	flex: 1;
 }
 
 .smc-tab-panel {
@@ -448,6 +480,10 @@ body {
 		var(--smc-menu-shadow);
 }
 
+.smc-settings-item[hidden] {
+	display: none;
+}
+
 .smc-settings-item-main {
 	min-width: 0;
 	flex: 1;
@@ -544,11 +580,61 @@ body {
 	padding: 10px 4px 10px 2px;
 }
 
+.smc-settings-footer-section {
+	margin-top: auto;
+	padding-top: 12px;
+	padding-bottom: 20px;
+	display: flex;
+	justify-content: center;
+	border-top: 1px solid var(--smc-line);
+}
+
+.smc-settings-version-button {
+	display: inline-flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: var(--smc-muted);
+	font: inherit;
+	cursor: pointer;
+	transition: color 0.15s ease;
+}
+
+.smc-settings-version-button:hover {
+	color: var(--smc-muted-strong);
+}
+
+.smc-settings-version-button:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px var(--smc-focus-ring);
+	border-radius: 6px;
+}
+
+.smc-settings-version-label {
+	font-size: 12px;
+	font-weight: 400;
+	letter-spacing: 0.01em;
+}
+
+.smc-settings-version-mode {
+	font-size: 12px;
+	font-weight: 400;
+	color: var(--smc-muted-strong);
+}
+
 /* Sections */
 
 .smc-section {
 	padding: 16px 20px;
 	border-bottom: 1px solid var(--smc-line);
+}
+
+.smc-section-trending-feed {
+	padding-left: 12px;
+	padding-right: 12px;
 }
 
 .smc-section:last-child {
@@ -649,6 +735,10 @@ body {
 	resize: vertical;
 }
 
+.smc-textarea-compact {
+	min-height: 56px;
+}
+
 /* Buttons */
 
 .smc-button-row {
@@ -680,6 +770,11 @@ body {
 
 .smc-button-primary:hover:not(:disabled) {
 	background: var(--smc-primary-hover);
+}
+
+.smc-button.smc-button-guarded {
+	opacity: 0.55;
+	cursor: not-allowed;
 }
 
 .smc-button-loading:disabled {
@@ -1020,7 +1115,10 @@ body {
 .smc-hot-list {
 	display: grid;
 	gap: 10px;
+	width: 100%;
+	min-width: 0;
 	max-height: min(50vh, 420px);
+	overflow-x: hidden;
 	overflow-y: auto;
 	padding-right: 4px;
 	scrollbar-width: thin;
@@ -1029,10 +1127,13 @@ body {
 
 .smc-hot-list-frame {
 	margin-top: 8px;
+	width: 100%;
+	min-width: 0;
 	padding: 10px;
 	border: 1px solid var(--smc-line-soft);
 	border-radius: 12px;
 	background: var(--smc-surface);
+	overflow-x: hidden;
 }
 
 .smc-hot-list::-webkit-scrollbar {
@@ -1052,9 +1153,12 @@ body {
 	border: 1px solid var(--smc-line-soft);
 	border-radius: 10px;
 	padding: 12px;
+	width: 100%;
+	min-width: 0;
 	background: var(--smc-card-alt);
 	display: flex;
 	flex-direction: column;
+	overflow: hidden;
 	cursor: pointer;
 	transition:
 		border-color 0.15s,
@@ -1077,6 +1181,7 @@ body {
 	align-items: flex-start;
 	justify-content: space-between;
 	gap: 12px;
+	min-width: 0;
 	margin-bottom: 8px;
 }
 
@@ -1104,8 +1209,13 @@ body {
 
 .smc-hot-event-meta {
 	flex: 1;
+	min-width: 0;
+	display: block;
 	font-size: 12px;
 	color: var(--smc-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .smc-hot-event-type {
@@ -1144,6 +1254,7 @@ body {
 }
 
 .smc-hot-translate-button {
+	position: relative;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -1160,18 +1271,72 @@ body {
 		background 0.15s;
 }
 
-.smc-hot-translate-button:hover {
-	border-color: var(--smc-primary);
-	background: var(--smc-primary-soft);
-}
-
 .smc-hot-translate-button svg {
 	width: 14px;
 	height: 14px;
 }
 
-.smc-hot-translate-button-muted {
-	color: var(--smc-muted);
+.smc-hot-translate-button-original {
+	border-color: color-mix(in srgb, var(--smc-primary) 30%, transparent);
+	background: var(--smc-card);
+	color: var(--smc-primary);
+}
+
+.smc-hot-translate-button-original:hover,
+.smc-hot-translate-button-original:focus-visible {
+	border-color: var(--smc-primary);
+	background: var(--smc-primary-soft);
+}
+
+.smc-hot-translate-button-translated {
+	border-color: var(--smc-primary);
+	background: var(--smc-primary);
+	color: #111827;
+}
+
+.smc-hot-translate-button-translated:hover,
+.smc-hot-translate-button-translated:focus-visible {
+	background: var(--smc-primary-hover);
+	color: #111827;
+}
+
+.smc-floating-tooltip {
+	position: fixed;
+	left: 0;
+	top: 0;
+	max-width: min(220px, calc(100vw - 16px));
+	padding: 6px 10px;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--smc-ink) 92%, transparent);
+	color: var(--smc-card);
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1.2;
+	white-space: nowrap;
+	pointer-events: none;
+	opacity: 0;
+	transform: translateY(-4px);
+	transition:
+		opacity 0.15s,
+		transform 0.15s;
+	box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
+	z-index: 2000;
+}
+
+.smc-floating-tooltip::before {
+	content: "";
+	position: absolute;
+	left: var(--smc-tooltip-arrow-left, 16px);
+	top: -4px;
+	width: 8px;
+	height: 8px;
+	background: color-mix(in srgb, var(--smc-ink) 92%, transparent);
+	transform: rotate(45deg);
+}
+
+.smc-floating-tooltip[data-visible="true"] {
+	opacity: 1;
+	transform: translateY(0);
 }
 
 .smc-hot-event-title {
@@ -1179,6 +1344,8 @@ body {
 	font-size: 14px;
 	line-height: 1.45;
 	color: var(--smc-ink);
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .smc-hot-event-summary {
@@ -1186,6 +1353,8 @@ body {
 	font-size: 12px;
 	line-height: 1.5;
 	color: var(--smc-muted);
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .smc-hot-summary-toggle {
@@ -1299,6 +1468,11 @@ body {
 
 	.smc-hot-list-frame {
 		padding: 8px;
+	}
+
+	.smc-section-trending-feed {
+		padding-left: 8px;
+		padding-right: 8px;
 	}
 }
 

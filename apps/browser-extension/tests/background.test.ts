@@ -269,6 +269,23 @@ function createJsonResponse(
 	};
 }
 
+function createTextResponse(
+	status: number,
+	body: string,
+): {
+	ok: boolean;
+	status: number;
+	text(): Promise<string>;
+} {
+	return {
+		ok: status >= 200 && status < 300,
+		status,
+		async text() {
+			return body;
+		},
+	};
+}
+
 test("background save_config updates host mode and popup behavior", async () => {
 	const harness = createBackgroundHarness();
 	await flushTasks();
@@ -463,6 +480,60 @@ test("background check_profile converts api 403 into username-specific whitelist
 		response.error.message,
 		"User @alice is not allowed. Please contact the administrator.",
 	);
+});
+
+test("background generate redacts html error pages into the shared public error message", async () => {
+	const harness = createBackgroundHarness({
+		fetch: async () =>
+			createTextResponse(
+				524,
+				"<!DOCTYPE html><html><head><title>sayviner.top | 524: A timeout occurred</title></head><body>A timeout occurred</body></html>",
+			),
+	});
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: false;
+		error: { status: number; message: string; payload?: unknown };
+	}>(harness.listeners.onMessage, {
+		type: "generate",
+		payload: { username: "alice", idea: "btc", draft_count: 2 },
+	});
+
+	assert.equal(response.ok, false);
+	assert.equal(response.error.status, 524);
+	assert.equal(response.error.message, shared.DEFAULT_PUBLIC_ERROR_MESSAGE);
+	assert.equal(response.error.payload, undefined);
+});
+
+test("background check_profile persists the loaded username", async () => {
+	const harness = createBackgroundHarness({
+		fetch: async () =>
+			createJsonResponse(200, {
+				profile: { username: "alice", followers_count: 12 },
+				stored_tweet_count: 34,
+				latest_persona_snapshot: { persona: { author_summary: "summary" } },
+			}),
+	});
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		profile: {
+			exists: boolean;
+			username: string;
+			storedTweetCount: number;
+			personaReady: boolean;
+		};
+	}>(harness.listeners.onMessage, {
+		type: "check_profile",
+		payload: { username: "alice" },
+	});
+
+	assert.equal(response.ok, true);
+	assert.equal(response.profile.exists, true);
+	assert.equal(response.profile.username, "alice");
+	assert.equal(harness.storage.defaultUsername, "alice");
 });
 
 test("background ingest_profile converts api 403 into username-specific whitelist message", async () => {
@@ -788,7 +859,7 @@ test("background trending_generate rebuilds persona on configured backend and re
 	assert.equal(harness.storage.defaultUsername, "lin");
 });
 
-test("background trending_generate surfaces rebuild error when configured backend persona recovery fails", async () => {
+test("background trending_generate redacts persona recovery failures into the shared public error message", async () => {
 	let trendingAttempts = 0;
 	let rebuildAttempts = 0;
 	const harness = createBackgroundHarness({
@@ -823,7 +894,12 @@ test("background trending_generate surfaces rebuild error when configured backen
 
 	const response = await dispatchRuntimeMessage<{
 		ok: false;
-		error: { status: number; path: string; message: string };
+		error: {
+			status: number;
+			path: string;
+			message: string;
+			payload?: unknown;
+		};
 	}>(harness.listeners.onMessage, {
 		type: "trending_generate",
 		payload: {
@@ -838,10 +914,8 @@ test("background trending_generate surfaces rebuild error when configured backen
 	assert.equal(response.ok, false);
 	assert.equal(response.error.status, 409);
 	assert.equal(response.error.path, "/api/v1/profiles/rebuild-persona");
-	assert.equal(
-		response.error.message,
-		"No tweets found. Run /api/v1/profiles/ingest first",
-	);
+	assert.equal(response.error.message, shared.DEFAULT_PUBLIC_ERROR_MESSAGE);
+	assert.equal(response.error.payload, undefined);
 	assert.equal(trendingAttempts, 1);
 	assert.equal(rebuildAttempts, 1);
 });

@@ -123,6 +123,18 @@ test("buildPanelShell includes trending tab controls", () => {
 	assert.notEqual(markup.indexOf('data-field="s-language"'), -1);
 });
 
+test("buildPanelShell hides API settings entry by default and includes version unlock control", () => {
+	const markup = buildPanelShell();
+
+	assert.notEqual(
+		markup.indexOf('data-action="open-api-settings" type="button" hidden'),
+		-1,
+	);
+	assert.notEqual(markup.indexOf('data-action="unlock-debug"'), -1);
+	assert.notEqual(markup.indexOf('data-slot="settings-version"'), -1);
+	assert.notEqual(markup.indexOf('data-slot="settings-version-mode"'), -1);
+});
+
 test("buildPanelShell places selected event info above the take textarea", () => {
 	const markup = buildPanelShell();
 	const selectedInfoIndex = markup.indexOf(
@@ -133,6 +145,26 @@ test("buildPanelShell places selected event info above the take textarea", () =>
 	assert.notEqual(selectedInfoIndex, -1);
 	assert.notEqual(takeLabelIndex, -1);
 	assert.ok(selectedInfoIndex < takeLabelIndex);
+});
+
+test("buildPanelShell places trending hint above the CTA row", () => {
+	const markup = buildPanelShell();
+	const hintIndex = markup.indexOf('data-slot="send-to-draft-hint"');
+	const generateButtonIndex = markup.indexOf('data-action="generate-trending"');
+
+	assert.notEqual(hintIndex, -1);
+	assert.notEqual(generateButtonIndex, -1);
+	assert.ok(hintIndex < generateButtonIndex);
+});
+
+test("buildPanelShell uses compact trending textarea and keeps send button guarded in JS", () => {
+	const markup = buildPanelShell();
+
+	assert.notEqual(markup.indexOf("smc-textarea smc-textarea-compact"), -1);
+	assert.equal(
+		markup.includes('data-action="send-to-draft" type="button" disabled'),
+		false,
+	);
 });
 
 test("isWhitelistDeniedError matches API 403 responses only", () => {
