@@ -49,7 +49,6 @@ interface RequestJsonOptions {
 	body?: Record<string, unknown>;
 	deniedUsername?: string;
 	baseUrlOverride?: string;
-	unreachableMessage?: string;
 }
 
 interface LocalTrendingCapability {
@@ -82,6 +81,7 @@ type BackgroundMessage =
 
 const {
 	DEFAULT_CONFIG: SHARED_DEFAULT_CONFIG,
+	DEFAULT_PUBLIC_ERROR_MESSAGE,
 	FALLBACK_BACKEND_BASE_URL,
 	coerceWindowId,
 	normalizeBaseUrl,
@@ -242,6 +242,7 @@ async function checkProfile({ username }: BackgroundPayload): Promise<{
 			method: "GET",
 			deniedUsername: normalizedUsername,
 		});
+		await saveConfig({ defaultUsername: normalizedUsername });
 		return {
 			exists: true,
 			username: payload.profile?.username || normalizedUsername,
@@ -337,7 +338,6 @@ async function getHotEvents(
 		path: `${API.hotEvents}?${query}`,
 		method: "GET",
 		baseUrlOverride: baseUrl,
-		unreachableMessage: formatTrendingBackendUnreachableMessage(baseUrl),
 	});
 }
 
@@ -364,7 +364,6 @@ async function generateTrending(payload: BackgroundPayload): Promise<unknown> {
 			body,
 			deniedUsername: username,
 			baseUrlOverride: baseUrl,
-			unreachableMessage: formatTrendingBackendUnreachableMessage(baseUrl),
 		});
 	} catch (error) {
 		const runtimeError = error as RuntimeErrorWithStatus;
@@ -390,7 +389,6 @@ async function generateTrending(payload: BackgroundPayload): Promise<unknown> {
 					body: { username },
 					deniedUsername: username,
 					baseUrlOverride: baseUrl,
-					unreachableMessage: formatTrendingBackendUnreachableMessage(baseUrl),
 				});
 			} catch (rebuildError) {
 				const rebuildRuntimeError = rebuildError as RuntimeErrorWithStatus;
@@ -416,7 +414,6 @@ async function generateTrending(payload: BackgroundPayload): Promise<unknown> {
 				body,
 				deniedUsername: username,
 				baseUrlOverride: baseUrl,
-				unreachableMessage: formatTrendingBackendUnreachableMessage(baseUrl),
 			});
 		} else {
 			throw error;
@@ -554,7 +551,6 @@ async function requestJson<TResponse = unknown>({
 	body,
 	deniedUsername,
 	baseUrlOverride,
-	unreachableMessage,
 }: RequestJsonOptions): Promise<TResponse> {
 	const baseUrl = baseUrlOverride
 		? normalizeBaseUrl(baseUrlOverride)
@@ -569,10 +565,7 @@ async function requestJson<TResponse = unknown>({
 			body: body ? JSON.stringify(body) : undefined,
 		});
 	} catch (_error) {
-		throw new Error(
-			unreachableMessage ||
-				`Backend is unreachable at ${baseUrl}. Start the API server first.`,
-		);
+		throw createRuntimeError(DEFAULT_PUBLIC_ERROR_MESSAGE, { path });
 	}
 
 	const rawText = await response.text();
@@ -581,7 +574,7 @@ async function requestJson<TResponse = unknown>({
 		try {
 			payload = JSON.parse(rawText);
 		} catch (_error) {
-			payload = rawText;
+			payload = null;
 		}
 	}
 
@@ -595,22 +588,17 @@ async function requestJson<TResponse = unknown>({
 			error.path = path;
 			throw error;
 		}
-		const detail =
-			payload && typeof payload === "object" && !Array.isArray(payload)
-				? (payload as { detail?: unknown }).detail || JSON.stringify(payload)
-				: String(payload || response.statusText || "Request failed");
-		const error = new Error(String(detail)) as RuntimeErrorWithStatus;
-		error.status = response.status;
-		error.payload = payload;
-		error.path = path;
-		throw error;
+		throw createRuntimeError(DEFAULT_PUBLIC_ERROR_MESSAGE, {
+			status: response.status,
+			payload:
+				payload && typeof payload === "object" && !Array.isArray(payload)
+					? payload
+					: undefined,
+			path,
+		});
 	}
 
 	return payload as TResponse;
-}
-
-function formatTrendingBackendUnreachableMessage(baseUrl: string): string {
-	return `Trending backend is unreachable at ${baseUrl}. Start or update the configured API server first.`;
 }
 
 function extractErrorDetailText(payload: unknown): string {
@@ -647,7 +635,6 @@ async function checkLocalTrendingCapability(
 			path: "/openapi.json",
 			method: "GET",
 			baseUrlOverride: baseUrl,
-			unreachableMessage: formatTrendingBackendUnreachableMessage(baseUrl),
 		});
 		const supported = hasRebuildPersonaPost(openApi);
 		const capability: LocalTrendingCapability = {
@@ -737,12 +724,16 @@ function normalizeError(error: unknown): {
 		return { message: error };
 	}
 	const runtimeError = error as RuntimeErrorWithStatus;
+	const message = String(runtimeError.message || error);
 	return {
-		message: String(runtimeError.message || error),
+		message,
 		status: Number.isFinite(runtimeError.status)
 			? runtimeError.status
 			: undefined,
-		payload: runtimeError.payload,
+		payload:
+			message === DEFAULT_PUBLIC_ERROR_MESSAGE
+				? undefined
+				: runtimeError.payload,
 		path: runtimeError.path ? String(runtimeError.path) : undefined,
 		code: runtimeError.code ? String(runtimeError.code) : undefined,
 	};

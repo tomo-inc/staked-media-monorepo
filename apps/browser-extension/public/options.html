@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>FoxSpark Settings</title>
+    <title>FoxSpark</title>
     <style>
       :root {
         --bg: #f3f5fb;
@@ -72,6 +72,9 @@
       main {
         max-width: 560px;
         margin: 0 auto;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
       }
 
       .header {
@@ -137,6 +140,10 @@
         overflow: hidden;
       }
 
+      .settings-card {
+        flex: 1;
+      }
+
       .settings-page {
         display: block;
       }
@@ -156,6 +163,10 @@
 
       .settings-home-section .settings-item {
         padding: 10px 4px 10px 2px;
+      }
+
+      .settings-item[hidden] {
+        display: none;
       }
 
       .settings-list {
@@ -336,6 +347,51 @@
         color: var(--muted);
       }
 
+      .settings-footer {
+        margin: auto 24px 24px;
+        padding-top: 12px;
+        padding-bottom: 20px;
+        display: flex;
+        justify-content: center;
+        border-top: 1px solid var(--line);
+      }
+
+      .version-button {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 0;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        cursor: pointer;
+        transition: color 0.15s;
+      }
+
+      .version-button:hover {
+        color: var(--muted-strong);
+      }
+
+      .version-button:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 2px var(--focus);
+        border-radius: 6px;
+      }
+
+      .version-label {
+        font-size: 12px;
+        font-weight: 400;
+        letter-spacing: 0.01em;
+      }
+
+      .version-mode {
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--muted-strong);
+      }
+
       .status {
         margin: 16px 24px;
         padding: 10px 12px;
@@ -399,14 +455,14 @@
         <button id="backButton" class="icon-button back-button" type="button" aria-label="Back to settings" hidden>
           <span aria-hidden="true">&lt;</span>
         </button>
-        <h1 id="headerTitle">Settings</h1>
+        <h1 id="headerTitle">FoxSpark</h1>
       </div>
 
-      <section class="card">
+      <section class="card settings-card">
         <div id="homePage" class="settings-page">
           <div class="section settings-home-section">
             <div class="settings-list">
-              <button id="openApiSettingsButton" class="settings-item" type="button">
+              <button id="openApiSettingsButton" class="settings-item" type="button" hidden>
                 <span class="settings-item-main">
                   <span class="settings-item-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none">
@@ -478,6 +534,7 @@
               </label>
             </div>
           </div>
+
         </div>
 
         <div id="apiPage" class="settings-page" hidden>
@@ -507,16 +564,13 @@
 
       <div id="status" class="status" hidden></div>
 
-      <div class="notes">
-        <h3>Notes</h3>
-        <ul>
-          <li>Backend URL supports the hosted API plus local http://127.0.0.1[:port][/path] and http://localhost[:port][/path]</li>
-          <li>No auto posting</li>
-          <li>Manual handoff to X composer</li>
-          <li>User consent and revoke supported</li>
-          <li>Safety checks before final publish</li>
-        </ul>
+      <div class="settings-footer">
+        <button id="versionButton" class="version-button" type="button">
+          <span id="versionLabel" class="version-label"></span>
+          <span id="versionMode" class="version-mode"></span>
+        </button>
       </div>
+
     </main>
 
     <script src="shared.js"></script>

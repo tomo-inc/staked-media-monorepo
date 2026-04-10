@@ -5,6 +5,7 @@ import test from "node:test";
 const require = createRequire(import.meta.url);
 
 const {
+	DEFAULT_PUBLIC_ERROR_MESSAGE,
 	DEFAULT_CONFIG,
 	escapeHtml,
 	extractDrafts,
@@ -12,9 +13,11 @@ const {
 	resolveLocale,
 	routeMessage,
 	sanitizeConfig,
+	sanitizeUserVisibleErrorMessage,
 	t,
 } = require("../dist/shared.js") as Pick<
 	StakedMediaExtensionSharedApi,
+	| "DEFAULT_PUBLIC_ERROR_MESSAGE"
 	| "DEFAULT_CONFIG"
 	| "escapeHtml"
 	| "extractDrafts"
@@ -22,6 +25,7 @@ const {
 	| "resolveLocale"
 	| "routeMessage"
 	| "sanitizeConfig"
+	| "sanitizeUserVisibleErrorMessage"
 	| "t"
 >;
 
@@ -214,6 +218,14 @@ test("resolveLocale maps browser language correctly when language is auto", () =
 
 test("i18n helpers return translated labels and language options", () => {
 	assert.equal(t("action.generate", "zh-CN"), "生成");
+	assert.equal(t("action.generating", "en"), "Thinking");
+	assert.equal(t("settings.versionLabel", "en"), "Version");
+	assert.equal(t("settings.debugMode", "zh-CN"), "调试模式");
+	assert.equal(t("settings.productionMode", "en"), "Production mode");
+	assert.equal(
+		t("error.serviceUnavailable", "en"),
+		DEFAULT_PUBLIC_ERROR_MESSAGE,
+	);
 	const options = listLanguageOptions("zh-CN");
 	assert.equal(options[0]?.value, "auto");
 	assert.match(String(options[0]?.label || ""), /自动|跟随浏览器/);
@@ -225,6 +237,14 @@ test("profile i18n keys return localized labels", () => {
 	assert.equal(
 		t("profile.ingestSuccess", "en"),
 		"Ingested {count} tweets. Persona ready.",
+	);
+	assert.equal(
+		t("hint.selectHotEventBeforeGenerate", "en"),
+		"Pick a hot event to continue.",
+	);
+	assert.equal(
+		t("hint.sendSelectedEventToDraft", "en"),
+		"We'll send the selected event and your take to Draft.",
 	);
 });
 
@@ -249,5 +269,29 @@ test("escapeHtml escapes unsafe characters", () => {
 	assert.equal(
 		escapeHtml('<div class="x">Tom & Jerry</div>'),
 		"&lt;div class=&quot;x&quot;&gt;Tom &amp; Jerry&lt;/div&gt;",
+	);
+});
+
+test("sanitizeUserVisibleErrorMessage hides raw html and keeps safe messages", () => {
+	assert.equal(
+		sanitizeUserVisibleErrorMessage(
+			"<!DOCTYPE html><html><head><title>524</title></head><body>A timeout occurred</body></html>",
+			"localized fallback",
+		),
+		"localized fallback",
+	);
+	assert.equal(
+		sanitizeUserVisibleErrorMessage(
+			DEFAULT_PUBLIC_ERROR_MESSAGE,
+			"localized fallback",
+		),
+		"localized fallback",
+	);
+	assert.equal(
+		sanitizeUserVisibleErrorMessage(
+			"Backend URL must be a valid http(s) URL pointing to an allowed host.",
+			"localized fallback",
+		),
+		"Backend URL must be a valid http(s) URL pointing to an allowed host.",
 	);
 });
