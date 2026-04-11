@@ -319,6 +319,7 @@ interface PanelUi {
 	const root = document.getElementById("app") as HTMLElement;
 	root.innerHTML = buildPanelShell();
 	root.firstElementChild?.setAttribute("data-host", HOST_MODE);
+	document.documentElement.setAttribute("data-host", HOST_MODE);
 
 	const ui: PanelUi = {
 		headerTitle: root.querySelector(
