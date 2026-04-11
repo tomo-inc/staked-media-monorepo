@@ -2666,16 +2666,7 @@ interface PanelUi {
 		const path = String(runtimeError?.path || "");
 		const detailText = extractErrorDetailText(runtimeError?.payload);
 		const configuredBaseUrl = getConfiguredBackendBaseUrl();
-		if (code === "LOCAL_BACKEND_REBUILD_UNSUPPORTED") {
-			return `Configured backend is outdated: /api/v1/profiles/rebuild-persona is unavailable on ${configuredBaseUrl}. Update or restart that backend.`;
-		}
-		if (code === "LOCAL_BACKEND_OPENAPI_UNAVAILABLE") {
-			return `Backend capability check failed. Confirm ${configuredBaseUrl} is reachable.`;
-		}
 		if (runtimeError?.status === 404) {
-			if (path.startsWith("/api/v1/profiles/rebuild-persona")) {
-				return `Profile is missing in the configured backend (${configuredBaseUrl}). Import profile history there first.`;
-			}
 			if (path.startsWith("/api/v1/profiles/")) {
 				return "Profile not found in the backend. Run ingest first.";
 			}
@@ -2696,16 +2687,7 @@ interface PanelUi {
 			}
 			return "Backend endpoint returned 404. Check API Base URL and backend version.";
 		}
-		if (
-			runtimeError?.status === 405 &&
-			path.startsWith("/api/v1/profiles/rebuild-persona")
-		) {
-			return `Configured backend does not support persona rebuild yet. Update or restart backend at ${configuredBaseUrl}.`;
-		}
 		if (runtimeError?.status === 409) {
-			if (path.startsWith("/api/v1/profiles/rebuild-persona")) {
-				return `Configured backend has no tweets for this user, so persona rebuild cannot run yet.`;
-			}
 			return "Persona is missing in the backend. Re-run ingest before generating.";
 		}
 		if (runtimeError?.status === 422) {

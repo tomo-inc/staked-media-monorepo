@@ -695,7 +695,7 @@ test("background get_hot_events calls hot-events endpoint with refresh query", a
 	);
 });
 
-test("background check_local_trending_capability reports missing rebuild route on configured backend", async () => {
+test("background check_local_trending_capability reports missing trending route on configured backend", async () => {
 	const seenUrls: string[] = [];
 	const harness = createBackgroundHarness({
 		storage: { backendBaseUrl: "https://api.sayviner.top:8443" },
@@ -778,11 +778,11 @@ test("background trending_generate posts event payload to configured trending en
 	assert.equal(harness.storage.defaultUsername, "lin");
 });
 
-test("background trending_generate rebuilds persona on configured backend and retries once", async () => {
+test("background trending_generate ingests profile on configured backend and retries once", async () => {
 	const seenUrls: string[] = [];
 	const seenBodies: Array<Record<string, unknown>> = [];
 	let trendingAttempts = 0;
-	let rebuildAttempts = 0;
+	let ingestAttempts = 0;
 	const harness = createBackgroundHarness({
 		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
 		fetch: async (url, init) => {
@@ -793,7 +793,7 @@ test("background trending_generate rebuilds persona on configured backend and re
 			if (normalizedUrl.endsWith("/openapi.json")) {
 				return createJsonResponse(200, {
 					paths: {
-						"/api/v1/profiles/rebuild-persona": {
+						"/api/v1/trending/generate": {
 							post: {},
 						},
 					},
@@ -811,8 +811,8 @@ test("background trending_generate rebuilds persona on configured backend and re
 					drafts: [{ text: "Trending draft after rebuild" }],
 				});
 			}
-			if (normalizedUrl.endsWith("/api/v1/profiles/rebuild-persona")) {
-				rebuildAttempts += 1;
+			if (normalizedUrl.endsWith("/api/v1/profiles/ingest")) {
+				ingestAttempts += 1;
 				return createJsonResponse(200, {
 					username: "lin",
 					persona_snapshot_id: 101,
@@ -841,7 +841,7 @@ test("background trending_generate rebuilds persona on configured backend and re
 	assert.equal(response.result.mode, "B");
 	assert.equal(response.result.drafts[0]?.text, "Trending draft after rebuild");
 	assert.equal(trendingAttempts, 2);
-	assert.equal(rebuildAttempts, 1);
+	assert.equal(ingestAttempts, 1);
 	assert.match(
 		seenUrls[0],
 		/^http:\/\/127\.0\.0\.1:8000\/api\/v1\/trending\/generate$/,
@@ -849,7 +849,7 @@ test("background trending_generate rebuilds persona on configured backend and re
 	assert.match(seenUrls[1], /^http:\/\/127\.0\.0\.1:8000\/openapi\.json$/);
 	assert.match(
 		seenUrls[2],
-		/^http:\/\/127\.0\.0\.1:8000\/api\/v1\/profiles\/rebuild-persona$/,
+		/^http:\/\/127\.0\.0\.1:8000\/api\/v1\/profiles\/ingest$/,
 	);
 	assert.match(
 		seenUrls[3],
@@ -859,9 +859,9 @@ test("background trending_generate rebuilds persona on configured backend and re
 	assert.equal(harness.storage.defaultUsername, "lin");
 });
 
-test("background trending_generate redacts persona recovery failures into the shared public error message", async () => {
+test("background trending_generate redacts ingest recovery failures into the shared public error message", async () => {
 	let trendingAttempts = 0;
-	let rebuildAttempts = 0;
+	let ingestAttempts = 0;
 	const harness = createBackgroundHarness({
 		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
 		fetch: async (url) => {
@@ -869,7 +869,7 @@ test("background trending_generate redacts persona recovery failures into the sh
 			if (normalizedUrl.endsWith("/openapi.json")) {
 				return createJsonResponse(200, {
 					paths: {
-						"/api/v1/profiles/rebuild-persona": {
+						"/api/v1/trending/generate": {
 							post: {},
 						},
 					},
@@ -881,10 +881,10 @@ test("background trending_generate redacts persona recovery failures into the sh
 					detail: "Persona not found. Run /api/v1/profiles/ingest first",
 				});
 			}
-			if (normalizedUrl.endsWith("/api/v1/profiles/rebuild-persona")) {
-				rebuildAttempts += 1;
-				return createJsonResponse(409, {
-					detail: "No tweets found. Run /api/v1/profiles/ingest first",
+			if (normalizedUrl.endsWith("/api/v1/profiles/ingest")) {
+				ingestAttempts += 1;
+				return createJsonResponse(502, {
+					detail: "Upstream unavailable",
 				});
 			}
 			return createJsonResponse(500, { detail: "unexpected endpoint" });
@@ -912,17 +912,16 @@ test("background trending_generate redacts persona recovery failures into the sh
 	});
 
 	assert.equal(response.ok, false);
-	assert.equal(response.error.status, 409);
-	assert.equal(response.error.path, "/api/v1/profiles/rebuild-persona");
+	assert.equal(response.error.status, 502);
+	assert.equal(response.error.path, "/api/v1/profiles/ingest");
 	assert.equal(response.error.message, shared.DEFAULT_PUBLIC_ERROR_MESSAGE);
 	assert.equal(response.error.payload, undefined);
 	assert.equal(trendingAttempts, 1);
-	assert.equal(rebuildAttempts, 1);
+	assert.equal(ingestAttempts, 1);
 });
 
-test("background trending_generate surfaces dedicated code when configured backend rebuild endpoint is unsupported", async () => {
+test("background trending_generate reports an outdated backend when trending route is missing from openapi", async () => {
 	let trendingAttempts = 0;
-	let rebuildAttempts = 0;
 	const harness = createBackgroundHarness({
 		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
 		fetch: async (url) => {
@@ -940,12 +939,6 @@ test("background trending_generate surfaces dedicated code when configured backe
 							get: {},
 						},
 					},
-				});
-			}
-			if (normalizedUrl.endsWith("/api/v1/profiles/rebuild-persona")) {
-				rebuildAttempts += 1;
-				return createJsonResponse(405, {
-					detail: "Method Not Allowed",
 				});
 			}
 			return createJsonResponse(500, { detail: "unexpected endpoint" });
@@ -968,9 +961,7 @@ test("background trending_generate surfaces dedicated code when configured backe
 	});
 
 	assert.equal(response.ok, false);
-	assert.equal(response.error.path, "/api/v1/profiles/rebuild-persona");
-	assert.equal(response.error.code, "LOCAL_BACKEND_REBUILD_UNSUPPORTED");
+	assert.equal(response.error.path, "/openapi.json");
 	assert.match(response.error.message, /outdated/i);
 	assert.equal(trendingAttempts, 1);
-	assert.equal(rebuildAttempts, 0);
 });

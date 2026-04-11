@@ -18,8 +18,11 @@ from app.orchestrator import ContentOrchestrator
 class FakeUpstreamClient:
     def __init__(self) -> None:
         self.last_max_tweets: int | None = None
+        self.fetch_user_calls = 0
+        self.fetch_tweet_calls = 0
 
     def fetch_user_by_username(self, username: str, *, request_id: str | None = None) -> dict:
+        self.fetch_user_calls += 1
         return {
             "id": "u-1",
             "username": username,
@@ -43,6 +46,7 @@ class FakeUpstreamClient:
         request_id: str | None = None,
     ) -> list[dict]:
         self.last_max_tweets = max_tweets
+        self.fetch_tweet_calls += 1
         items = []
         for index in range(min(max_tweets, 1200)):
             items.append(
@@ -596,79 +600,39 @@ class ApiTestCase(unittest.TestCase):
         )
         self.assertEqual(exposure_response.status_code, 403)
 
-    def test_rebuild_persona_recreates_snapshot_from_local_tweets(self) -> None:
-        ingest = self.client.post(
+    def test_repeated_ingest_rebuilds_persona_from_fresh_upstream_data(self) -> None:
+        first_ingest = self.client.post(
             "/api/v1/profiles/ingest",
             json={"username": "demo-user"},
         )
-        self.assertEqual(ingest.status_code, 200)
-
-        database = Database(self.settings.database_path)
-        with database.connect() as connection:
-            connection.execute(
-                "DELETE FROM persona_snapshots WHERE username = ?",
-                ("demo-user",),
-            )
-            connection.commit()
-
-        rebuilt = self.client.post(
-            "/api/v1/profiles/rebuild-persona",
+        second_ingest = self.client.post(
+            "/api/v1/profiles/ingest",
             json={"username": "demo-user"},
         )
-        self.assertEqual(rebuilt.status_code, 200)
-        payload = rebuilt.json()
-        self.assertEqual(payload["username"], "demo-user")
-        self.assertEqual(payload["user_id"], "u-1")
-        self.assertEqual(payload["source_tweet_count"], self.settings.max_ingest_tweets)
-        self.assertGreater(payload["source_original_tweet_count"], 0)
-        self.assertGreater(payload["persona_snapshot_id"], 0)
-        self.assertIn("author_summary", payload["persona"])
+
+        self.assertEqual(first_ingest.status_code, 200)
+        self.assertEqual(second_ingest.status_code, 200)
+        self.assertEqual(self.upstream_client.fetch_user_calls, 2)
+        self.assertEqual(self.upstream_client.fetch_tweet_calls, 2)
+        self.assertEqual(
+            first_ingest.json()["fetched_tweet_count"],
+            self.settings.max_ingest_tweets,
+        )
+        self.assertEqual(
+            second_ingest.json()["fetched_tweet_count"],
+            self.settings.max_ingest_tweets,
+        )
+        self.assertNotEqual(
+            first_ingest.json()["persona_snapshot_id"],
+            second_ingest.json()["persona_snapshot_id"],
+        )
 
         profile_response = self.client.get("/api/v1/profiles/demo-user")
         self.assertEqual(profile_response.status_code, 200)
         self.assertEqual(
             profile_response.json()["latest_persona_snapshot"]["id"],
-            payload["persona_snapshot_id"],
+            second_ingest.json()["persona_snapshot_id"],
         )
-
-    def test_rebuild_persona_returns_404_when_profile_missing(self) -> None:
-        response = self.client.post(
-            "/api/v1/profiles/rebuild-persona",
-            json={"username": "missing-user"},
-        )
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["detail"], "Profile not found")
-
-    def test_rebuild_persona_returns_409_when_tweets_missing(self) -> None:
-        database = Database(self.settings.database_path)
-        database.add_allowed_username("empty-user")
-        database.upsert_user(
-            {
-                "id": "u-empty",
-                "username": "empty-user",
-                "name": "No Tweets User",
-                "description": "",
-                "location": "",
-                "url": "",
-                "verified": False,
-                "public_metrics": {"followers_count": 0, "following_count": 0, "tweet_count": 0},
-            },
-            "2026-03-31T00:00:00+00:00",
-        )
-
-        response = self.client.post(
-            "/api/v1/profiles/rebuild-persona",
-            json={"username": "empty-user"},
-        )
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"], "No tweets found. Run /api/v1/profiles/ingest first")
-
-    def test_rebuild_persona_rejects_non_whitelisted_username(self) -> None:
-        response = self.client.post(
-            "/api/v1/profiles/rebuild-persona",
-            json={"username": "elonmusk"},
-        )
-        self.assertEqual(response.status_code, 403)
 
     def test_admin_whitelist_endpoints_manage_allowed_usernames(self) -> None:
         initial = self.client.get("/admin/api/v1/whitelist/usernames")

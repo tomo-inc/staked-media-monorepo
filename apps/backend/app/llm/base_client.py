@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import requests
@@ -13,6 +14,7 @@ from app.config import Settings
 from app.logging_utils import get_logger, log_event, redact_for_log
 from app.persona import (
     SUMMARY_DRIFT_PHRASES,
+    _parse_tweet_timestamp,
     clean_text,
     extract_english_words,
     extract_theme_keywords,
@@ -284,17 +286,46 @@ class LLMClient:
         )
         payload = self._chat_completion_json(
             system_prompt=(
-                "You analyze a public X user's profile and tweets to build a reusable writing persona. "
-                "Focus on the representative_tweets to infer voice, tone, sentence rhythm, and writing habits. "
-                "Use corpus statistics (writing_stats, language_stats, engagement_patterns) as supporting "
-                "quantitative evidence, not as the primary signal. "
-                "Infer only from provided evidence. Do not fabricate facts. "
-                "Return strict JSON with keys: persona_version, author_summary, voice_traits, voice_signals, "
-                "signature_patterns, topic_clusters, writing_patterns, lexical_markers, "
-                "lexical_markers_detailed, do_not_sound_like, cta_style, generation_guardrails, "
-                "generation_guardrails_detailed, risk_notes, language_profile, domain_expertise, "
-                "emotional_baseline, audience_profile, interaction_style, posting_cadence, media_habits, "
-                "geo_context, stance_patterns, banned_phrases."
+                "You analyze a public X user's profile and tweets to build a reusable writing persona "
+                "that will be used to generate future drafts for this user. The drafts must sound "
+                "authentically like this user AND be likely to perform well.\n\n"
+                "Primary evidence is representative_tweets. Each tweet entry has:\n"
+                "  - text: the cleaned tweet text\n"
+                "  - engagement_score: an integer representing how well this tweet performed "
+                "(higher = more likes, retweets, replies, quotes). Scores are only comparable "
+                "within this one user's tweets; do not compare across users.\n"
+                "  - days_ago: integer number of days between the tweet and the present moment. "
+                "Smaller values are more recent.\n\n"
+                "Use these fields to build the persona with a layered strategy:\n\n"
+                "1. VOICE from ALL tweets. Read every tweet text to learn the user's stable voice: "
+                "vocabulary, sentence rhythm, punctuation habits, emoji use, code-switching, "
+                "emotional baseline. Every tweet contributes equally to this layer regardless "
+                "of engagement_score or days_ago.\n\n"
+                "2. HIGH-PERFORMING PATTERNS from high engagement_score tweets. Identify which "
+                "of THIS user's own writing patterns correlate with better performance: what "
+                "kinds of openings, post shapes, topic angles, compression levels, and hooks "
+                "show up disproportionately in their high-scoring tweets. These patterns must "
+                "feed signature_patterns, generation_guardrails.preferred_openings, "
+                "generation_guardrails.preferred_formats, and generation_guardrails_detailed. "
+                "The goal is for future drafts to imitate THIS USER at their best, not generic "
+                "viral-post templates.\n\n"
+                "3. CURRENT STYLE from low days_ago tweets. If the user's style has shifted "
+                "recently (e.g. tone, topics, formality, language mix), prefer the recent "
+                "signal when describing language_profile, emotional_baseline, voice_traits, "
+                "and topic_clusters. Older tweets still contribute to stable habits but "
+                "should not override current style where they conflict.\n\n"
+                "Use corpus statistics (writing_stats, language_stats, engagement_patterns, "
+                "cadence_stats, media_stats) as supporting quantitative evidence, not as the "
+                "primary signal.\n\n"
+                "Infer only from provided evidence. Do not fabricate facts. Do not import "
+                'generic "viral post" advice that is not grounded in this user\'s own tweets.\n\n'
+                "Return strict JSON with keys: persona_version, author_summary, voice_traits, "
+                "voice_signals, signature_patterns, topic_clusters, writing_patterns, "
+                "lexical_markers, lexical_markers_detailed, do_not_sound_like, cta_style, "
+                "generation_guardrails, generation_guardrails_detailed, risk_notes, "
+                "language_profile, domain_expertise, emotional_baseline, audience_profile, "
+                "interaction_style, posting_cadence, media_habits, geo_context, stance_patterns, "
+                "banned_phrases."
             ),
             user_prompt=json.dumps(request_payload, ensure_ascii=True),
             temperature=0.4,
@@ -1738,6 +1769,13 @@ class LLMClient:
         profile: dict[str, Any],
         corpus_stats: dict[str, Any],
     ) -> dict[str, Any]:
+        def _days_ago(created_at_raw: Any) -> int | None:
+            parsed = _parse_tweet_timestamp(created_at_raw)
+            if parsed is None:
+                return None
+            delta_days = (datetime.now(UTC) - parsed).total_seconds() / 86400.0
+            return max(0, round(delta_days))
+
         representative_tweets = corpus_stats.get("representative_tweets")
         representative_tweet_payload: list[dict[str, Any]] = []
         if isinstance(representative_tweets, list):
@@ -1747,13 +1785,14 @@ class LLMClient:
                 text = clean_text(str(item.get("text") or ""))
                 if not text:
                     continue
-                representative_tweet_payload.append(
-                    {
-                        "text": text,
-                        "is_reply": bool(item.get("is_reply", False)),
-                        "is_quote": bool(item.get("is_quote", False)),
-                    }
-                )
+                entry: dict[str, Any] = {
+                    "text": text,
+                    "engagement_score": int(item.get("engagement_score", 0)),
+                }
+                days_ago = _days_ago(item.get("created_at"))
+                if days_ago is not None:
+                    entry["days_ago"] = days_ago
+                representative_tweet_payload.append(entry)
 
         llm_corpus_stats = {
             **corpus_stats,
@@ -1800,13 +1839,21 @@ class LLMClient:
                 "how to handle bilingual texture or code-switching naturally.",
                 "When generation_guardrails_detailed is present, ground positive and negative examples "
                 "in observed openings, formats, or phrasing habits rather than generic writing advice.",
+                "signature_patterns, generation_guardrails.preferred_openings, "
+                "generation_guardrails.preferred_formats, and generation_guardrails_detailed must "
+                "prioritize patterns observed in tweets with high engagement_score. Do not list patterns "
+                "that only appear in low-engagement tweets unless they are ubiquitous across the entire corpus.",
                 "language_profile must identify the primary language using ISO 639-1 when possible and describe "
                 "code-switching patterns with concrete evidence from the tweets.",
                 "domain_expertise should list 1 to 3 domains with depth level and jargon_examples.",
                 "emotional_baseline should capture default_valence, intensity, sarcasm_level, and humor_style.",
                 "audience_profile should infer primary_audience, assumed_knowledge, and formality.",
-                "interaction_style should differentiate original posts, replies, and quote tweets, and list "
-                "engagement_triggers.",
+                "interaction_style should differentiate how this user writes original posts vs replies vs "
+                "quote-tweets based on textual cues in the tweets, and list engagement_triggers grounded in "
+                "high engagement_score examples.",
+                "When recent tweets (low days_ago) conflict with older tweets on tone, formality, topic focus, "
+                "or language mix, prefer the recent signal for language_profile, emotional_baseline, and "
+                "voice_traits. Note the shift in author_summary if significant.",
                 "posting_cadence should use avg_daily_tweets, active_windows_utc, and posting_style to describe "
                 "whether this author is bursty, steady, or sporadic, and infer preferred_post_length.",
                 "media_habits should capture text_only_ratio, link_ratio, media_attachment_ratio, dominant_format, "

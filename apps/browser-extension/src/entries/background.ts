@@ -95,7 +95,6 @@ const API = {
 	profile: (username: string) =>
 		`/api/v1/profiles/${encodeURIComponent(username)}`,
 	ingest: "/api/v1/profiles/ingest",
-	rebuildPersona: "/api/v1/profiles/rebuild-persona",
 	draftsGenerate: "/api/v1/drafts/generate",
 	contentGenerate: "/api/v1/content/generate",
 	hotEvents: "/api/v1/content/hot-events",
@@ -377,37 +376,17 @@ async function generateTrending(payload: BackgroundPayload): Promise<unknown> {
 				throw createRuntimeError(
 					`${capability.message} Update or restart the configured backend and try again.`,
 					{
-						code: "LOCAL_BACKEND_REBUILD_UNSUPPORTED",
-						path: API.rebuildPersona,
+						path: "/openapi.json",
 					},
 				);
 			}
-			try {
-				await requestJson<unknown>({
-					path: API.rebuildPersona,
-					method: "POST",
-					body: { username },
-					deniedUsername: username,
-					baseUrlOverride: baseUrl,
-				});
-			} catch (rebuildError) {
-				const rebuildRuntimeError = rebuildError as RuntimeErrorWithStatus;
-				if (
-					rebuildRuntimeError?.status === 404 ||
-					rebuildRuntimeError?.status === 405
-				) {
-					throw createRuntimeError(
-						"Configured backend does not support /api/v1/profiles/rebuild-persona (backend version is outdated).",
-						{
-							status: rebuildRuntimeError.status,
-							payload: rebuildRuntimeError.payload,
-							path: API.rebuildPersona,
-							code: "LOCAL_BACKEND_REBUILD_UNSUPPORTED",
-						},
-					);
-				}
-				throw rebuildError;
-			}
+			await requestJson<unknown>({
+				path: API.ingest,
+				method: "POST",
+				body: { username },
+				deniedUsername: username,
+				baseUrlOverride: baseUrl,
+			});
 			result = await requestJson<unknown>({
 				path: API.trendingGenerate,
 				method: "POST",
@@ -636,12 +615,16 @@ async function checkLocalTrendingCapability(
 			method: "GET",
 			baseUrlOverride: baseUrl,
 		});
-		const supported = hasRebuildPersonaPost(openApi);
+		const supported = hasOpenApiOperation(
+			openApi,
+			API.trendingGenerate,
+			"post",
+		);
 		const capability: LocalTrendingCapability = {
 			supported,
 			message: supported
 				? "Trending capability check passed."
-				: "Configured backend is outdated: /api/v1/profiles/rebuild-persona (POST) is missing.",
+				: "Configured backend is outdated: /api/v1/trending/generate (POST) is missing.",
 			checkedAt: new Date().toISOString(),
 		};
 		cachedLocalTrendingCapability = {
@@ -668,7 +651,11 @@ async function checkLocalTrendingCapability(
 	}
 }
 
-function hasRebuildPersonaPost(openApi: Record<string, unknown>): boolean {
+function hasOpenApiOperation(
+	openApi: Record<string, unknown>,
+	pathName: string,
+	methodName: "get" | "post",
+): boolean {
 	if (!openApi || typeof openApi !== "object") {
 		return false;
 	}
@@ -676,11 +663,11 @@ function hasRebuildPersonaPost(openApi: Record<string, unknown>): boolean {
 	if (!paths || typeof paths !== "object") {
 		return false;
 	}
-	const rebuildPath = (paths as Record<string, unknown>)[API.rebuildPersona];
-	if (!rebuildPath || typeof rebuildPath !== "object") {
+	const routePath = (paths as Record<string, unknown>)[pathName];
+	if (!routePath || typeof routePath !== "object") {
 		return false;
 	}
-	return Boolean((rebuildPath as Record<string, unknown>).post);
+	return Boolean((routePath as Record<string, unknown>)[methodName]);
 }
 
 function formatForbiddenMessage(username: unknown): string {
