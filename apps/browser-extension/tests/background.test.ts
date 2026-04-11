@@ -460,7 +460,7 @@ test("background generate defaults to drafts api mode when config is not persist
 	assert.match(seenUrls[0], /\/api\/v1\/drafts\/generate$/);
 });
 
-test("background check_profile converts api 403 into username-specific whitelist message", async () => {
+test("background check_profile redacts api 403 into the shared public error message", async () => {
 	const harness = createBackgroundHarness({
 		fetch: async () => createJsonResponse(403, { detail: "forbidden" }),
 	});
@@ -476,10 +476,7 @@ test("background check_profile converts api 403 into username-specific whitelist
 
 	assert.equal(response.ok, false);
 	assert.equal(response.error.status, 403);
-	assert.equal(
-		response.error.message,
-		"User @alice is not allowed. Please contact the administrator.",
-	);
+	assert.equal(response.error.message, shared.DEFAULT_PUBLIC_ERROR_MESSAGE);
 });
 
 test("background generate redacts html error pages into the shared public error message", async () => {
@@ -536,7 +533,7 @@ test("background check_profile persists the loaded username", async () => {
 	assert.equal(harness.storage.defaultUsername, "alice");
 });
 
-test("background ingest_profile converts api 403 into username-specific whitelist message", async () => {
+test("background ingest_profile redacts api 403 into the shared public error message", async () => {
 	const harness = createBackgroundHarness({
 		fetch: async () => createJsonResponse(403, { detail: "forbidden" }),
 	});
@@ -552,13 +549,10 @@ test("background ingest_profile converts api 403 into username-specific whitelis
 
 	assert.equal(response.ok, false);
 	assert.equal(response.error.status, 403);
-	assert.equal(
-		response.error.message,
-		"User @bob is not allowed. Please contact the administrator.",
-	);
+	assert.equal(response.error.message, shared.DEFAULT_PUBLIC_ERROR_MESSAGE);
 });
 
-test("background generate_content converts api 403 into username-specific whitelist message", async () => {
+test("background generate_content redacts api 403 into the shared public error message", async () => {
 	const harness = createBackgroundHarness({
 		fetch: async () => createJsonResponse(403, { detail: "forbidden" }),
 	});
@@ -574,13 +568,10 @@ test("background generate_content converts api 403 into username-specific whitel
 
 	assert.equal(response.ok, false);
 	assert.equal(response.error.status, 403);
-	assert.equal(
-		response.error.message,
-		"User @carol is not allowed. Please contact the administrator.",
-	);
+	assert.equal(response.error.message, shared.DEFAULT_PUBLIC_ERROR_MESSAGE);
 });
 
-test("background analyze_exposure converts api 403 into username-specific whitelist message", async () => {
+test("background analyze_exposure redacts api 403 into the shared public error message", async () => {
 	const harness = createBackgroundHarness({
 		fetch: async () => createJsonResponse(403, { detail: "forbidden" }),
 	});
@@ -596,13 +587,10 @@ test("background analyze_exposure converts api 403 into username-specific whitel
 
 	assert.equal(response.ok, false);
 	assert.equal(response.error.status, 403);
-	assert.equal(
-		response.error.message,
-		"User @dave is not allowed. Please contact the administrator.",
-	);
+	assert.equal(response.error.message, shared.DEFAULT_PUBLIC_ERROR_MESSAGE);
 });
 
-test("background suggest_ideas falls back to generic whitelist message on api 403", async () => {
+test("background suggest_ideas redacts api 403 into the shared public error message", async () => {
 	const harness = createBackgroundHarness({
 		fetch: async () => createJsonResponse(403, { detail: "forbidden" }),
 	});
@@ -618,13 +606,10 @@ test("background suggest_ideas falls back to generic whitelist message on api 40
 
 	assert.equal(response.ok, false);
 	assert.equal(response.error.status, 403);
-	assert.equal(
-		response.error.message,
-		"This user is not allowed. Please contact the administrator.",
-	);
+	assert.equal(response.error.message, shared.DEFAULT_PUBLIC_ERROR_MESSAGE);
 });
 
-test("background whitelist message does not duplicate the @ prefix", async () => {
+test("background whitelist redaction does not depend on username formatting", async () => {
 	const harness = createBackgroundHarness({
 		fetch: async () => createJsonResponse(403, { detail: "forbidden" }),
 	});
@@ -640,10 +625,7 @@ test("background whitelist message does not duplicate the @ prefix", async () =>
 
 	assert.equal(response.ok, false);
 	assert.equal(response.error.status, 403);
-	assert.equal(
-		response.error.message,
-		"User @erin is not allowed. Please contact the administrator.",
-	);
+	assert.equal(response.error.message, shared.DEFAULT_PUBLIC_ERROR_MESSAGE);
 });
 
 test("background get_hot_events calls hot-events endpoint with refresh query", async () => {
@@ -920,7 +902,7 @@ test("background trending_generate redacts ingest recovery failures into the sha
 	assert.equal(ingestAttempts, 1);
 });
 
-test("background trending_generate reports an outdated backend when trending route is missing from openapi", async () => {
+test("background trending_generate redacts outdated backend errors into the shared public error message", async () => {
 	let trendingAttempts = 0;
 	const harness = createBackgroundHarness({
 		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
@@ -962,6 +944,6 @@ test("background trending_generate reports an outdated backend when trending rou
 
 	assert.equal(response.ok, false);
 	assert.equal(response.error.path, "/openapi.json");
-	assert.match(response.error.message, /outdated/i);
+	assert.equal(response.error.message, shared.DEFAULT_PUBLIC_ERROR_MESSAGE);
 	assert.equal(trendingAttempts, 1);
 });

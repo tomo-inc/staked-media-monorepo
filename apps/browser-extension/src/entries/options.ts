@@ -2,7 +2,6 @@ const {
 	DEFAULT_CONFIG: OPTIONS_DEFAULT_CONFIG,
 	listLanguageOptions,
 	resolveLocale,
-	sanitizeUserVisibleErrorMessage,
 	sendRuntimeMessage,
 	t,
 } = window.StakedMediaExtensionShared;
@@ -461,9 +460,6 @@ function setStatus(message: unknown, kind: StatusKind): void {
 	fields.status.hidden = !text;
 }
 
-function formatRuntimeError(error: unknown): string {
-	return sanitizeUserVisibleErrorMessage(
-		(error as Error | undefined)?.message || error || "",
-		tr("error.serviceUnavailable"),
-	);
+function formatRuntimeError(_error: unknown): string {
+	return tr("error.serviceUnavailable");
 }

@@ -373,12 +373,9 @@ async function generateTrending(payload: BackgroundPayload): Promise<unknown> {
 		) {
 			const capability = await checkLocalTrendingCapability(false);
 			if (!capability.supported) {
-				throw createRuntimeError(
-					`${capability.message} Update or restart the configured backend and try again.`,
-					{
-						path: "/openapi.json",
-					},
-				);
+				throw createRuntimeError(DEFAULT_PUBLIC_ERROR_MESSAGE, {
+					path: "/openapi.json",
+				});
 			}
 			await requestJson<unknown>({
 				path: API.ingest,
@@ -511,10 +508,7 @@ async function insertTextIntoComposer(payload: BackgroundPayload): Promise<{
 	);
 
 	if (!response?.ok) {
-		throw new Error(
-			response?.error?.message ||
-				"Open the X composer before inserting a draft.",
-		);
+		throw new Error(DEFAULT_PUBLIC_ERROR_MESSAGE);
 	}
 
 	return {
@@ -670,15 +664,8 @@ function hasOpenApiOperation(
 	return Boolean((routePath as Record<string, unknown>)[methodName]);
 }
 
-function formatForbiddenMessage(username: unknown): string {
-	const normalizedUsername = String(username || "").trim();
-	if (normalizedUsername) {
-		const handle = normalizedUsername.startsWith("@")
-			? normalizedUsername
-			: `@${normalizedUsername}`;
-		return `User ${handle} is not allowed. Please contact the administrator.`;
-	}
-	return "This user is not allowed. Please contact the administrator.";
+function formatForbiddenMessage(_username: unknown): string {
+	return DEFAULT_PUBLIC_ERROR_MESSAGE;
 }
 
 function clampInt(value: unknown, min: number, max: number): number {
