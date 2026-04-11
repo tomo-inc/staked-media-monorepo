@@ -2663,7 +2663,6 @@ interface PanelUi {
 
 	function formatApiError(error: unknown): string {
 		const runtimeError = error as RuntimeErrorWithStatus;
-		const code = String(runtimeError?.code || "").trim();
 		const path = String(runtimeError?.path || "");
 		const detailText = extractErrorDetailText(runtimeError?.payload);
 		const configuredBaseUrl = getConfiguredBackendBaseUrl();
