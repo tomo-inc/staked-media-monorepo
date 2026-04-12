@@ -1,60 +1,65 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="foxspark_coinbase" data-options-theme="light">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>FoxSpark</title>
+    <link rel="stylesheet" href="panel.css">
     <style>
       :root {
-        --bg: #f3f5fb;
+        --bg: #f3f8ff;
+        --surface: #f7fbff;
         --card: #ffffff;
-        --card-alt: #f8fafc;
-        --header-bg: #eff6ff;
-        --ink: #111827;
-        --muted: #4b5563;
-        --muted-strong: #475569;
-        --line: #d8deea;
-        --line-soft: #dbe3ef;
-        --line-strong: #cbd5e1;
-        --line-contrast: #94a3b8;
-        --primary: #2563eb;
-        --primary-hover: #1d4ed8;
-        --primary-soft: rgba(37, 99, 235, 0.08);
-        --primary-soft-border: rgba(37, 99, 235, 0.12);
-        --focus: rgba(37, 99, 235, 0.15);
+        --card-alt: #f4f9ff;
+        --header-bg: linear-gradient(118deg, #f7fbff 0%, #f2fcff 52%, #edf5ff 100%);
+        --ink: #0e2340;
+        --muted: #516684;
+        --muted-strong: #385177;
+        --line: #d7e5fb;
+        --line-soft: #dfeafc;
+        --line-strong: #c7daf6;
+        --line-contrast: #8daed6;
+        --primary: #3c84ff;
+        --primary-hover: #2b71e6;
+        --primary-accent: #48d7ee;
+        --primary-soft: rgba(60, 132, 255, 0.12);
+        --primary-soft-border: rgba(60, 132, 255, 0.22);
+        --focus: rgba(60, 132, 255, 0.24);
         --good: #16a34a;
-        --good-soft: rgba(22, 163, 74, 0.08);
-        --warn: #d97706;
-        --warn-soft: rgba(220, 38, 38, 0.08);
+        --good-soft: rgba(22, 163, 74, 0.1);
+        --warn: #c57a08;
+        --warn-soft: rgba(197, 122, 8, 0.12);
         --error: #dc2626;
-        --hover: #f1f5f9;
+        --hover: #edf4ff;
         --menu-shadow: 0 8px 20px rgba(15, 23, 42, 0.1);
       }
 
       html[data-options-theme="dark"] {
-        --bg: #020617;
-        --card: #0f172a;
-        --card-alt: #111827;
-        --header-bg: #111827;
-        --ink: #f8fafc;
-        --muted: #cbd5e1;
-        --muted-strong: #e2e8f0;
-        --line: #1f2937;
-        --line-soft: #334155;
-        --line-strong: #475569;
-        --line-contrast: #64748b;
-        --primary: #60a5fa;
-        --primary-hover: #3b82f6;
-        --primary-soft: rgba(96, 165, 250, 0.14);
-        --primary-soft-border: rgba(96, 165, 250, 0.2);
-        --focus: rgba(96, 165, 250, 0.28);
-        --good: #4ade80;
-        --good-soft: rgba(74, 222, 128, 0.16);
-        --warn: #f87171;
-        --warn-soft: rgba(248, 113, 113, 0.16);
-        --error: #f87171;
-        --hover: #1e293b;
-        --menu-shadow: 0 10px 24px rgba(2, 6, 23, 0.42);
+        --bg: #051429;
+        --surface: #0b1d37;
+        --card: #0c203c;
+        --card-alt: #102845;
+        --header-bg: linear-gradient(122deg, #0d2a4d 0%, #0b2141 52%, #12335a 100%);
+        --ink: #e9f2ff;
+        --muted: #9cb4d5;
+        --muted-strong: #c8dbf5;
+        --line: #1f3a5d;
+        --line-soft: #2a4a74;
+        --line-strong: #396292;
+        --line-contrast: #5d86ba;
+        --primary: #7ab8ff;
+        --primary-hover: #66a9f5;
+        --primary-accent: #48d7ee;
+        --primary-soft: rgba(122, 184, 255, 0.2);
+        --primary-soft-border: rgba(122, 184, 255, 0.28);
+        --focus: rgba(122, 184, 255, 0.35);
+        --good: #3fd58b;
+        --good-soft: rgba(63, 213, 139, 0.2);
+        --warn: #f3b34c;
+        --warn-soft: rgba(243, 179, 76, 0.2);
+        --error: #ff8080;
+        --hover: #142e50;
+        --menu-shadow: 0 16px 36px rgba(2, 10, 24, 0.45);
       }
 
       * { box-sizing: border-box; }
@@ -62,7 +67,10 @@
       body {
         margin: 0;
         min-height: 100vh;
-        background: var(--bg);
+        background:
+          radial-gradient(120% 90% at 0% 0%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 58%),
+          radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--primary-accent) 11%, transparent), transparent 62%),
+          var(--bg);
         color: var(--ink);
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
         font-size: 14px;
@@ -107,6 +115,11 @@
         transition: background 0.15s, border-color 0.15s, color 0.15s;
       }
 
+      .icon-button.btn {
+        min-height: 32px;
+        height: 32px;
+      }
+
       .icon-button:hover {
         background: var(--primary-soft);
         border-color: var(--primary-soft-border);
@@ -133,11 +146,17 @@
       }
 
       .card {
-        background: var(--card);
+        background: linear-gradient(
+          180deg,
+          color-mix(in srgb, var(--card) 92%, var(--surface)),
+          var(--card) 28%,
+          var(--surface) 100%
+        );
         border: 1px solid var(--line);
         border-radius: 16px;
         margin: 20px 24px;
         overflow: hidden;
+        box-shadow: 0 18px 44px rgba(12, 31, 64, 0.1);
       }
 
       .settings-card {
@@ -192,6 +211,12 @@
         font: inherit;
         cursor: pointer;
         transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
+      }
+
+      .settings-item.btn {
+        min-height: 46px;
+        height: auto;
+        font-weight: 400;
       }
 
       .settings-item:hover {
@@ -257,7 +282,7 @@
         cursor: pointer;
       }
 
-      .settings-select {
+      .settings-select:not(.select) {
         width: auto;
         min-width: 88px;
         margin-top: 0;
@@ -278,6 +303,18 @@
           calc(100% - 4px) 50%;
         background-size: 4px 4px, 4px 4px;
         background-repeat: no-repeat;
+      }
+
+      .settings-select.select {
+        width: auto;
+        min-width: 88px;
+        margin-top: 0;
+        color: var(--muted-strong);
+        background-color: transparent;
+        border-color: transparent;
+        min-height: 30px;
+        height: 30px;
+        padding: 0 20px 0 0;
       }
 
       label {
@@ -370,6 +407,11 @@
         transition: color 0.15s;
       }
 
+      .version-button.btn {
+        min-height: 34px;
+        height: auto;
+      }
+
       .version-button:hover {
         color: var(--muted-strong);
       }
@@ -402,6 +444,10 @@
         color: var(--muted);
       }
 
+      .status.alert {
+        display: block;
+      }
+
       .status.good {
         background: var(--good-soft);
         color: var(--good);
@@ -409,7 +455,7 @@
 
       .status.warn {
         background: var(--warn-soft);
-        color: var(--error);
+        color: var(--warn);
       }
 
       .notes {
@@ -452,17 +498,17 @@
   <body>
     <main>
       <div class="header">
-        <button id="backButton" class="icon-button back-button" type="button" aria-label="Back to settings" hidden>
+        <button id="backButton" class="icon-button back-button btn btn-ghost btn-sm btn-square" type="button" aria-label="Back to settings" hidden>
           <span aria-hidden="true">&lt;</span>
         </button>
         <h1 id="headerTitle">FoxSpark</h1>
       </div>
 
-      <section class="card settings-card">
+      <section class="card settings-card bg-base-100">
         <div id="homePage" class="settings-page">
           <div class="section settings-home-section">
             <div class="settings-list">
-              <button id="openApiSettingsButton" class="settings-item" type="button" hidden>
+              <button id="openApiSettingsButton" class="settings-item btn btn-ghost" type="button" hidden>
                 <span class="settings-item-main">
                   <span class="settings-item-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none">
@@ -479,7 +525,7 @@
                 <span class="settings-item-chevron" aria-hidden="true">&gt;</span>
               </button>
 
-              <button id="toggleOpenModeButton" class="settings-item" type="button">
+              <button id="toggleOpenModeButton" class="settings-item btn btn-ghost" type="button">
                 <span class="settings-item-main">
                   <span class="settings-item-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none">
@@ -505,7 +551,7 @@
                     <span class="settings-item-title" data-i18n="label.theme">Theme</span>
                   </span>
                 </span>
-                <select id="theme" class="settings-select">
+                <select id="theme" class="settings-select select select-ghost select-sm">
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
                   <option value="system">System</option>
@@ -522,14 +568,14 @@
                     <span class="settings-item-title" data-i18n="label.language">Language</span>
                   </span>
                 </span>
-                <select id="language" class="settings-select">
+                <select id="language" class="settings-select select select-ghost select-sm">
                   <option value="auto">Auto (Browser)</option>
                   <option value="en">English</option>
-                  <option value="zh-CN">简体中文</option>
-                  <option value="zh-TW">繁體中文</option>
-                  <option value="ja">日本語</option>
-                  <option value="ko">한국어</option>
-                  <option value="es">Español</option>
+                  <option value="zh-CN">Chinese (Simplified)</option>
+                  <option value="zh-TW">Chinese (Traditional)</option>
+                  <option value="ja">Japanese</option>
+                  <option value="ko">Korean</option>
+                  <option value="es">Spanish</option>
                 </select>
               </label>
             </div>
@@ -541,19 +587,19 @@
           <div class="section">
             <label>
               <span data-i18n="label.apiBaseUrl">API Base URL</span>
-              <input id="backendBaseUrl" type="text" placeholder="https://api.sayviner.top:8443">
+              <input id="backendBaseUrl" class="input input-bordered input-sm" type="text" placeholder="https://api.sayviner.top:8443">
             </label>
             <div class="helper" data-i18n="helper.apiBaseUrlSave">Press Enter or click outside to save the URL.</div>
 
             <div class="field-block">
               <div class="field-title" data-i18n="label.generationApiMode">Generation API Mode</div>
-              <div class="radio-group">
+              <div class="radio-group card bg-base-200">
                 <div class="radio-option">
-                  <input type="radio" name="apiMode" id="apiModeDrafts" value="drafts" checked>
+                  <input class="radio radio-sm" type="radio" name="apiMode" id="apiModeDrafts" value="drafts" checked>
                   <label for="apiModeDrafts" id="apiModeDraftsLabel" data-i18n="mode.draftsApi">Drafts API (/api/v1/drafts/generate)</label>
                 </div>
                 <div class="radio-option">
-                  <input type="radio" name="apiMode" id="apiModeContent" value="content">
+                  <input class="radio radio-sm" type="radio" name="apiMode" id="apiModeContent" value="content">
                   <label for="apiModeContent" id="apiModeContentLabel" data-i18n="mode.contentApi">Content API (/api/v1/content/generate)</label>
                 </div>
               </div>
@@ -562,10 +608,10 @@
         </div>
       </section>
 
-      <div id="status" class="status" hidden></div>
+      <div id="status" class="status alert alert-info" hidden></div>
 
       <div class="settings-footer">
-        <button id="versionButton" class="version-button" type="button">
+        <button id="versionButton" class="version-button btn btn-ghost btn-xs" type="button">
           <span id="versionLabel" class="version-label"></span>
           <span id="versionMode" class="version-mode"></span>
         </button>

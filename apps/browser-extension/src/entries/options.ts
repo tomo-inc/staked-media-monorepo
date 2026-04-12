@@ -439,6 +439,12 @@ function applyTheme(theme: StakedMediaThemeMode | null | undefined): void {
 				: "light"
 			: requestedTheme;
 	document.documentElement.setAttribute("data-options-theme", resolvedTheme);
+	document.documentElement.setAttribute(
+		"data-theme",
+		resolvedTheme === "dark"
+			? "foxspark_coinbase_dark"
+			: "foxspark_coinbase",
+	);
 }
 
 function getOpenModeToggleLabel(
@@ -457,7 +463,8 @@ function getNextHostMode(): StakedMediaHostMode {
 function setStatus(message: unknown, kind: StatusKind): void {
 	const text = String(message || "");
 	fields.status.textContent = text;
-	fields.status.className = `status${kind ? ` ${kind}` : ""}`;
+	const alertClass = kind === "warn" ? "alert-warning" : "alert-info";
+	fields.status.className = `status alert ${alertClass}${kind ? ` ${kind}` : ""}`;
 	fields.status.hidden = !text;
 }
 
