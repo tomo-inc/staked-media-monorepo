@@ -49,6 +49,7 @@ test("default config uses the hosted backend URL", () => {
 	assert.equal(DEFAULT_CONFIG.backendBaseUrl, "https://api.sayviner.top:8443");
 	assert.equal(DEFAULT_CONFIG.apiMode, "drafts");
 	assert.equal(DEFAULT_CONFIG.language, "auto");
+	assert.equal(DEFAULT_CONFIG.debugModeUnlocked, false);
 });
 
 test("sanitizeConfig normalizes and trims persisted settings", () => {
@@ -58,6 +59,7 @@ test("sanitizeConfig normalizes and trims persisted settings", () => {
 		apiMode: "drafts",
 		theme: "dark",
 		hostMode: "popup",
+		debugModeUnlocked: true,
 	});
 
 	assert.deepEqual(config, {
@@ -67,7 +69,21 @@ test("sanitizeConfig normalizes and trims persisted settings", () => {
 		apiMode: "drafts",
 		theme: "dark",
 		hostMode: "popup",
+		debugModeUnlocked: true,
 	});
+});
+
+test("sanitizeConfig normalizes persisted debug mode flag", () => {
+	assert.equal(
+		sanitizeConfig({ debugModeUnlocked: 1 as unknown as boolean })
+			.debugModeUnlocked,
+		true,
+	);
+	assert.equal(
+		sanitizeConfig({ debugModeUnlocked: 0 as unknown as boolean })
+			.debugModeUnlocked,
+		false,
+	);
 });
 
 test("sanitizeConfig falls back for invalid stored backend URLs", () => {

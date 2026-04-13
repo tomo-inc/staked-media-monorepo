@@ -399,27 +399,16 @@
         align-items: center;
         gap: 4px;
         padding: 0;
+        margin: 0;
         border: none;
         background: transparent;
+        appearance: none;
         color: var(--muted);
         font: inherit;
-        cursor: pointer;
-        transition: color 0.15s;
-      }
-
-      .version-button.btn {
-        min-height: 34px;
-        height: auto;
-      }
-
-      .version-button:hover {
-        color: var(--muted-strong);
-      }
-
-      .version-button:focus-visible {
+        line-height: inherit;
+        text-align: center;
+        cursor: default;
         outline: none;
-        box-shadow: 0 0 0 2px var(--focus);
-        border-radius: 6px;
       }
 
       .version-label {
@@ -611,7 +600,7 @@
       <div id="status" class="status alert alert-info" hidden></div>
 
       <div class="settings-footer">
-        <button id="versionButton" class="version-button btn btn-ghost btn-xs" type="button">
+        <button id="versionButton" class="version-button" type="button">
           <span id="versionLabel" class="version-label"></span>
           <span id="versionMode" class="version-mode"></span>
         </button>

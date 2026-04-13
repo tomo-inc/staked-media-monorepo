@@ -347,7 +347,7 @@ interface StakedMediaPanelHelpersHost {
             </div>
 
             <section class="smc-settings-footer-section">
-              <button class="smc-settings-version-button btn btn-ghost btn-xs" data-action="unlock-debug" type="button">
+              <button class="smc-settings-version-button" data-action="unlock-debug" type="button">
                 <span class="smc-settings-version-label" data-slot="settings-version"></span>
                 <span class="smc-settings-version-mode" data-slot="settings-version-mode"></span>
               </button>

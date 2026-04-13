@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.config import Settings
+from app.config import Settings, WhitelistSettings
 from app.database import Database
 from app.llm import GeminiClient
 from app.main import create_app
@@ -579,22 +579,24 @@ class ApiTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
-    def test_persona_routes_reject_non_whitelisted_username(self) -> None:
+    def test_persona_routes_allow_non_whitelisted_username_when_whitelist_disabled(self) -> None:
         ingest_response = self.client.post(
             "/api/v1/profiles/ingest",
             json={"username": "elonmusk"},
         )
-        self.assertEqual(ingest_response.status_code, 403)
-        self.assertEqual(ingest_response.json()["detail"], "Target username is not in the trial whitelist")
+        self.assertEqual(ingest_response.status_code, 200)
+        self.assertEqual(ingest_response.json()["profile"]["username"], "elonmusk")
 
         profile_response = self.client.get("/api/v1/profiles/elonmusk")
-        self.assertEqual(profile_response.status_code, 403)
+        self.assertEqual(profile_response.status_code, 200)
+        self.assertEqual(profile_response.json()["profile"]["username"], "elonmusk")
 
         drafts_response = self.client.post(
             "/api/v1/drafts/generate",
             json={"username": "elonmusk", "prompt": "Talk about focus", "draft_count": 2},
         )
-        self.assertEqual(drafts_response.status_code, 403)
+        self.assertEqual(drafts_response.status_code, 200)
+        self.assertEqual(drafts_response.json()["username"], "elonmusk")
 
         content_response = self.client.post(
             "/api/v1/content/generate",
@@ -606,7 +608,8 @@ class ApiTestCase(unittest.TestCase):
                 "draft_count": 1,
             },
         )
-        self.assertEqual(content_response.status_code, 403)
+        self.assertEqual(content_response.status_code, 200)
+        self.assertEqual(content_response.json()["topic"], "rockets")
 
         exposure_response = self.client.post(
             "/api/v1/exposure/analyze",
@@ -617,7 +620,94 @@ class ApiTestCase(unittest.TestCase):
                 "domain": "space",
             },
         )
-        self.assertEqual(exposure_response.status_code, 403)
+        self.assertEqual(exposure_response.status_code, 200)
+        self.assertIn("heat_score", exposure_response.json())
+
+    def test_persona_routes_reject_non_whitelisted_username_when_whitelist_enabled(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        try:
+            settings = Settings(
+                app_env="test",
+                database_url=f"sqlite:///{temp_dir.name}/mvp.db",
+                openai_api_key="test-key",
+                log_enable_file=False,
+                whitelist=WhitelistSettings(enabled=True),
+            )
+            upstream_client = FakeUpstreamClient()
+            llm_client = FakeLLMClient()
+            database = Database(settings.database_path)
+            database.init()
+            database.add_allowed_username("demo-user")
+            content_orchestrator = ContentOrchestrator(
+                settings=settings,
+                database=database,
+                llm=llm_client,
+                web_enricher=FakeWebEnricher(),
+            )
+            with TestClient(
+                create_app(
+                    settings,
+                    upstream_client=upstream_client,
+                    llm_client=llm_client,
+                    content_orchestrator=content_orchestrator,
+                )
+            ) as client:
+                for method, path, kwargs in (
+                    ("post", "/api/v1/profiles/ingest", {"json": {"username": "elonmusk"}}),
+                    ("get", "/api/v1/profiles/elonmusk", {}),
+                    (
+                        "post",
+                        "/api/v1/drafts/generate",
+                        {"json": {"username": "elonmusk", "prompt": "Talk about focus", "draft_count": 2}},
+                    ),
+                    (
+                        "post",
+                        "/api/v1/content/generate",
+                        {
+                            "json": {
+                                "username": "elonmusk",
+                                "mode": "A",
+                                "idea": "Talk about rockets",
+                                "topic": "rockets",
+                                "draft_count": 1,
+                            }
+                        },
+                    ),
+                    (
+                        "post",
+                        "/api/v1/trending/generate",
+                        {
+                            "json": {
+                                "username": "elonmusk",
+                                "event_id": "web3::event-1",
+                                "event_payload": {
+                                    "id": "web3::event-1",
+                                    "title": "ETF flow spikes",
+                                    "summary": "Large inflow observed.",
+                                },
+                                "comment": "Talk about implications",
+                                "draft_count": 1,
+                            }
+                        },
+                    ),
+                    (
+                        "post",
+                        "/api/v1/exposure/analyze",
+                        {
+                            "json": {
+                                "username": "elonmusk",
+                                "text": "Rockets are hard",
+                                "topic": "rockets",
+                                "domain": "space",
+                            }
+                        },
+                    ),
+                ):
+                    response = getattr(client, method)(path, **kwargs)
+                    self.assertEqual(response.status_code, 403)
+                    self.assertEqual(response.json()["detail"], "Username is not allowed")
+        finally:
+            temp_dir.cleanup()
 
     def test_repeated_ingest_rebuilds_persona_from_fresh_upstream_data(self) -> None:
         first_ingest = self.client.post(

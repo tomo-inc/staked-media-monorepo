@@ -39,10 +39,10 @@ from app.schemas import (
 from app.upstream import UpstreamClient, UpstreamError
 
 logger = get_logger(__name__)
-WHITELIST_FORBIDDEN_DETAIL = "Target username is not in the trial whitelist"
 _STARTUP_HOT_EVENTS_REFRESH_DELAY_SECONDS = 0.05
 _REQUEST_ID_HEADER = "X-Request-ID"
 _REQUEST_LOG_EXCLUDED_ROUTES = frozenset({"/healthz", "/metrics", "/readyz", "/livez"})
+WHITELIST_FORBIDDEN_DETAIL = "Username is not allowed"
 
 
 def utc_now_iso() -> str:
@@ -115,6 +115,30 @@ def _http_failure_class_from_status(status_code: int) -> str:
     if status_code >= 500:
         return "server_error"
     return "request_error"
+
+
+def _require_allowed_username(
+    settings: Settings,
+    database: Database,
+    username: str,
+    *,
+    request_id: str,
+    route: str,
+) -> str:
+    normalized_username = normalize_username(username)
+    if not settings.whitelist.enabled:
+        return normalized_username
+    if database.is_username_allowed(normalized_username):
+        return normalized_username
+    log_event(
+        logger,
+        logging.WARNING,
+        "api_username_not_whitelisted",
+        request_id=request_id,
+        route=route,
+        username=normalized_username,
+    )
+    raise HTTPException(status_code=403, detail=WHITELIST_FORBIDDEN_DETAIL)
 
 
 def _run_hot_events_refresh_once(app: FastAPI, *, trigger: str) -> None:
@@ -280,7 +304,13 @@ def create_app(
         database: Database = request.app.state.database
         upstream: UpstreamClient = request.app.state.upstream
         llm: LLMClient = request.app.state.llm
-        username = _require_allowed_username(database, payload.username, request_id=request_id, route="profiles_ingest")
+        username = _require_allowed_username(
+            settings,
+            database,
+            payload.username,
+            request_id=request_id,
+            route="/api/v1/profiles/ingest",
+        )
         ingested_at = utc_now_iso()
         log_event(
             logger,
@@ -390,8 +420,15 @@ def create_app(
     @app.get("/api/v1/profiles/{username}", response_model=ProfileResponse)
     def get_profile(username: str, request: Request) -> ProfileResponse:
         request_id = _ensure_request_id(request)
+        settings = request.app.state.settings
         database: Database = request.app.state.database
-        normalized_username = _require_allowed_username(database, username, request_id=request_id, route="profiles_get")
+        normalized_username = _require_allowed_username(
+            settings,
+            database,
+            username,
+            request_id=request_id,
+            route="/api/v1/profiles/{username}",
+        )
         log_event(
             logger,
             logging.INFO,
@@ -431,9 +468,16 @@ def create_app(
     def generate_drafts(payload: DraftGenerateRequest, request: Request) -> DraftGenerateResponse:
         request_id = _ensure_request_id(request)
         started_at = time.perf_counter()
+        settings = request.app.state.settings
         database: Database = request.app.state.database
         llm: LLMClient = request.app.state.llm
-        username = _require_allowed_username(database, payload.username, request_id=request_id, route="drafts_generate")
+        username = _require_allowed_username(
+            settings,
+            database,
+            payload.username,
+            request_id=request_id,
+            route="/api/v1/drafts/generate",
+        )
         created_at = utc_now_iso()
         log_event(
             logger,
@@ -681,9 +725,14 @@ def create_app(
     def content_generate(payload: ContentGenerateRequest, request: Request) -> ContentGenerateResponse:
         request_id = _ensure_request_id(request)
         started_at = time.perf_counter()
+        settings = request.app.state.settings
         database: Database = request.app.state.database
         username = _require_allowed_username(
-            database, payload.username, request_id=request_id, route="content_generate"
+            settings,
+            database,
+            payload.username,
+            request_id=request_id,
+            route="/api/v1/content/generate",
         )
         payload = payload.copy(update={"username": username})
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
@@ -794,9 +843,14 @@ def create_app(
     def trending_generate(payload: TrendingGenerateRequest, request: Request) -> ContentGenerateResponse:
         request_id = _ensure_request_id(request)
         started_at = time.perf_counter()
+        settings = request.app.state.settings
         database: Database = request.app.state.database
         username = _require_allowed_username(
-            database, payload.username, request_id=request_id, route="trending_generate"
+            settings,
+            database,
+            payload.username,
+            request_id=request_id,
+            route="/api/v1/trending/generate",
         )
         payload = payload.copy(update={"username": username})
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
@@ -901,9 +955,14 @@ def create_app(
     def exposure_analyze(payload: ExposureAnalyzeRequest, request: Request) -> ExposureAnalyzeResponse:
         request_id = _ensure_request_id(request)
         started_at = time.perf_counter()
+        settings = request.app.state.settings
         database: Database = request.app.state.database
         username = _require_allowed_username(
-            database, payload.username, request_id=request_id, route="exposure_analyze"
+            settings,
+            database,
+            payload.username,
+            request_id=request_id,
+            route="/api/v1/exposure/analyze",
         )
         payload = payload.copy(update={"username": username})
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
@@ -1023,28 +1082,6 @@ def create_app(
 
 def create_app_from_runtime_config() -> FastAPI:
     return create_app(settings=get_settings())
-
-
-def _require_allowed_username(
-    database: Database,
-    username: str,
-    *,
-    request_id: str | None = None,
-    route: str,
-) -> str:
-    normalized = normalize_username(username)
-    if database.is_username_allowed(normalized):
-        return normalized
-
-    log_event(
-        logger,
-        logging.WARNING,
-        "api_username_not_whitelisted",
-        request_id=request_id,
-        route=route,
-        username=normalized,
-    )
-    raise HTTPException(status_code=403, detail=WHITELIST_FORBIDDEN_DETAIL)
 
 
 def _profile_summary_from_row(row: dict[str, Any]) -> ProfileSummary:

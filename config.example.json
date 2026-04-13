@@ -51,6 +51,9 @@
     "max_items": 12,
     "recency_hours": 24
   },
+  "whitelist": {
+    "enabled": false
+  },
   "hot_events": {
     "provider_6551_token": "",
     "auto_refresh_interval_seconds": 300,

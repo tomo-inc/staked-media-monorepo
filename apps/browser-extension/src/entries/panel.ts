@@ -460,7 +460,7 @@ interface PanelUi {
 	});
 
 	ui.unlockDebugButton.addEventListener("click", () => {
-		handleDebugUnlockTap();
+		void handleDebugUnlockTap();
 	});
 
 	ui.toggleOpenModeButton.addEventListener("click", async () => {
@@ -678,8 +678,7 @@ interface PanelUi {
 			type: "get_config",
 		});
 		STATE.config = configResponse.config || SETTINGS_DEFAULTS;
-		await ensureReleaseBackendDefaults();
-		await enforceDraftsApiMode();
+		STATE.debugModeUnlocked = Boolean(STATE.config.debugModeUnlocked);
 		applyTheme(STATE.config?.theme);
 		hydrateInputs();
 		if (STATE.config?.defaultUsername) {
@@ -766,30 +765,7 @@ interface PanelUi {
 			: t("settings.productionMode", locale);
 	}
 
-	async function ensureReleaseBackendDefaults(): Promise<void> {
-		if (!STATE.config) {
-			return;
-		}
-		// Release builds always boot against the hosted Drafts API, even if an
-		// older local/debug backend setting was persisted. Debug mode only
-		// re-exposes the hidden settings UI; it does not bypass this reset.
-		const needsHostedBackend =
-			STATE.config.backendBaseUrl !== SETTINGS_DEFAULTS.backendBaseUrl ||
-			STATE.config.apiMode !== "drafts";
-		if (!needsHostedBackend) {
-			return;
-		}
-		const response = await sendRuntimeMessage<PanelConfigResponse>({
-			type: "save_config",
-			payload: {
-				backendBaseUrl: SETTINGS_DEFAULTS.backendBaseUrl,
-				apiMode: "drafts",
-			},
-		});
-		STATE.config = response.config;
-	}
-
-	function handleDebugUnlockTap(): void {
+	async function handleDebugUnlockTap(): Promise<void> {
 		const now = Date.now();
 		const withinTapWindow =
 			STATE.debugTapStartedAt > 0 &&
@@ -799,11 +775,24 @@ interface PanelUi {
 		if (STATE.debugTapCount < 5) {
 			return;
 		}
-		STATE.debugModeUnlocked = !STATE.debugModeUnlocked;
-		STATE.debugTapCount = 0;
-		STATE.debugTapStartedAt = 0;
-		loadSettingsUI({ syncApiForm: true });
-		render();
+		try {
+			const response = await sendRuntimeMessage<PanelConfigResponse>({
+				type: "save_config",
+				payload: {
+					debugModeUnlocked: !STATE.debugModeUnlocked,
+				},
+			});
+			STATE.config = response.config;
+			STATE.debugTapCount = 0;
+			STATE.debugTapStartedAt = 0;
+			loadSettingsUI({ syncApiForm: true });
+			render();
+			renderSettingsStatus("", "");
+		} catch (error) {
+			STATE.debugTapCount = 0;
+			STATE.debugTapStartedAt = 0;
+			renderSettingsStatus(formatRuntimeError(error), "warn");
+		}
 	}
 
 	function trf(
@@ -859,31 +848,11 @@ interface PanelUi {
 		ui.sLanguage.value = languageSetting;
 	}
 
-	async function enforceDraftsApiMode(): Promise<void> {
-		if (!STATE.config) {
-			return;
-		}
-		if (STATE.config.apiMode === "drafts") {
-			return;
-		}
-
-		try {
-			const response = await sendRuntimeMessage<PanelConfigResponse>({
-				type: "save_config",
-				payload: {
-					apiMode: "drafts",
-				},
-			});
-			STATE.config = response.config;
-		} catch (error) {
-			renderStatus(formatRuntimeError(error), "warn");
-		}
-	}
-
 	function loadSettingsUI(options: { syncApiForm?: boolean } = {}): void {
 		const syncApiForm = options.syncApiForm !== false;
 		const config = STATE.config || {};
 		const merged = { ...SETTINGS_DEFAULTS, ...config };
+		STATE.debugModeUnlocked = Boolean(merged.debugModeUnlocked);
 		if (syncApiForm) {
 			ui.sBackendBaseUrl.value =
 				merged.backendBaseUrl || SETTINGS_DEFAULTS.backendBaseUrl;

@@ -95,7 +95,7 @@ fields.openApiSettingsButton.addEventListener("click", () => {
 });
 
 fields.versionButton.addEventListener("click", () => {
-	handleDebugUnlockTap();
+	void handleDebugUnlockTap();
 });
 
 fields.toggleOpenModeButton.addEventListener("click", async () => {
@@ -147,8 +147,6 @@ async function init() {
 		type: "get_config",
 	});
 	state.config = response.config || DEFAULTS;
-	await ensureReleaseBackendDefaults();
-	await enforceDraftsApiMode();
 	applyConfig(state.config, { syncApiForm: true });
 	renderPage();
 	setStatus("", "");
@@ -184,30 +182,7 @@ function applyApiModeGuard(): void {
 	fields.apiModeContent.disabled = true;
 }
 
-async function ensureReleaseBackendDefaults(): Promise<void> {
-	if (!state.config) {
-		return;
-	}
-	// Release builds always boot against the hosted Drafts API, even if an older
-	// local/debug backend setting was persisted. Debug mode only re-exposes the
-	// hidden settings UI; it does not bypass this production default reset.
-	const needsHostedBackend =
-		state.config.backendBaseUrl !== DEFAULTS.backendBaseUrl ||
-		state.config.apiMode !== "drafts";
-	if (!needsHostedBackend) {
-		return;
-	}
-	const response = await sendRuntimeMessage<OptionsConfigResponse>({
-		type: "save_config",
-		payload: {
-			backendBaseUrl: DEFAULTS.backendBaseUrl,
-			apiMode: "drafts",
-		},
-	});
-	state.config = response.config || DEFAULTS;
-}
-
-function handleDebugUnlockTap(): void {
+async function handleDebugUnlockTap(): Promise<void> {
 	const now = Date.now();
 	const withinTapWindow =
 		state.debugTapStartedAt > 0 &&
@@ -217,28 +192,23 @@ function handleDebugUnlockTap(): void {
 	if (state.debugTapCount < 5) {
 		return;
 	}
-	state.debugModeUnlocked = !state.debugModeUnlocked;
-	state.debugTapCount = 0;
-	state.debugTapStartedAt = 0;
-	applyConfig(state.config || DEFAULTS, { syncApiForm: true });
-	renderPage();
-}
-
-async function enforceDraftsApiMode(): Promise<void> {
-	if (!state.config) {
-		return;
+	try {
+		const response = await sendRuntimeMessage<OptionsConfigResponse>({
+			type: "save_config",
+			payload: {
+				debugModeUnlocked: !state.debugModeUnlocked,
+			},
+		});
+		state.debugTapCount = 0;
+		state.debugTapStartedAt = 0;
+		applyConfig(response.config || DEFAULTS, { syncApiForm: true });
+		renderPage();
+		setStatus("", "");
+	} catch (error) {
+		state.debugTapCount = 0;
+		state.debugTapStartedAt = 0;
+		setStatus(formatRuntimeError(error), "warn");
 	}
-	if (state.config.apiMode === "drafts") {
-		return;
-	}
-
-	const response = await sendRuntimeMessage<OptionsConfigResponse>({
-		type: "save_config",
-		payload: {
-			apiMode: "drafts",
-		},
-	});
-	state.config = response.config || DEFAULTS;
 }
 
 function applyConfig(
@@ -250,6 +220,7 @@ function applyConfig(
 	const syncApiForm = options.syncApiForm !== false;
 	const next = { ...DEFAULTS, ...config };
 	state.config = next;
+	state.debugModeUnlocked = Boolean(next.debugModeUnlocked);
 
 	if (syncApiForm) {
 		fields.backendBaseUrl.value =

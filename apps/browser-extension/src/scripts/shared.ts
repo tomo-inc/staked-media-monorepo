@@ -36,6 +36,7 @@ interface StakedMediaExtensionSharedHost {
 			theme: ThemeMode;
 			hostMode: HostMode;
 			language: LanguageMode;
+			debugModeUnlocked: boolean;
 		}
 
 		interface NormalizeOptions {
@@ -84,6 +85,7 @@ interface StakedMediaExtensionSharedHost {
 			theme: "light",
 			hostMode: "sidepanel",
 			language: "auto",
+			debugModeUnlocked: false,
 		});
 
 		const SUPPORTED_LANGUAGE_VALUES: ReadonlySet<string> = new Set([
@@ -760,6 +762,7 @@ interface StakedMediaExtensionSharedHost {
 				theme: normalizeTheme(merged.theme),
 				hostMode: normalizeHostMode(merged.hostMode),
 				language: normalizeLanguage(merged.language),
+				debugModeUnlocked: Boolean(merged.debugModeUnlocked),
 			};
 		}
 
