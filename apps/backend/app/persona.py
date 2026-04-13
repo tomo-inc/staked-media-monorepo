@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Callable, Sequence
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 from statistics import mean
 from typing import Any
@@ -600,13 +600,34 @@ def select_representative_tweets(tweet_rows: list[dict[str, Any]], limit: int = 
     if not candidates:
         candidates = list(tweet_rows)
 
-    recent = sorted(candidates, key=lambda row: row["created_at"], reverse=True)[: max(10, limit // 2)]
-    high_engagement = sorted(candidates, key=_engagement_score, reverse=True)[: max(10, limit // 3)]
-    long_form = sorted(candidates, key=lambda row: len(clean_text(row["text"])), reverse=True)[: max(5, limit // 5)]
+    now = datetime.now(UTC)
+    recent_threshold = now - timedelta(days=30)
+
+    recent = sorted(
+        candidates,
+        key=lambda row: row["created_at"],
+        reverse=True,
+    )[:15]
+    top_all_time = sorted(
+        candidates,
+        key=_engagement_score,
+        reverse=True,
+    )[:15]
+    recent_candidates = [
+        row
+        for row in candidates
+        if (parsed_created_at := _parse_tweet_timestamp(row.get("created_at"))) is not None
+        and parsed_created_at >= recent_threshold
+    ]
+    top_recent = sorted(
+        recent_candidates,
+        key=_engagement_score,
+        reverse=True,
+    )[:10]
 
     selected: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
-    for row in recent + high_engagement + long_form:
+    for row in recent + top_all_time + top_recent:
         if row["id"] in seen_ids:
             continue
         seen_ids.add(row["id"])
@@ -615,8 +636,6 @@ def select_representative_tweets(tweet_rows: list[dict[str, Any]], limit: int = 
                 "id": row["id"],
                 "text": clean_text(row["text"]),
                 "created_at": row["created_at"],
-                "is_reply": row["is_reply"],
-                "is_quote": row["is_quote"],
                 "engagement_score": _engagement_score(row),
             }
         )
@@ -760,9 +779,12 @@ def _parse_tweet_timestamp(value: Any) -> datetime | None:
     if not text:
         return None
     try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def _format_utc_offset(offset_hours: int) -> str:

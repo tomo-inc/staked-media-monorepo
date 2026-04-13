@@ -250,7 +250,6 @@ interface PanelUi {
 		extractDrafts,
 		listLanguageOptions,
 		resolveLocale,
-		sanitizeUserVisibleErrorMessage,
 		sendRuntimeMessage,
 		t,
 	} = panelWindow.StakedMediaExtensionShared;
@@ -319,6 +318,7 @@ interface PanelUi {
 	const root = document.getElementById("app") as HTMLElement;
 	root.innerHTML = buildPanelShell();
 	root.firstElementChild?.setAttribute("data-host", HOST_MODE);
+	document.documentElement.setAttribute("data-host", HOST_MODE);
 
 	const ui: PanelUi = {
 		headerTitle: root.querySelector(
@@ -719,15 +719,7 @@ interface PanelUi {
 				});
 			const supported = Boolean(response?.result?.supported);
 			if (!supported) {
-				const capabilityMessage = String(
-					response?.result?.message || "",
-				).trim();
-				STATE.trendingErrorHint = capabilityMessage
-					? sanitizeUserVisibleErrorMessage(
-							capabilityMessage,
-							tr("error.serviceUnavailable"),
-						)
-					: `Configured backend is outdated. Update or restart ${getConfiguredBackendBaseUrl()} with the latest code.`;
+				STATE.trendingErrorHint = tr("error.serviceUnavailable");
 				renderTrendingResults();
 				renderSendToDraftButton();
 				return;
@@ -737,12 +729,9 @@ interface PanelUi {
 				renderTrendingResults();
 				renderSendToDraftButton();
 			}
-		} catch (error) {
+		} catch (_error) {
 			if (!STATE.trendingGenerated) {
-				STATE.trendingErrorHint = sanitizeUserVisibleErrorMessage(
-					(error as Error | undefined)?.message || "",
-					tr("error.serviceUnavailable"),
-				);
+				STATE.trendingErrorHint = tr("error.serviceUnavailable");
 				renderTrendingResults();
 				renderSendToDraftButton();
 			}
@@ -752,14 +741,6 @@ interface PanelUi {
 	function applyApiModeGuard(): void {
 		ui.sBackendBaseUrl.readOnly = false;
 		ui.sApiModeContent.disabled = true;
-	}
-
-	function getConfiguredBackendBaseUrl(): string {
-		return (
-			String(
-				STATE.config?.backendBaseUrl || SETTINGS_DEFAULTS.backendBaseUrl,
-			).trim() || SETTINGS_DEFAULTS.backendBaseUrl
-		);
 	}
 
 	function getResolvedLocale(): StakedMediaLocale {
@@ -2662,62 +2643,36 @@ interface PanelUi {
 
 	function formatApiError(error: unknown): string {
 		const runtimeError = error as RuntimeErrorWithStatus;
-		const code = String(runtimeError?.code || "").trim();
 		const path = String(runtimeError?.path || "");
-		const detailText = extractErrorDetailText(runtimeError?.payload);
-		const configuredBaseUrl = getConfiguredBackendBaseUrl();
-		if (code === "LOCAL_BACKEND_REBUILD_UNSUPPORTED") {
-			return `Configured backend is outdated: /api/v1/profiles/rebuild-persona is unavailable on ${configuredBaseUrl}. Update or restart that backend.`;
+		const detailText = getRuntimeErrorDetailText(runtimeError);
+		const status = runtimeError?.status;
+
+		if (status === 403) {
+			return tr("error.userNotAllowed");
 		}
-		if (code === "LOCAL_BACKEND_OPENAPI_UNAVAILABLE") {
-			return `Backend capability check failed. Confirm ${configuredBaseUrl} is reachable.`;
+		if (status === 422) {
+			return tr("error.invalidInput");
 		}
-		if (runtimeError?.status === 404) {
-			if (path.startsWith("/api/v1/profiles/rebuild-persona")) {
-				return `Profile is missing in the configured backend (${configuredBaseUrl}). Import profile history there first.`;
+		if (status === 404) {
+			if (
+				path.startsWith("/api/v1/profiles/") ||
+				detailText.includes("profile not found")
+			) {
+				return tr("error.profileNotReady");
 			}
-			if (path.startsWith("/api/v1/profiles/")) {
-				return "Profile not found in the backend. Run ingest first.";
-			}
-			if (path.startsWith("/api/v1/content/hot-events")) {
-				if (detailText.includes("not available yet")) {
-					return "Hot events snapshot is not ready yet. Refresh once or wait for the scheduler.";
-				}
-				return `Configured backend does not expose hot-events. Start or update backend at ${configuredBaseUrl}.`;
-			}
-			if (path.startsWith("/api/v1/trending/generate")) {
-				if (detailText.includes("selected hot event was not found")) {
-					return "Selected hot event expired. Refresh hot events and select again.";
-				}
-				return `Trending endpoint is unavailable on the configured backend. Start or update backend at ${configuredBaseUrl}.`;
-			}
-			if (path === "/openapi.json") {
-				return `Configured backend OpenAPI route is unavailable. Start or update backend at ${configuredBaseUrl}.`;
-			}
-			return "Backend endpoint returned 404. Check API Base URL and backend version.";
+			return tr("error.serviceUnavailable");
 		}
-		if (
-			runtimeError?.status === 405 &&
-			path.startsWith("/api/v1/profiles/rebuild-persona")
-		) {
-			return `Configured backend does not support persona rebuild yet. Update or restart backend at ${configuredBaseUrl}.`;
-		}
-		if (runtimeError?.status === 409) {
-			if (path.startsWith("/api/v1/profiles/rebuild-persona")) {
-				return `Configured backend has no tweets for this user, so persona rebuild cannot run yet.`;
+		if (status === 409) {
+			if (detailText.includes("persona not found")) {
+				return tr("error.profileNotReady");
 			}
-			return "Persona is missing in the backend. Re-run ingest before generating.";
+			return tr("error.serviceUnavailable");
 		}
-		if (runtimeError?.status === 422) {
-			return "The backend rejected the request. Check your input and try again.";
-		}
-		if (runtimeError?.status === 502) {
-			return "The backend failed while calling upstream services. Retry once the service is healthy.";
-		}
-		return formatRuntimeError(error);
+		return tr("error.serviceUnavailable");
 	}
 
-	function extractErrorDetailText(payload: unknown): string {
+	function getRuntimeErrorDetailText(error: RuntimeErrorWithStatus): string {
+		const payload = error?.payload;
 		if (payload && typeof payload === "object" && !Array.isArray(payload)) {
 			const detail = (payload as { detail?: unknown }).detail;
 			return String(detail || "")
@@ -2728,10 +2683,11 @@ interface PanelUi {
 	}
 
 	function formatRuntimeError(error: unknown): string {
-		return sanitizeUserVisibleErrorMessage(
-			(error as Error | undefined)?.message || error || "",
-			tr("error.serviceUnavailable"),
-		);
+		const runtimeError = error as RuntimeErrorWithStatus;
+		if (runtimeError?.status === 403) {
+			return tr("error.userNotAllowed");
+		}
+		return tr("error.serviceUnavailable");
 	}
 
 	async function resolvePopupTargetWindowId(): Promise<number | null> {

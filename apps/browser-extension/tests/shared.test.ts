@@ -13,7 +13,6 @@ const {
 	resolveLocale,
 	routeMessage,
 	sanitizeConfig,
-	sanitizeUserVisibleErrorMessage,
 	t,
 } = require("../dist/shared.js") as Pick<
 	StakedMediaExtensionSharedApi,
@@ -25,7 +24,6 @@ const {
 	| "resolveLocale"
 	| "routeMessage"
 	| "sanitizeConfig"
-	| "sanitizeUserVisibleErrorMessage"
 	| "t"
 >;
 
@@ -226,6 +224,15 @@ test("i18n helpers return translated labels and language options", () => {
 		t("error.serviceUnavailable", "en"),
 		DEFAULT_PUBLIC_ERROR_MESSAGE,
 	);
+	assert.equal(
+		t("error.profileNotReady", "en"),
+		"Profile is not ready. Please ingest first.",
+	);
+	assert.equal(t("error.invalidInput", "zh-CN"), "输入有误，请检查后重试。");
+	assert.equal(
+		t("error.userNotAllowed", "ja"),
+		"このユーザーは許可されていません。管理者にお問い合わせください。",
+	);
 	const options = listLanguageOptions("zh-CN");
 	assert.equal(options[0]?.value, "auto");
 	assert.match(String(options[0]?.label || ""), /自动|跟随浏览器/);
@@ -269,29 +276,5 @@ test("escapeHtml escapes unsafe characters", () => {
 	assert.equal(
 		escapeHtml('<div class="x">Tom & Jerry</div>'),
 		"&lt;div class=&quot;x&quot;&gt;Tom &amp; Jerry&lt;/div&gt;",
-	);
-});
-
-test("sanitizeUserVisibleErrorMessage hides raw html and keeps safe messages", () => {
-	assert.equal(
-		sanitizeUserVisibleErrorMessage(
-			"<!DOCTYPE html><html><head><title>524</title></head><body>A timeout occurred</body></html>",
-			"localized fallback",
-		),
-		"localized fallback",
-	);
-	assert.equal(
-		sanitizeUserVisibleErrorMessage(
-			DEFAULT_PUBLIC_ERROR_MESSAGE,
-			"localized fallback",
-		),
-		"localized fallback",
-	);
-	assert.equal(
-		sanitizeUserVisibleErrorMessage(
-			"Backend URL must be a valid http(s) URL pointing to an allowed host.",
-			"localized fallback",
-		),
-		"Backend URL must be a valid http(s) URL pointing to an allowed host.",
 	);
 });

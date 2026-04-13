@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import UTC, datetime, timedelta
 
 from app.persona import (
     build_corpus_stats,
@@ -11,11 +12,63 @@ from app.persona import (
     is_too_similar,
     prompt_language_mode,
     prompt_requests_full_chinese,
+    select_representative_tweets,
     select_theme_tweets,
 )
 
 
 class PersonaHelpersTestCase(unittest.TestCase):
+    def test_select_representative_tweets_balances_recent_and_high_engagement_buckets(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        tweet_rows = []
+        for index in range(20):
+            created_at = (now - timedelta(days=index)).isoformat().replace("+00:00", "Z")
+            tweet_rows.append(
+                {
+                    "id": f"recent-{index}",
+                    "text": f"Recent post {index}",
+                    "created_at": created_at,
+                    "lang": "en",
+                    "is_retweet": False,
+                    "is_reply": False,
+                    "is_quote": False,
+                    "like_count": index,
+                    "retweet_count": 0,
+                    "reply_count": 0,
+                    "quote_count": 0,
+                }
+            )
+        for index in range(20):
+            created_at = (now - timedelta(days=60 + index)).isoformat().replace("+00:00", "Z")
+            tweet_rows.append(
+                {
+                    "id": f"viral-{index}",
+                    "text": f"Historic banger {index}",
+                    "created_at": created_at,
+                    "lang": "en",
+                    "is_retweet": False,
+                    "is_reply": False,
+                    "is_quote": False,
+                    "like_count": 1000 - index,
+                    "retweet_count": 20,
+                    "reply_count": 10,
+                    "quote_count": 5,
+                }
+            )
+
+        selected = select_representative_tweets(tweet_rows, limit=40)
+        selected_ids = {item["id"] for item in selected}
+
+        self.assertLessEqual(len(selected), 40)
+        self.assertIn("recent-0", selected_ids)
+        self.assertIn("recent-14", selected_ids)
+        self.assertIn("viral-0", selected_ids)
+        self.assertIn("viral-9", selected_ids)
+        self.assertTrue(all("engagement_score" in item for item in selected))
+        self.assertTrue(all("created_at" in item for item in selected))
+        self.assertTrue(all("is_reply" not in item for item in selected))
+        self.assertTrue(all("is_quote" not in item for item in selected))
+
     def test_build_corpus_stats_counts_retweets_and_replies(self) -> None:
         profile = {
             "name": "Tester",

@@ -121,6 +121,28 @@ body {
 	max-width: none;
 }
 
+html[data-host="popup"],
+html[data-host="popup"] body {
+	width: 420px;
+	min-width: 420px;
+	min-height: 0;
+}
+
+html[data-host="popup"] .smc-app {
+	min-height: 0;
+}
+
+html[data-host="popup"] .smc-shell {
+	max-width: 420px;
+}
+
+html[data-host="popup"] .smc-panel {
+	min-height: 0;
+	max-height: 600px;
+	overflow-y: auto;
+	border: none;
+}
+
 .smc-panel {
 	display: flex;
 	flex-direction: column;
@@ -1123,6 +1145,10 @@ body {
 	padding-right: 4px;
 	scrollbar-width: thin;
 	scrollbar-color: var(--smc-line-contrast) transparent;
+}
+
+html[data-host="popup"] .smc-hot-list {
+	max-height: 260px;
 }
 
 .smc-hot-list-frame {

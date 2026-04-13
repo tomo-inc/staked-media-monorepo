@@ -29,8 +29,6 @@ from app.schemas import (
     HotEventsResponse,
     IngestResponse,
     ProfileIngestRequest,
-    ProfileRebuildPersonaRequest,
-    ProfileRebuildPersonaResponse,
     ProfileResponse,
     ProfileSummary,
     TrendingGenerateRequest,
@@ -282,76 +280,6 @@ def create_app(
             profile=_profile_summary_from_row(stored_user),
             stored_tweet_count=len(tweets),
             latest_persona_snapshot=latest_persona,
-        )
-
-    @app.post("/api/v1/profiles/rebuild-persona", response_model=ProfileRebuildPersonaResponse)
-    def rebuild_persona(payload: ProfileRebuildPersonaRequest, request: Request) -> ProfileRebuildPersonaResponse:
-        request_id = uuid.uuid4().hex[:12]
-        started_at = time.perf_counter()
-        settings = request.app.state.settings
-        database: Database = request.app.state.database
-        llm: LLMClient = request.app.state.llm
-        username = _require_allowed_username(
-            database,
-            payload.username,
-            request_id=request_id,
-            route="profiles_rebuild_persona",
-        )
-        rebuilt_at = utc_now_iso()
-        stored_user = database.get_user_by_username(username)
-        if stored_user is None:
-            raise HTTPException(status_code=404, detail="Profile not found")
-
-        tweet_rows = database.get_user_tweets(stored_user["id"], limit=settings.twitter.max_ingest_tweets)
-        if not tweet_rows:
-            raise HTTPException(status_code=409, detail="No tweets found. Run /api/v1/profiles/ingest first")
-
-        profile_payload = _profile_payload_from_stored_user(stored_user)
-        corpus_stats = build_corpus_stats(
-            profile_payload,
-            tweet_rows,
-            sample_size=settings.twitter.persona_sample_size,
-        )
-        try:
-            persona = llm.generate_persona(
-                profile=profile_payload,
-                corpus_stats=corpus_stats,
-                request_id=request_id,
-            )
-        except LLMError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-        persona_snapshot_id = database.save_persona_snapshot(
-            user_id=str(stored_user["id"]),
-            username=str(stored_user["username"]),
-            source_tweet_count=corpus_stats["tweet_counts"]["total"],
-            source_original_tweet_count=corpus_stats["tweet_counts"]["original"],
-            source_window_start=corpus_stats["source_window"]["start"],
-            source_window_end=corpus_stats["source_window"]["end"],
-            corpus_stats=corpus_stats,
-            representative_tweets=corpus_stats["representative_tweets"],
-            persona=persona,
-            created_at=rebuilt_at,
-        )
-        log_event(
-            logger,
-            logging.INFO,
-            "api_rebuild_persona_completed",
-            request_id=request_id,
-            username=username,
-            source_tweet_count=corpus_stats["tweet_counts"]["total"],
-            source_original_tweet_count=corpus_stats["tweet_counts"]["original"],
-            persona_snapshot_id=persona_snapshot_id,
-            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
-        )
-        return ProfileRebuildPersonaResponse(
-            username=str(stored_user["username"]),
-            user_id=str(stored_user["id"]),
-            source_tweet_count=corpus_stats["tweet_counts"]["total"],
-            source_original_tweet_count=corpus_stats["tweet_counts"]["original"],
-            persona_snapshot_id=persona_snapshot_id,
-            rebuilt_at=rebuilt_at,
-            persona=persona,
         )
 
     @app.post("/api/v1/drafts/generate", response_model=DraftGenerateResponse)
@@ -694,23 +622,3 @@ def _profile_summary_from_row(row: dict[str, Any]) -> ProfileSummary:
         verified=bool(row.get("verified")),
         last_ingested_at=str(row.get("last_ingested_at") or ""),
     )
-
-
-def _profile_payload_from_stored_user(row: dict[str, Any]) -> dict[str, Any]:
-    raw_payload = row.get("raw_json")
-    payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
-    payload["id"] = str(payload.get("id") or row.get("id") or "")
-    payload["username"] = str(payload.get("username") or row.get("username") or "")
-    payload["name"] = str(payload.get("name") or row.get("name") or payload["username"])
-    payload["description"] = str(payload.get("description") or row.get("description") or "")
-    payload["location"] = str(payload.get("location") or row.get("location") or "")
-    payload["url"] = str(payload.get("url") or row.get("profile_url") or "")
-    payload["verified"] = bool(payload.get("verified") or row.get("verified"))
-    public_metrics = payload.get("public_metrics")
-    if not isinstance(public_metrics, dict):
-        public_metrics = {}
-    public_metrics["followers_count"] = int(public_metrics.get("followers_count") or row.get("followers_count") or 0)
-    public_metrics["following_count"] = int(public_metrics.get("following_count") or row.get("following_count") or 0)
-    public_metrics["tweet_count"] = int(public_metrics.get("tweet_count") or row.get("tweet_count") or 0)
-    payload["public_metrics"] = public_metrics
-    return payload
