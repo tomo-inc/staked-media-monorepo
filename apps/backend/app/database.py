@@ -1,148 +1,141 @@
 from __future__ import annotations
 
-import json
-import sqlite3
-from collections.abc import Iterable
-from pathlib import Path
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from datetime import datetime
 from typing import Any
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    description TEXT,
-    location TEXT,
-    profile_url TEXT,
-    followers_count INTEGER NOT NULL DEFAULT 0,
-    following_count INTEGER NOT NULL DEFAULT 0,
-    tweet_count INTEGER NOT NULL DEFAULT 0,
-    verified INTEGER NOT NULL DEFAULT 0,
-    raw_json TEXT NOT NULL,
-    last_ingested_at TEXT NOT NULL
-);
+import psycopg
+from psycopg.rows import dict_row
 
-CREATE TABLE IF NOT EXISTS tweets (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    text TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    lang TEXT,
-    is_retweet INTEGER NOT NULL DEFAULT 0,
-    is_reply INTEGER NOT NULL DEFAULT 0,
-    is_quote INTEGER NOT NULL DEFAULT 0,
-    like_count INTEGER NOT NULL DEFAULT 0,
-    retweet_count INTEGER NOT NULL DEFAULT 0,
-    reply_count INTEGER NOT NULL DEFAULT 0,
-    quote_count INTEGER NOT NULL DEFAULT 0,
-    raw_json TEXT NOT NULL,
-    ingested_at TEXT NOT NULL,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_tweets_user_created_at
-ON tweets(user_id, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS persona_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    username TEXT NOT NULL,
-    source_tweet_count INTEGER NOT NULL,
-    source_original_tweet_count INTEGER NOT NULL,
-    source_window_start TEXT,
-    source_window_end TEXT,
-    corpus_stats_json TEXT NOT NULL,
-    representative_tweets_json TEXT NOT NULL,
-    persona_json TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_persona_username_created_at
-ON persona_snapshots(username, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS draft_requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL,
-    persona_snapshot_id INTEGER NOT NULL,
-    prompt TEXT NOT NULL,
-    draft_count INTEGER NOT NULL,
-    output_json TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(persona_snapshot_id) REFERENCES persona_snapshots(id)
-);
-
-CREATE TABLE IF NOT EXISTS hot_events (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    summary TEXT NOT NULL DEFAULT '',
-    url TEXT NOT NULL DEFAULT '',
-    source TEXT NOT NULL DEFAULT '',
-    source_domain TEXT NOT NULL DEFAULT '',
-    published_at TEXT NOT NULL DEFAULT '',
-    relative_age_hint TEXT NOT NULL DEFAULT '',
-    heat_score REAL NOT NULL DEFAULT 0.0,
-    category TEXT NOT NULL DEFAULT '',
-    subcategory TEXT NOT NULL DEFAULT '',
-    content_type TEXT NOT NULL DEFAULT 'news',
-    author_handle TEXT NOT NULL DEFAULT '',
-    last_refreshed_at TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    raw_json TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_hot_events_published_at
-ON hot_events(published_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_hot_events_heat_score
-ON hot_events(heat_score DESC);
-
-CREATE INDEX IF NOT EXISTS idx_hot_events_content_type
-ON hot_events(content_type);
-
-CREATE INDEX IF NOT EXISTS idx_hot_events_last_refreshed_at
-ON hot_events(last_refreshed_at DESC);
-
-CREATE TABLE IF NOT EXISTS hot_event_translations (
-    event_id TEXT NOT NULL,
-    target_language TEXT NOT NULL,
-    title_translated TEXT NOT NULL,
-    summary_translated TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (event_id, target_language),
-    FOREIGN KEY(event_id) REFERENCES hot_events(id)
-);
-
-CREATE TABLE IF NOT EXISTS allowed_usernames (
-    username TEXT PRIMARY KEY
-);
-"""
-
-
-class _ClosingConnection(sqlite3.Connection):
-    def __exit__(self, exc_type, exc_value, traceback):
-        try:
-            return super().__exit__(exc_type, exc_value, traceback)
-        finally:
-            self.close()
+SCHEMA_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        description TEXT,
+        location TEXT,
+        profile_url TEXT,
+        followers_count INTEGER NOT NULL DEFAULT 0,
+        following_count INTEGER NOT NULL DEFAULT 0,
+        tweet_count INTEGER NOT NULL DEFAULT 0,
+        verified BOOLEAN NOT NULL DEFAULT FALSE,
+        raw_json JSONB NOT NULL,
+        last_ingested_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tweets (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        lang TEXT,
+        is_retweet BOOLEAN NOT NULL DEFAULT FALSE,
+        is_reply BOOLEAN NOT NULL DEFAULT FALSE,
+        is_quote BOOLEAN NOT NULL DEFAULT FALSE,
+        like_count INTEGER NOT NULL DEFAULT 0,
+        retweet_count INTEGER NOT NULL DEFAULT 0,
+        reply_count INTEGER NOT NULL DEFAULT 0,
+        quote_count INTEGER NOT NULL DEFAULT 0,
+        raw_json JSONB NOT NULL,
+        ingested_at TIMESTAMPTZ NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_tweets_user_created_at ON tweets(user_id, created_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS persona_snapshots (
+        id BIGSERIAL PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        source_tweet_count INTEGER NOT NULL,
+        source_original_tweet_count INTEGER NOT NULL,
+        source_window_start TIMESTAMPTZ,
+        source_window_end TIMESTAMPTZ,
+        corpus_stats_json JSONB NOT NULL,
+        representative_tweets_json JSONB NOT NULL,
+        persona_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_persona_username_created_at ON persona_snapshots(username, created_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS draft_requests (
+        id BIGSERIAL PRIMARY KEY,
+        username TEXT NOT NULL,
+        persona_snapshot_id BIGINT NOT NULL,
+        prompt TEXT NOT NULL,
+        draft_count INTEGER NOT NULL,
+        output_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        FOREIGN KEY(persona_snapshot_id) REFERENCES persona_snapshots(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS hot_events (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        url TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT '',
+        source_domain TEXT NOT NULL DEFAULT '',
+        published_at TIMESTAMPTZ NOT NULL,
+        relative_age_hint TEXT NOT NULL DEFAULT '',
+        heat_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+        category TEXT NOT NULL DEFAULT '',
+        subcategory TEXT NOT NULL DEFAULT '',
+        content_type TEXT NOT NULL DEFAULT 'news',
+        author_handle TEXT NOT NULL DEFAULT '',
+        last_refreshed_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        raw_json JSONB NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_hot_events_published_at ON hot_events(published_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_hot_events_heat_score ON hot_events(heat_score DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_hot_events_content_type ON hot_events(content_type)",
+    "CREATE INDEX IF NOT EXISTS idx_hot_events_last_refreshed_at ON hot_events(last_refreshed_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS hot_event_translations (
+        event_id TEXT NOT NULL,
+        target_language TEXT NOT NULL,
+        title_translated TEXT NOT NULL,
+        summary_translated TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (event_id, target_language),
+        FOREIGN KEY(event_id) REFERENCES hot_events(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS allowed_usernames (
+        username TEXT PRIMARY KEY
+    )
+    """,
+]
 
 
 class Database:
-    def __init__(self, database_path: Path):
-        self.database_path = database_path
+    def __init__(self, database_url: str):
+        self.database_url = str(database_url or "").strip()
 
     def init(self) -> None:
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.execute("DROP TABLE IF EXISTS hot_events_snapshots")
-            connection.executescript(SCHEMA)
+            for statement in SCHEMA_STATEMENTS:
+                connection.execute(statement)
             connection.commit()
 
-    def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, factory=_ClosingConnection)
-        connection.row_factory = sqlite3.Row
-        return connection
+    @contextmanager
+    def connect(self) -> Iterator[psycopg.Connection[dict[str, Any]]]:
+        connection = psycopg.connect(self.database_url, row_factory=dict_row)
+        try:
+            yield connection
+        finally:
+            connection.close()
 
     def upsert_user(self, user: dict[str, Any], ingested_at: str) -> None:
         metrics = user.get("public_metrics") or {}
@@ -153,7 +146,7 @@ class Database:
                     id, username, name, description, location, profile_url,
                     followers_count, following_count, tweet_count, verified,
                     raw_json, last_ingested_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                     username=excluded.username,
                     name=excluded.name,
@@ -177,9 +170,9 @@ class Database:
                     metrics.get("followers_count", 0),
                     metrics.get("following_count", 0),
                     metrics.get("tweet_count", 0),
-                    int(bool(user.get("verified") or user.get("is_blue_verified"))),
-                    json.dumps(user, ensure_ascii=True),
-                    ingested_at,
+                    bool(user.get("verified") or user.get("is_blue_verified")),
+                    user,
+                    _coerce_timestamp(ingested_at),
                 ),
             )
             connection.commit()
@@ -198,7 +191,7 @@ class Database:
                         is_retweet, is_reply, is_quote,
                         like_count, retweet_count, reply_count, quote_count,
                         raw_json, ingested_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT(id) DO UPDATE SET
                         user_id=excluded.user_id,
                         text=excluded.text,
@@ -218,17 +211,17 @@ class Database:
                         tweet["id"],
                         user_id,
                         tweet.get("text") or "",
-                        tweet.get("created_at") or "",
+                        _coerce_timestamp(tweet.get("created_at"), fallback=ingested_at),
                         tweet.get("lang") or "",
-                        int(flags["is_retweet"]),
-                        int(flags["is_reply"]),
-                        int(flags["is_quote"]),
+                        flags["is_retweet"],
+                        flags["is_reply"],
+                        flags["is_quote"],
                         metrics.get("like_count", 0),
                         metrics.get("retweet_count", 0),
                         metrics.get("reply_count", 0),
                         metrics.get("quote_count", 0),
-                        json.dumps(item, ensure_ascii=True),
-                        ingested_at,
+                        item,
+                        _coerce_timestamp(ingested_at),
                     ),
                 )
                 count += 1
@@ -250,29 +243,30 @@ class Database:
         created_at: str,
     ) -> int:
         with self.connect() as connection:
-            cursor = connection.execute(
+            row = connection.execute(
                 """
                 INSERT INTO persona_snapshots (
                     user_id, username, source_tweet_count, source_original_tweet_count,
                     source_window_start, source_window_end, corpus_stats_json,
                     representative_tweets_json, persona_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (
                     user_id,
                     username,
                     source_tweet_count,
                     source_original_tweet_count,
-                    source_window_start,
-                    source_window_end,
-                    json.dumps(corpus_stats, ensure_ascii=True),
-                    json.dumps(representative_tweets, ensure_ascii=True),
-                    json.dumps(persona, ensure_ascii=True),
-                    created_at,
+                    _coerce_timestamp(source_window_start, allow_none=True),
+                    _coerce_timestamp(source_window_end, allow_none=True),
+                    corpus_stats,
+                    representative_tweets,
+                    persona,
+                    _coerce_timestamp(created_at),
                 ),
-            )
+            ).fetchone()
             connection.commit()
-            return cursor.lastrowid or 0
+            return int((row or {}).get("id") or 0)
 
     def save_draft_request(
         self,
@@ -285,23 +279,24 @@ class Database:
         created_at: str,
     ) -> int:
         with self.connect() as connection:
-            cursor = connection.execute(
+            row = connection.execute(
                 """
                 INSERT INTO draft_requests (
                     username, persona_snapshot_id, prompt, draft_count, output_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (
                     username,
                     persona_snapshot_id,
                     prompt,
                     draft_count,
-                    json.dumps(output, ensure_ascii=True),
-                    created_at,
+                    output,
+                    _coerce_timestamp(created_at),
                 ),
-            )
+            ).fetchone()
             connection.commit()
-            return cursor.lastrowid or 0
+            return int((row or {}).get("id") or 0)
 
     def upsert_hot_events(self, hot_events: Iterable[dict[str, Any]], refreshed_at: str) -> int:
         count = 0
@@ -328,7 +323,7 @@ class Database:
                         created_at,
                         updated_at,
                         raw_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT(id) DO UPDATE SET
                         title=excluded.title,
                         summary=excluded.summary,
@@ -353,17 +348,17 @@ class Database:
                         normalized["url"],
                         normalized["source"],
                         normalized["source_domain"],
-                        normalized["published_at"],
+                        _coerce_timestamp(normalized["published_at"], fallback=refreshed_at),
                         normalized["relative_age_hint"],
                         normalized["heat_score"],
                         normalized["category"],
                         normalized["subcategory"],
                         normalized["content_type"],
                         normalized["author_handle"],
-                        refreshed_at,
-                        refreshed_at,
-                        refreshed_at,
-                        json.dumps(item, ensure_ascii=True),
+                        _coerce_timestamp(refreshed_at),
+                        _coerce_timestamp(refreshed_at),
+                        _coerce_timestamp(refreshed_at),
+                        item,
                     ),
                 )
                 count += 1
@@ -374,12 +369,12 @@ class Database:
         query = """
             SELECT *
             FROM hot_events
-            WHERE published_at >= ?
+            WHERE published_at >= %s
             ORDER BY heat_score DESC, published_at DESC, id ASC
         """
-        params: list[Any] = [published_since]
+        params: list[Any] = [_coerce_timestamp(published_since)]
         if limit is not None:
-            query += " LIMIT ?"
+            query += " LIMIT %s"
             params.append(int(limit))
 
         with self.connect() as connection:
@@ -387,11 +382,11 @@ class Database:
         return [_row_to_hot_event(row) for row in rows]
 
     def get_hot_event_by_id(self, event_id: str, *, published_since: str | None = None) -> dict[str, Any] | None:
-        query = "SELECT * FROM hot_events WHERE id = ?"
+        query = "SELECT * FROM hot_events WHERE id = %s"
         params: list[Any] = [str(event_id or "").strip()]
         if published_since is not None:
-            query += " AND published_at >= ?"
-            params.append(published_since)
+            query += " AND published_at >= %s"
+            params.append(_coerce_timestamp(published_since))
         query += " LIMIT 1"
         with self.connect() as connection:
             row = connection.execute(query, params).fetchone()
@@ -409,23 +404,22 @@ class Database:
             ).fetchone()
         if row is None:
             return ""
-        return str(row["last_refreshed_at"] or "")
+        return _to_iso_string(row.get("last_refreshed_at"))
 
     def get_hot_event_translations(self, event_ids: Iterable[str], target_language: str) -> dict[str, dict[str, Any]]:
         normalized_event_ids = [str(event_id or "").strip() for event_id in event_ids if str(event_id or "").strip()]
         if not normalized_event_ids:
             return {}
 
-        params: list[Any] = [str(target_language or "").strip(), json.dumps(normalized_event_ids)]
         with self.connect() as connection:
             rows = connection.execute(
                 """
                 SELECT event_id, target_language, title_translated, summary_translated, created_at
                 FROM hot_event_translations
-                WHERE target_language = ?
-                  AND event_id IN (SELECT value FROM json_each(?))
+                WHERE target_language = %s
+                  AND event_id = ANY(%s)
                 """,
-                params,
+                (str(target_language or "").strip(), normalized_event_ids),
             ).fetchall()
         return {
             str(row["event_id"]): {
@@ -433,7 +427,7 @@ class Database:
                 "target_language": str(row["target_language"]),
                 "title_translated": str(row["title_translated"] or ""),
                 "summary_translated": str(row["summary_translated"] or ""),
-                "created_at": str(row["created_at"] or ""),
+                "created_at": _to_iso_string(row.get("created_at")),
             }
             for row in rows
         }
@@ -450,7 +444,7 @@ class Database:
                         title_translated,
                         summary_translated,
                         created_at
-                    ) VALUES (?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT(event_id, target_language) DO UPDATE SET
                         title_translated=excluded.title_translated,
                         summary_translated=excluded.summary_translated,
@@ -461,7 +455,7 @@ class Database:
                         str(row.get("target_language") or "").strip(),
                         str(row.get("title_translated") or ""),
                         str(row.get("summary_translated") or ""),
-                        str(row.get("created_at") or ""),
+                        _coerce_timestamp(row.get("created_at"), fallback=datetime.now().astimezone().isoformat()),
                     ),
                 )
                 count += 1
@@ -484,8 +478,9 @@ class Database:
         with self.connect() as connection:
             connection.execute(
                 """
-                INSERT OR IGNORE INTO allowed_usernames (username)
-                VALUES (?)
+                INSERT INTO allowed_usernames (username)
+                VALUES (%s)
+                ON CONFLICT (username) DO NOTHING
                 """,
                 (normalized_username,),
             )
@@ -496,7 +491,7 @@ class Database:
         normalized_username = normalize_username(username)
         with self.connect() as connection:
             connection.execute(
-                "DELETE FROM allowed_usernames WHERE username = ?",
+                "DELETE FROM allowed_usernames WHERE username = %s",
                 (normalized_username,),
             )
             connection.commit()
@@ -506,7 +501,7 @@ class Database:
         normalized_username = normalize_username(username)
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT 1 FROM allowed_usernames WHERE username = ? LIMIT 1",
+                "SELECT 1 FROM allowed_usernames WHERE username = %s LIMIT 1",
                 (normalized_username,),
             ).fetchone()
         return row is not None
@@ -515,7 +510,7 @@ class Database:
         normalized_username = normalize_username(username)
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM users WHERE lower(username) = ?",
+                "SELECT * FROM users WHERE lower(username) = %s",
                 (normalized_username,),
             ).fetchone()
         if row is None:
@@ -523,10 +518,10 @@ class Database:
         return _row_to_user(row)
 
     def get_user_tweets(self, user_id: str, limit: int | None = None) -> list[dict[str, Any]]:
-        query = "SELECT * FROM tweets WHERE user_id = ? ORDER BY created_at DESC"
+        query = "SELECT * FROM tweets WHERE user_id = %s ORDER BY created_at DESC"
         params: list[Any] = [user_id]
         if limit is not None:
-            query += " LIMIT ?"
+            query += " LIMIT %s"
             params.append(limit)
 
         with self.connect() as connection:
@@ -539,7 +534,7 @@ class Database:
             row = connection.execute(
                 """
                 SELECT * FROM persona_snapshots
-                WHERE lower(username) = ?
+                WHERE lower(username) = %s
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
@@ -564,30 +559,36 @@ def _tweet_flags(tweet: dict[str, Any]) -> dict[str, bool]:
     }
 
 
-def _row_to_user(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_user(row: dict[str, Any]) -> dict[str, Any]:
     payload = dict(row)
     payload["verified"] = bool(payload["verified"])
-    payload["raw_json"] = json.loads(payload["raw_json"])
+    payload["raw_json"] = payload.get("raw_json") or {}
+    payload["last_ingested_at"] = _to_iso_string(payload.get("last_ingested_at"))
     return payload
 
 
-def _row_to_tweet(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_tweet(row: dict[str, Any]) -> dict[str, Any]:
     payload = dict(row)
     for key in ("is_retweet", "is_reply", "is_quote"):
         payload[key] = bool(payload[key])
-    payload["raw_json"] = json.loads(payload["raw_json"])
+    payload["raw_json"] = payload.get("raw_json") or {}
+    payload["created_at"] = _to_iso_string(payload.get("created_at"))
+    payload["ingested_at"] = _to_iso_string(payload.get("ingested_at"))
     return payload
 
 
-def _row_to_persona_snapshot(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_persona_snapshot(row: dict[str, Any]) -> dict[str, Any]:
     payload = dict(row)
-    payload["corpus_stats"] = json.loads(payload.pop("corpus_stats_json"))
-    payload["representative_tweets"] = json.loads(payload.pop("representative_tweets_json"))
-    payload["persona"] = json.loads(payload.pop("persona_json"))
+    payload["source_window_start"] = _to_iso_string(payload.get("source_window_start"))
+    payload["source_window_end"] = _to_iso_string(payload.get("source_window_end"))
+    payload["corpus_stats"] = payload.pop("corpus_stats_json") or {}
+    payload["representative_tweets"] = payload.pop("representative_tweets_json") or []
+    payload["persona"] = payload.pop("persona_json") or {}
+    payload["created_at"] = _to_iso_string(payload.get("created_at"))
     return payload
 
 
-def _row_to_hot_event(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_hot_event(row: dict[str, Any]) -> dict[str, Any]:
     payload = dict(row)
     payload["heat_score"] = float(payload.get("heat_score") or 0.0)
     return {
@@ -597,17 +598,17 @@ def _row_to_hot_event(row: sqlite3.Row) -> dict[str, Any]:
         "url": str(payload.get("url") or ""),
         "source": str(payload.get("source") or ""),
         "source_domain": str(payload.get("source_domain") or ""),
-        "published_at": str(payload.get("published_at") or ""),
+        "published_at": _to_iso_string(payload.get("published_at")),
         "relative_age_hint": str(payload.get("relative_age_hint") or ""),
         "heat_score": payload["heat_score"],
         "category": str(payload.get("category") or ""),
         "subcategory": str(payload.get("subcategory") or ""),
         "content_type": str(payload.get("content_type") or "news"),
         "author_handle": str(payload.get("author_handle") or ""),
-        "last_refreshed_at": str(payload.get("last_refreshed_at") or ""),
-        "created_at": str(payload.get("created_at") or ""),
-        "updated_at": str(payload.get("updated_at") or ""),
-        "raw_json": _safe_json_loads(payload.get("raw_json")),
+        "last_refreshed_at": _to_iso_string(payload.get("last_refreshed_at")),
+        "created_at": _to_iso_string(payload.get("created_at")),
+        "updated_at": _to_iso_string(payload.get("updated_at")),
+        "raw_json": payload.get("raw_json") or {},
     }
 
 
@@ -629,8 +630,26 @@ def _normalize_hot_event(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _safe_json_loads(value: Any) -> Any:
-    try:
-        return json.loads(str(value or ""))
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
+def _coerce_timestamp(
+    value: Any,
+    *,
+    fallback: Any | None = None,
+    allow_none: bool = False,
+) -> str | None:
+    normalized = _to_iso_string(value)
+    if normalized:
+        return normalized
+    fallback_value = _to_iso_string(fallback)
+    if fallback_value:
+        return fallback_value
+    if allow_none:
+        return None
+    raise ValueError("Timestamp value is required")
+
+
+def _to_iso_string(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value or "").strip()

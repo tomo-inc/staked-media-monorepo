@@ -206,7 +206,7 @@ class OrchestratorTestCase(unittest.TestCase):
             log_enable_file=False,
             content_rewrite_max_rounds=3,
         )
-        self.database = Database(self.settings.database_path)
+        self.database = Database(self.settings.database.url)
         self.database.init()
         self.llm = FakeLLM()
         self.web = FakeWebEnricher()

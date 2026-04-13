@@ -173,7 +173,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings)
-    database = Database(settings.database.path)
+    database = Database(settings.database.url)
     database.init()
 
     @asynccontextmanager

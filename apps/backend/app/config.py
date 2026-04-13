@@ -26,7 +26,7 @@ class _ServerConfigModel(_StrictConfigModel):
 
 
 class _DatabaseConfigModel(_StrictConfigModel):
-    url: str = "sqlite:///./data/mvp.db"
+    url: str = "postgresql://postgres:postgres@localhost:5432/staked_media"
 
 
 class _TwitterConfigModel(_StrictConfigModel):
@@ -113,13 +113,6 @@ class _RootConfigModel(_StrictConfigModel):
     hot_events: _HotEventsConfigModel = Field(default_factory=lambda: cast(Any, _HotEventsConfigModel)())
 
 
-def _parse_sqlite_path(database_url: str) -> Path:
-    prefix = "sqlite:///"
-    if not database_url.startswith(prefix):
-        raise ValueError("`database.url` must use sqlite:/// for this MVP")
-    return Path(database_url[len(prefix) :]).expanduser()
-
-
 def _normalize_llm_provider(provider: str) -> str:
     normalized = provider.strip().lower() or "openai"
     if normalized not in SUPPORTED_LLM_PROVIDERS:
@@ -150,13 +143,6 @@ def _resolve_path(value: str, *, base_dir: Path) -> Path:
     if not path.is_absolute():
         path = (base_dir / path).resolve()
     return path
-
-
-def _resolve_sqlite_url(database_url: str, *, base_dir: Path) -> str:
-    path = _parse_sqlite_path(database_url)
-    if not path.is_absolute():
-        path = (base_dir / path).resolve()
-    return f"sqlite:///{path.as_posix()}"
 
 
 def _pop_legacy_str(values: dict[str, object], key: str) -> str:
@@ -200,11 +186,7 @@ class ServerSettings:
 
 @dataclass(frozen=True)
 class DatabaseSettings:
-    url: str = "sqlite:///./data/mvp.db"
-
-    @property
-    def path(self) -> Path:
-        return _parse_sqlite_path(self.url)
+    url: str = "postgresql://postgres:postgres@localhost:5432/staked_media"
 
 
 @dataclass(frozen=True)
@@ -501,10 +483,6 @@ class Settings:
         object.__setattr__(self, "hot_events", hot_events_settings)
 
     @property
-    def database_path(self) -> Path:
-        return self.database.path
-
-    @property
     def max_ingest_tweets(self) -> int:
         return self.twitter.max_ingest_tweets
 
@@ -652,7 +630,7 @@ class LoadedConfig:
 
 
 def _build_settings(parsed: _RootConfigModel, *, base_dir: Path) -> Settings:
-    database = DatabaseSettings(url=_resolve_sqlite_url(parsed.database.url, base_dir=base_dir))
+    database = DatabaseSettings(url=str(parsed.database.url).strip())
     log = LogSettings(
         level=parsed.log.level,
         file_path=str(_resolve_path(parsed.log.file_path, base_dir=base_dir)),
