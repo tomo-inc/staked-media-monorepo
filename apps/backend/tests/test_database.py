@@ -16,7 +16,7 @@ class DatabaseWhitelistTestCase(unittest.TestCase):
             openai_api_key="test-key",
             log_enable_file=False,
         )
-        self.database = Database(settings.database_path)
+        self.database = Database(settings.database.url)
         self.database.init()
 
     def tearDown(self) -> None:

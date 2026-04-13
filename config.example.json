@@ -6,7 +6,7 @@
     "reload": false
   },
   "database": {
-    "url": "sqlite:///./data/mvp.db"
+    "url": "postgresql://postgres:postgres@localhost:5432/staked_media"
   },
   "twitter": {
     "data_url": "http://52.76.50.165:8081",

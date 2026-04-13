@@ -472,7 +472,7 @@ class ApiTestCase(unittest.TestCase):
             log_enable_file=False,
         )
         self.settings = settings
-        db = Database(settings.database_path)
+        db = Database(settings.database.url)
         db.init()
         db.add_allowed_username("demo-user")
         db.add_allowed_username("missing-user")
@@ -794,7 +794,7 @@ class ApiTestCase(unittest.TestCase):
                 openai_api_key="test-key",
                 log_enable_file=False,
             )
-            database = Database(settings.database_path)
+            database = Database(settings.database.url)
             database.init()
             orchestrator = ContentOrchestrator(
                 settings=settings,
@@ -932,7 +932,7 @@ class ApiTestCase(unittest.TestCase):
                 openai_api_key="test-key",
                 log_enable_file=False,
             )
-            database = Database(settings.database_path)
+            database = Database(settings.database.url)
             database.init()
             database.add_allowed_username("demo-user")
             database.upsert_user(
@@ -982,7 +982,7 @@ class ApiTestCase(unittest.TestCase):
                 openai_api_key="test-key",
                 log_enable_file=False,
             )
-            database = Database(settings.database_path)
+            database = Database(settings.database.url)
             database.init()
             database.add_allowed_username("demo-user")
             database.upsert_user(

@@ -33,7 +33,7 @@ class ConfigTestCase(unittest.TestCase):
                             "reload": True,
                         },
                         "database": {
-                            "url": "sqlite:///./db/mvp.db",
+                            "url": "postgresql://postgres:postgres@localhost:5432/staked_media_test",
                         },
                         "llm": {
                             "provider": " GEMINI ",
@@ -70,7 +70,7 @@ class ConfigTestCase(unittest.TestCase):
             self.assertTrue(loaded.server.reload)
             self.assertEqual(loaded.app.llm_provider, "gemini")
             self.assertEqual(loaded.app.gemini_api_key, "gemini-key")
-            self.assertEqual(loaded.app.database_path, (config_path.parent / "db" / "mvp.db").resolve())
+            self.assertEqual(loaded.app.database.url, "postgresql://postgres:postgres@localhost:5432/staked_media_test")
             self.assertEqual(Path(loaded.app.log_file_path), (config_path.parent / "logs" / "app.log").resolve())
             self.assertEqual(loaded.app.hot_events_fusion.source_weight_tweet, 1.3)
             self.assertEqual(loaded.app.hot_events_fusion.time_decay_half_life_hours, 6.0)
@@ -98,7 +98,7 @@ class ConfigTestCase(unittest.TestCase):
             self.assertEqual(loaded.server.port, 8000)
             self.assertFalse(loaded.server.reload)
             self.assertEqual(loaded.app.openai_api_key, "openai-key")
-            self.assertEqual(loaded.app.database_path, (config_path.parent / "data" / "mvp.db").resolve())
+            self.assertEqual(loaded.app.database.url, "postgresql://postgres:postgres@localhost:5432/staked_media")
             self.assertEqual(loaded.app.hot_events_fusion.source_weight_news, 1.0)
             self.assertEqual(loaded.app.hot_events_fusion.tweet_weight_quote, 2.5)
 
