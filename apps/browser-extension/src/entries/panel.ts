@@ -607,10 +607,9 @@ interface PanelUi {
 				"[data-tab-target]",
 			) as NodeListOf<HTMLButtonElement>
 		).forEach((btn) => {
-			btn.classList.toggle(
-				"smc-tab-active",
-				btn.getAttribute("data-tab-target") === nextTab,
-			);
+			const isActive = btn.getAttribute("data-tab-target") === nextTab;
+			btn.classList.toggle("smc-tab-active", isActive);
+			btn.classList.toggle("tab-active", isActive);
 		});
 		(
 			root.querySelectorAll("[data-tab-panel]") as NodeListOf<HTMLElement>
@@ -1386,7 +1385,7 @@ interface PanelUi {
 		if (STATE.hotEventsLoading) {
 			ui.hotEventsMeta.innerHTML = "Loading 24h hot events...";
 			ui.hotEvents.innerHTML =
-				'<div class="smc-empty">Loading hot events...</div>';
+				'<div class="smc-empty alert alert-info">Loading hot events...</div>';
 			return;
 		}
 		if (!STATE.hotEvents.length) {
@@ -1394,7 +1393,7 @@ interface PanelUi {
 			const stateNoticeHtml = renderHotEventsStateNotice();
 			ui.hotEventsMeta.innerHTML = `${stateNoticeHtml}${warningHtml}`;
 			ui.hotEvents.innerHTML =
-				'<div class="smc-empty">No hot events available right now.</div>';
+				'<div class="smc-empty alert">No hot events available right now.</div>';
 			return;
 		}
 		const refreshedAtLabel = STATE.hotEventsLastRefreshedAt
@@ -1409,7 +1408,7 @@ interface PanelUi {
 		const stateNoticeHtml = renderHotEventsStateNotice();
 		ui.hotEventsMeta.innerHTML = `<div>${summaryLabel}</div>${stateNoticeHtml}${warningHtml}`;
 		ui.hotEvents.innerHTML = `
-      <div class="smc-hot-list-frame">
+      <div class="smc-hot-list-frame card bg-base-200">
         <div class="smc-hot-list" data-slot="hot-events-list">
           ${STATE.hotEvents
 						.map((event, index) => {
@@ -1460,11 +1459,11 @@ interface PanelUi {
 									)
 								: "";
 							return `
-              <article class="smc-hot-event-card ${isSelected ? "smc-hot-event-selected" : ""}" data-action="select-hot-event-card" data-hot-event-id="${escapeHtml(eventId)}" role="button" tabindex="0">
+              <article class="smc-hot-event-card card bg-base-100 shadow-sm ${isSelected ? "smc-hot-event-selected" : ""}" data-action="select-hot-event-card" data-hot-event-id="${escapeHtml(eventId)}" role="button" tabindex="0">
                 <div class="smc-hot-event-head">
                   <div class="smc-hot-event-head-main">
-                    <span class="smc-hot-event-rank">#${index + 1}</span>
-                    <span class="smc-hot-event-type smc-hot-event-type-${contentType}">${contentType}</span>
+                    <span class="smc-hot-event-rank badge badge-outline">#${index + 1}</span>
+                    <span class="smc-hot-event-type badge smc-hot-event-type-${contentType}">${contentType}</span>
                     <span class="smc-hot-event-meta">${sourceLabel} | ${relativeAge}</span>
                   </div>
                   <div class="smc-hot-event-score-group">
@@ -1491,7 +1490,7 @@ interface PanelUi {
 										: ""
 								}
                 <div class="smc-hot-event-actions">
-                  <button class="smc-hot-select-button ${isSelected ? "smc-hot-select-button-selected" : ""}" data-action="select-hot-event" data-hot-event-id="${escapeHtml(eventId)}" type="button" aria-pressed="${isSelected ? "true" : "false"}">
+                  <button class="smc-hot-select-button btn btn-xs ${isSelected ? "smc-hot-select-button-selected" : ""}" data-action="select-hot-event" data-hot-event-id="${escapeHtml(eventId)}" type="button" aria-pressed="${isSelected ? "true" : "false"}">
                     ${
 											isSelected
 												? '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.2 8.4 6.3 11.5 12.8 5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg>'
@@ -1959,15 +1958,14 @@ interface PanelUi {
 		if (!selectedEvent) {
 			return "";
 		}
-		const title = String(selectedEvent.title || "").trim();
-		const rawSummary = String(selectedEvent.summary || "")
-			.replace(/\s+/g, " ")
-			.trim();
-		const summary =
-			rawSummary.length > 260
-				? `${rawSummary.slice(0, 260).trim()}...`
-				: rawSummary;
-		const focus = [title, summary].filter(Boolean).join(" ");
+		const display = getDisplayedHotEventText(selectedEvent);
+		const title = String(display.title || "").trim();
+		const summary = String(display.summary || "").trim();
+		const focusParts = [title, summary].filter(Boolean);
+		const focus =
+			focusParts.length > 1
+				? `${focusParts[0]}\n${focusParts.slice(1).join("\n")}`
+				: focusParts[0] || "";
 		if (!focus && !comment) {
 			return "";
 		}
@@ -1988,11 +1986,11 @@ interface PanelUi {
 	}
 
 	function getCurrentTrendingConclusion(): string {
-		const generatedConclusion = getGeneratedTrendingConclusion();
-		if (generatedConclusion) {
-			return generatedConclusion;
+		const fallbackConclusion = buildFallbackDraftIdea();
+		if (fallbackConclusion) {
+			return fallbackConclusion;
 		}
-		return buildFallbackDraftIdea();
+		return getGeneratedTrendingConclusion();
 	}
 
 	async function refreshComposerState(): Promise<void> {
@@ -2124,6 +2122,10 @@ interface PanelUi {
 					: "light"
 				: requestedTheme;
 		document.documentElement.setAttribute("data-smc-theme", resolvedTheme);
+		document.documentElement.setAttribute(
+			"data-theme",
+			resolvedTheme === "dark" ? "foxspark_coinbase_dark" : "foxspark_coinbase",
+		);
 	}
 
 	function getOpenModeToggleLabel(
@@ -2249,7 +2251,7 @@ interface PanelUi {
 	function renderProfileInfo(): void {
 		if (!ui.profileInfo) return;
 		if (STATE.profileLoading) {
-			ui.profileInfo.innerHTML = `<div class="smc-profile-hint">${escapeHtml(tr("profile.loading"))}</div>`;
+			ui.profileInfo.innerHTML = `<div class="smc-profile-hint alert alert-info">${escapeHtml(tr("profile.loading"))}</div>`;
 			return;
 		}
 		if (!STATE.profile) {
@@ -2257,13 +2259,13 @@ interface PanelUi {
 			return;
 		}
 		if (!STATE.profile.exists) {
-			ui.profileInfo.innerHTML = `<div class="smc-profile-hint smc-profile-hint-warn">${escapeHtml(tr("profile.notFound"))}</div>`;
+			ui.profileInfo.innerHTML = `<div class="smc-profile-hint smc-profile-hint-warn alert alert-warning">${escapeHtml(tr("profile.notFound"))}</div>`;
 			return;
 		}
 		const p = STATE.profile.profile || {};
 
 		if (!STATE.profile.personaReady) {
-			ui.profileInfo.innerHTML = `<div class="smc-profile-hint smc-profile-hint-warn">${escapeHtml(tr("profile.personaMissing"))}</div>`;
+			ui.profileInfo.innerHTML = `<div class="smc-profile-hint smc-profile-hint-warn alert alert-warning">${escapeHtml(tr("profile.personaMissing"))}</div>`;
 			return;
 		}
 
@@ -2300,7 +2302,7 @@ interface PanelUi {
 		}
 
 		ui.profileInfo.innerHTML = `
-      <div class="smc-profile-card">
+      <div class="smc-profile-card card bg-base-200 shadow-sm">
         <div class="smc-profile-header">
           <strong>${escapeHtml(tr("profile.cardTitle"))}</strong>
           <span class="smc-profile-username">@${escapeHtml(STATE.profile.username)}</span>
@@ -2321,7 +2323,7 @@ interface PanelUi {
         </div>
         ${personaSection}
         <div class="smc-profile-footer">
-          <span class="smc-profile-status ${personaClass}">${escapeHtml(tr("profile.persona"))}: ${escapeHtml(personaStatus)}</span>
+          <span class="smc-profile-status badge ${personaClass}">${escapeHtml(tr("profile.persona"))}: ${escapeHtml(personaStatus)}</span>
         </div>
       </div>
     `;
@@ -2331,9 +2333,7 @@ interface PanelUi {
 		renderDraftCards({
 			target: ui.results,
 			source: STATE.generated,
-			durationMs: STATE.lastGenerateDurationMs,
 			emptyMessage: "No generated drafts yet.",
-			showTimingWhenEmpty: true,
 		});
 	}
 
@@ -2341,7 +2341,6 @@ interface PanelUi {
 		renderDraftCards({
 			target: ui.trendingResults,
 			source: STATE.trendingGenerated,
-			durationMs: STATE.lastTrendingDurationMs,
 			emptyMessage: getTrendingEmptyMessage(),
 		});
 	}
@@ -2415,44 +2414,30 @@ interface PanelUi {
 	function renderDraftCards(options: {
 		target: HTMLElement;
 		source: StakedMediaDraftSource | null;
-		durationMs: number | null;
 		emptyMessage: string;
-		showTimingWhenEmpty?: boolean;
 	}): void {
-		const { target, source, durationMs, emptyMessage } = options;
-		const showTimingWhenEmpty = Boolean(options.showTimingWhenEmpty);
+		const { target, source, emptyMessage } = options;
 		if (!target) {
 			return;
 		}
-		const timingHtml =
-			durationMs != null
-				? `
-          <div class="smc-result-meta">
-            <span class="smc-result-meta-label">Response time</span>
-            <span class="smc-result-meta-value">${escapeHtml(`${durationMs} ms`)}</span>
-          </div>
-        `
-				: "";
 		const drafts = extractDrafts(source) as PanelDraftLike[];
 		if (!drafts.length) {
-			const emptyTimingHtml = showTimingWhenEmpty ? timingHtml : "";
-			target.innerHTML = `${emptyTimingHtml}<div class="smc-empty">${escapeHtml(emptyMessage)}</div>`;
+			target.innerHTML = `<div class="smc-empty alert">${escapeHtml(emptyMessage)}</div>`;
 			return;
 		}
 		target.innerHTML = `
-      ${timingHtml}
       ${drafts
 				.map((draft, index) => {
 					const text = typeof draft === "string" ? draft : draft.text || "";
 					return `
-            <article class="smc-draft-card">
+            <article class="smc-draft-card card bg-base-200">
               <div class="smc-draft-head">
                 <span class="smc-draft-label">Draft #${index + 1}</span>
                 <div class="smc-draft-actions">
-                  <button class="smc-outline-button" data-copy-index="${index}">${escapeHtml(
+                  <button class="smc-outline-button btn btn-xs btn-outline" data-copy-index="${index}">${escapeHtml(
 										tr("action.copy"),
 									)}</button>
-                  <button class="smc-outline-button" data-insert-index="${index}">${escapeHtml(
+                  <button class="smc-outline-button btn btn-xs btn-outline" data-insert-index="${index}">${escapeHtml(
 										tr("action.insert"),
 									)}</button>
                 </div>
@@ -2519,8 +2504,8 @@ interface PanelUi {
 
 	function renderComposerState(): void {
 		const className = STATE.composerAvailable
-			? "smc-pill smc-pill-good"
-			: "smc-pill smc-pill-warn";
+			? "smc-pill badge smc-pill-good"
+			: "smc-pill badge smc-pill-warn";
 		ui.composer.innerHTML = `<span class="${className}">${escapeHtml(STATE.composerMessage)}</span>`;
 	}
 
@@ -2549,7 +2534,7 @@ interface PanelUi {
 		STATE.generationStartedAt = Date.now();
 		STATE.generationProgress = {
 			percent: 8,
-			message: "Preparing request...",
+			message: deriveProgressMessage(8),
 		};
 		renderGenerationProgress();
 		STATE.generationProgressTimer = window.setInterval(() => {
@@ -2594,16 +2579,8 @@ interface PanelUi {
 	}
 
 	function deriveProgressMessage(percent: number): string {
-		if (percent < 28) {
-			return "Preparing request...";
-		}
-		if (percent < 60) {
-			return "Generating drafts...";
-		}
-		if (percent < 86) {
-			return "Refining tone and structure...";
-		}
-		return "Finalizing output...";
+		void percent;
+		return `${tr("action.generating")}...`;
 	}
 
 	function renderGenerationProgress(): void {
@@ -2612,7 +2589,7 @@ interface PanelUi {
 		}
 		const { percent, message } = STATE.generationProgress;
 		ui.status.innerHTML = `
-      <div class="smc-banner smc-banner-loading smc-banner-progress" role="status" aria-live="polite">
+      <div class="smc-banner alert smc-banner-loading smc-banner-progress" role="status" aria-live="polite">
         <div class="smc-progress-head">
           <span class="smc-progress-label">${escapeHtml(message)}</span>
           <span class="smc-progress-percent">${percent}%</span>
@@ -2635,7 +2612,16 @@ interface PanelUi {
 			}
 			return;
 		}
-		ui.status.innerHTML = `<div class="smc-banner smc-banner-${level || "info"}">${escapeHtml(text)}</div>`;
+		const normalizedLevel = String(level || "info");
+		const alertClass =
+			normalizedLevel === "error"
+				? "alert-error"
+				: normalizedLevel === "warn" || normalizedLevel === "warning"
+					? "alert-warning"
+					: normalizedLevel === "success"
+						? "alert-success"
+						: "alert-info";
+		ui.status.innerHTML = `<div class="smc-banner alert ${alertClass} smc-banner-${normalizedLevel}">${escapeHtml(text)}</div>`;
 		if (ui.statusSection) {
 			ui.statusSection.hidden = false;
 		}
@@ -2647,6 +2633,9 @@ interface PanelUi {
 		const detailText = getRuntimeErrorDetailText(runtimeError);
 		const status = runtimeError?.status;
 
+		if (status === 524 && path.startsWith("/api/v1/trending/generate")) {
+			return "热点生成超时(524)，请稍后重试。";
+		}
 		if (status === 403) {
 			return tr("error.userNotAllowed");
 		}

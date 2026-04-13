@@ -128,10 +128,10 @@ interface StakedMediaPanelHelpersHost {
 		function buildPanelShell(): string {
 			return `
       <div class="smc-shell">
-        <aside class="smc-panel">
+        <aside class="smc-panel card bg-base-100">
           <header class="smc-header">
             <div class="smc-header-left">
-              <button class="smc-icon-button smc-back-button" data-action="close-settings" type="button" aria-label="Back to main view" hidden>
+              <button class="smc-icon-button smc-back-button btn btn-ghost btn-sm btn-square" data-action="close-settings" type="button" aria-label="Back to main view" hidden>
                 <span aria-hidden="true">&lt;</span>
               </button>
               <h1 class="smc-title" data-slot="header-title"></h1>
@@ -139,7 +139,7 @@ interface StakedMediaPanelHelpersHost {
             <div class="smc-header-right">
               <span class="smc-latency-text" data-slot="latency-text">--</span>
               <span class="smc-status-dot smc-dot-warn" data-slot="connection" title="Checking..."></span>
-              <button class="smc-icon-button smc-menu-button" data-action="open-settings" type="button" aria-label="Open settings">
+              <button class="smc-icon-button smc-menu-button btn btn-ghost btn-sm btn-square" data-action="open-settings" type="button" aria-label="Open settings">
                 <span class="smc-menu-icon" aria-hidden="true">
                   <span></span>
                   <span></span>
@@ -150,10 +150,10 @@ interface StakedMediaPanelHelpersHost {
           </header>
 
           <div class="smc-view smc-view-active" data-view="main">
-            <nav class="smc-tab-bar">
-              <button class="smc-tab smc-tab-active" data-tab-target="profile" data-i18n="tab.profile" type="button">Profile</button>
-              <button class="smc-tab" data-tab-target="draft" data-i18n="tab.draft" type="button">Draft</button>
-              <button class="smc-tab" data-tab-target="trending" data-i18n="tab.trending" type="button">Trending</button>
+            <nav class="smc-tab-bar tabs tabs-boxed">
+              <button class="smc-tab tab smc-tab-active tab-active" data-tab-target="profile" data-i18n="tab.profile" type="button">Profile</button>
+              <button class="smc-tab tab" data-tab-target="draft" data-i18n="tab.draft" type="button">Draft</button>
+              <button class="smc-tab tab" data-tab-target="trending" data-i18n="tab.trending" type="button">Trending</button>
             </nav>
 
             <section class="smc-section" data-slot="status-section" hidden>
@@ -163,9 +163,9 @@ interface StakedMediaPanelHelpersHost {
             <div class="smc-tab-panel smc-tab-panel-active" data-tab-panel="profile">
               <section class="smc-section">
                 <div class="smc-username-row">
-                  <input class="smc-input" data-field="username" placeholder="@Username" type="text">
-                  <button class="smc-button smc-button-secondary" data-action="load-profile" data-i18n="action.load" type="button">Load</button>
-                  <button class="smc-button smc-button-secondary" data-action="ingest-profile" data-i18n="action.ingest" type="button">Ingest</button>
+                  <input class="smc-input input input-bordered input-sm" data-field="username" placeholder="@Username" type="text">
+                  <button class="smc-button smc-button-secondary btn btn-sm btn-outline" data-action="load-profile" data-i18n="action.load" type="button">Load</button>
+                  <button class="smc-button smc-button-secondary btn btn-sm btn-outline" data-action="ingest-profile" data-i18n="action.ingest" type="button">Ingest</button>
                 </div>
                 <div class="smc-field-message smc-field-message-error" data-slot="username-error" hidden></div>
                 <div data-slot="profile-info"></div>
@@ -176,14 +176,14 @@ interface StakedMediaPanelHelpersHost {
               <section class="smc-section">
                 <label class="smc-label">
                   <span data-i18n="label.topicIdea">Topic / Idea</span>
-                  <textarea class="smc-textarea" data-field="idea" placeholder="Can Bitcoin be cracked in 9 minutes?&#10;Google warns ECC timeline may arrive earlier&#10;Attack threshold could be 20x lower"></textarea>
+                  <textarea class="smc-textarea textarea textarea-bordered" data-field="idea" placeholder="Can Bitcoin be cracked in 9 minutes?&#10;Google warns ECC timeline may arrive earlier&#10;Attack threshold could be 20x lower"></textarea>
                 </label>
                 <label class="smc-label">
                   <span data-i18n="label.draftCount">Draft Count</span>
-                  <input class="smc-input smc-input-short" data-field="draftCount" min="1" max="10" step="1" type="number" value="3">
+                  <input class="smc-input smc-input-short input input-bordered input-sm" data-field="draftCount" min="1" max="10" step="1" type="number" value="3">
                 </label>
                 <div class="smc-button-row">
-                  <button class="smc-button smc-button-primary" data-action="generate" data-i18n="action.generate" type="button">Generate</button>
+                  <button class="smc-button smc-button-primary btn btn-sm btn-primary" data-action="generate" data-i18n="action.generate" type="button">Generate</button>
                 </div>
               </section>
 
@@ -192,7 +192,7 @@ interface StakedMediaPanelHelpersHost {
                   <h2 data-i18n="section.result">Result</h2>
                   <div class="smc-section-head-right">
                     <div data-slot="composer"></div>
-                    <button class="smc-link-button" data-action="clear-results" data-i18n="action.clear" type="button">Clear</button>
+                    <button class="smc-link-button btn btn-ghost btn-xs" data-action="clear-results" data-i18n="action.clear" type="button">Clear</button>
                   </div>
                 </div>
                 <div data-slot="results"></div>
@@ -203,7 +203,7 @@ interface StakedMediaPanelHelpersHost {
               <section class="smc-section smc-section-trending-feed">
                 <div class="smc-section-head">
                   <h2 data-i18n="section.hotEvents24h">24h Hot Events</h2>
-                  <button class="smc-link-button" data-action="refresh-hot-events" data-i18n="action.refreshHot" type="button">Refresh</button>
+                  <button class="smc-link-button btn btn-ghost btn-xs" data-action="refresh-hot-events" data-i18n="action.refreshHot" type="button">Refresh</button>
                 </div>
                 <div class="smc-hot-meta" data-slot="hot-events-meta"></div>
                 <div data-slot="hot-events"></div>
@@ -213,16 +213,16 @@ interface StakedMediaPanelHelpersHost {
                 <div data-slot="selected-hot-event-info"></div>
                 <label class="smc-label">
                   <span data-i18n="label.takeOptional">What is your take? (optional)</span>
-                  <textarea class="smc-textarea smc-textarea-compact" data-field="trendingComment" placeholder="Anything to add before generating?" rows="2"></textarea>
+                  <textarea class="smc-textarea smc-textarea-compact textarea textarea-bordered" data-field="trendingComment" placeholder="Anything to add before generating?" rows="2"></textarea>
                 </label>
                 <label class="smc-label">
                   <span data-i18n="label.draftCount">Draft Count</span>
-                  <input class="smc-input smc-input-short" data-field="trendingDraftCount" min="1" max="10" step="1" type="number" value="3">
+                  <input class="smc-input smc-input-short input input-bordered input-sm" data-field="trendingDraftCount" min="1" max="10" step="1" type="number" value="3">
                 </label>
                 <div class="smc-field-message smc-field-message-warn" data-slot="send-to-draft-hint" hidden></div>
                 <div class="smc-button-row">
-                  <button class="smc-button smc-button-primary" data-action="generate-trending" data-i18n="action.generate" type="button">Generate</button>
-                  <button class="smc-button smc-button-secondary" data-action="send-to-draft" data-i18n="action.sendToDraft" type="button">Send to Draft</button>
+                  <button class="smc-button smc-button-primary btn btn-sm btn-primary" data-action="generate-trending" data-i18n="action.generate" type="button">Generate</button>
+                  <button class="smc-button smc-button-secondary btn btn-sm btn-outline" data-action="send-to-draft" data-i18n="action.sendToDraft" type="button">Send to Draft</button>
                 </div>
               </section>
 
@@ -230,7 +230,7 @@ interface StakedMediaPanelHelpersHost {
                 <div class="smc-section-head">
                   <h2 data-i18n="section.trendingResult">Trending Result</h2>
                   <div class="smc-section-head-right">
-                    <button class="smc-link-button" data-action="clear-trending-results" data-i18n="action.clear" type="button">Clear</button>
+                    <button class="smc-link-button btn btn-ghost btn-xs" data-action="clear-trending-results" data-i18n="action.clear" type="button">Clear</button>
                   </div>
                 </div>
                 <div data-slot="trending-results"></div>
@@ -286,7 +286,7 @@ interface StakedMediaPanelHelpersHost {
                           <span class="smc-settings-item-title" data-i18n="label.theme">Theme</span>
                         </span>
                       </span>
-                      <select class="smc-settings-select" id="smc-theme-select" data-field="s-theme">
+                      <select class="smc-settings-select select select-ghost select-sm" id="smc-theme-select" data-field="s-theme">
                         <option value="light">Light</option>
                         <option value="dark">Dark</option>
                         <option value="system">System</option>
@@ -303,7 +303,7 @@ interface StakedMediaPanelHelpersHost {
                           <span class="smc-settings-item-title" data-i18n="label.language">Language</span>
                         </span>
                       </span>
-                      <select class="smc-settings-select" id="smc-language-select" data-field="s-language">
+                      <select class="smc-settings-select select select-ghost select-sm" id="smc-language-select" data-field="s-language">
                         <option value="auto">Auto (Browser)</option>
                         <option value="en">English</option>
                         <option value="zh-CN">简体中文</option>
@@ -321,7 +321,7 @@ interface StakedMediaPanelHelpersHost {
                 <section class="smc-section">
                   <label class="smc-label">
                     <span data-i18n="label.apiBaseUrl">API Base URL</span>
-                    <input class="smc-input" data-field="s-backendBaseUrl" type="text" placeholder="https://api.sayviner.top:8443">
+                    <input class="smc-input input input-bordered input-sm" data-field="s-backendBaseUrl" type="text" placeholder="https://api.sayviner.top:8443">
                   </label>
                   <div class="smc-settings-helper" data-i18n="helper.apiBaseUrlSave">Press Enter or click outside to save the URL.</div>
 
@@ -347,7 +347,7 @@ interface StakedMediaPanelHelpersHost {
             </div>
 
             <section class="smc-settings-footer-section">
-              <button class="smc-settings-version-button" data-action="unlock-debug" type="button">
+              <button class="smc-settings-version-button btn btn-ghost btn-xs" data-action="unlock-debug" type="button">
                 <span class="smc-settings-version-label" data-slot="settings-version"></span>
                 <span class="smc-settings-version-mode" data-slot="settings-version-mode"></span>
               </button>
