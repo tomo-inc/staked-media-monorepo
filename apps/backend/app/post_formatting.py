@@ -11,9 +11,13 @@ from app.logging_utils import format_log_event, get_logger
 
 _logger = get_logger(__name__)
 
+_REPO_SKILL_CMD_PATH = (
+    Path(__file__).resolve().parents[3] / "tools" / "x-post-format-skill" / "scripts" / "clean-x-post.cmd"
+)
 _DEFAULT_SKILL_CMD_CANDIDATES = (
     os.environ.get("SMC_X_POST_FORMAT_CMD", "").strip(),
     os.environ.get("X_POST_FORMAT_CMD", "").strip(),
+    str(_REPO_SKILL_CMD_PATH),
     r"E:\User Interface Design\x-post-format-skill\scripts\clean-x-post.cmd",
 )
 _DEFAULT_TIMEOUT_SECONDS = 15.0
