@@ -101,6 +101,30 @@ class ConfigTestCase(unittest.TestCase):
             self.assertEqual(loaded.app.database_path, (config_path.parent / "data" / "mvp.db").resolve())
             self.assertEqual(loaded.app.hot_events_fusion.source_weight_news, 1.0)
             self.assertEqual(loaded.app.hot_events_fusion.tweet_weight_quote, 2.5)
+            self.assertFalse(loaded.app.whitelist.enabled)
+
+    def test_load_config_file_parses_whitelist_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "llm": {
+                            "openai": {
+                                "api_key": "openai-key",
+                            }
+                        },
+                        "whitelist": {
+                            "enabled": True,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = load_config_file(config_path)
+
+            self.assertTrue(loaded.app.whitelist.enabled)
 
     def test_runtime_config_pointer_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

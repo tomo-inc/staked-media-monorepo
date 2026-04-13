@@ -81,6 +81,10 @@ class _WebEnrichmentConfigModel(_StrictConfigModel):
     recency_hours: int = 24
 
 
+class _WhitelistConfigModel(_StrictConfigModel):
+    enabled: bool = False
+
+
 class _HotEventsFusionConfigModel(_StrictConfigModel):
     source_weight_news: float = Field(1.0, ge=0.0)
     source_weight_tweet: float = Field(1.0, ge=0.0)
@@ -110,6 +114,7 @@ class _RootConfigModel(_StrictConfigModel):
     log: _LogConfigModel = Field(default_factory=_LogConfigModel)
     content: _ContentConfigModel = Field(default_factory=_ContentConfigModel)
     web_enrichment: _WebEnrichmentConfigModel = Field(default_factory=_WebEnrichmentConfigModel)
+    whitelist: _WhitelistConfigModel = Field(default_factory=_WhitelistConfigModel)
     hot_events: _HotEventsConfigModel = Field(default_factory=lambda: cast(Any, _HotEventsConfigModel)())
 
 
@@ -286,6 +291,11 @@ class WebEnrichmentSettings:
 
 
 @dataclass(frozen=True)
+class WhitelistSettings:
+    enabled: bool = False
+
+
+@dataclass(frozen=True)
 class HotEventsFusionSettings:
     source_weight_news: float = 1.0
     source_weight_tweet: float = 1.0
@@ -324,6 +334,7 @@ class Settings:
     log: LogSettings = field(default_factory=LogSettings)
     content: ContentSettings = field(default_factory=ContentSettings)
     web_enrichment: WebEnrichmentSettings = field(default_factory=WebEnrichmentSettings)
+    whitelist: WhitelistSettings = field(default_factory=WhitelistSettings)
     hot_events: HotEventsSettings = field(default_factory=HotEventsSettings)
 
     def __init__(
@@ -337,6 +348,7 @@ class Settings:
         log: LogSettings | None = None,
         content: ContentSettings | None = None,
         web_enrichment: WebEnrichmentSettings | None = None,
+        whitelist: WhitelistSettings | None = None,
         hot_events: HotEventsSettings | None = None,
         **legacy_kwargs: object,
     ) -> None:
@@ -347,6 +359,7 @@ class Settings:
         log_settings = log or LogSettings()
         content_settings = content or ContentSettings()
         web_enrichment_settings = web_enrichment or WebEnrichmentSettings()
+        whitelist_settings = whitelist or WhitelistSettings()
         hot_events_settings = hot_events or HotEventsSettings()
 
         if "database_url" in legacy_kwargs:
@@ -498,6 +511,7 @@ class Settings:
         object.__setattr__(self, "log", log_settings)
         object.__setattr__(self, "content", content_settings)
         object.__setattr__(self, "web_enrichment", web_enrichment_settings)
+        object.__setattr__(self, "whitelist", whitelist_settings)
         object.__setattr__(self, "hot_events", hot_events_settings)
 
     @property
@@ -633,6 +647,10 @@ class Settings:
         return self.web_enrichment.recency_hours
 
     @property
+    def whitelist_enabled(self) -> bool:
+        return self.whitelist.enabled
+
+    @property
     def hot_events_refresh_interval_seconds(self) -> int:
         return self.hot_events.auto_refresh_interval_seconds
 
@@ -677,6 +695,7 @@ def _build_settings(parsed: _RootConfigModel, *, base_dir: Path) -> Settings:
         log=log,
         content=ContentSettings(**parsed.content.dict()),
         web_enrichment=WebEnrichmentSettings(**parsed.web_enrichment.dict()),
+        whitelist=WhitelistSettings(**parsed.whitelist.dict()),
         hot_events=HotEventsSettings(
             provider_6551_token=parsed.hot_events.provider_6551_token,
             auto_refresh_interval_seconds=parsed.hot_events.auto_refresh_interval_seconds,
