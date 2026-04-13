@@ -16,6 +16,7 @@ from app.llm import LLMClient, LLMError, create_llm_client
 from app.logging_utils import configure_logging, format_log_event, get_logger, log_event, redact_for_log
 from app.orchestrator import ContentOrchestrator
 from app.persona import build_corpus_stats
+from app.post_formatting import XPostFormatter, build_post_formatter
 from app.schemas import (
     ContentDebugResponse,
     ContentGenerateRequest,
@@ -141,6 +142,7 @@ def create_app(
     app.state.database = database
     app.state.upstream = upstream_client or UpstreamClient(settings)
     app.state.llm = llm_client or create_llm_client(settings)
+    app.state.post_formatter = build_post_formatter(enable_skill=settings.app_env != "test")
     app.state.content_orchestrator = content_orchestrator or ContentOrchestrator(
         settings=settings,
         database=database,
@@ -369,6 +371,14 @@ def create_app(
             )
             raise
 
+        post_formatter: XPostFormatter = request.app.state.post_formatter
+        _apply_post_formatting_to_draft_items(
+            draft_result.get("drafts", []),
+            formatter=post_formatter,
+            request_id=request_id,
+            route="drafts_generate",
+        )
+
         database.save_draft_request(
             username=username,
             persona_snapshot_id=snapshot["id"],
@@ -458,6 +468,14 @@ def create_app(
         except LLMError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+        post_formatter: XPostFormatter = request.app.state.post_formatter
+        _apply_post_formatting_to_content_output(
+            result,
+            formatter=post_formatter,
+            request_id=request_id,
+            route="content_generate",
+        )
+
         latest_persona_snapshot = database.get_latest_persona_snapshot(username)
         if latest_persona_snapshot is None:
             raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
@@ -503,6 +521,14 @@ def create_app(
             raise HTTPException(status_code=status_code, detail=message) from exc
         except LLMError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        post_formatter: XPostFormatter = request.app.state.post_formatter
+        _apply_post_formatting_to_content_output(
+            result,
+            formatter=post_formatter,
+            request_id=request_id,
+            route="trending_generate",
+        )
 
         latest_persona_snapshot = database.get_latest_persona_snapshot(username)
         if latest_persona_snapshot is None:
@@ -622,3 +648,99 @@ def _profile_summary_from_row(row: dict[str, Any]) -> ProfileSummary:
         verified=bool(row.get("verified")),
         last_ingested_at=str(row.get("last_ingested_at") or ""),
     )
+
+
+def _apply_post_formatting_to_draft_items(
+    drafts: Any,
+    *,
+    formatter: XPostFormatter,
+    request_id: str,
+    route: str,
+) -> None:
+    if not isinstance(drafts, list) or not drafts:
+        return
+
+    indices: list[int] = []
+    original_texts: list[str] = []
+    for index, item in enumerate(drafts):
+        if not isinstance(item, dict):
+            continue
+        raw_text = item.get("text")
+        if not isinstance(raw_text, str):
+            continue
+        indices.append(index)
+        original_texts.append(raw_text)
+
+    if not original_texts:
+        return
+
+    formatted_texts = formatter.format_texts(
+        original_texts,
+        request_id=request_id,
+        route=route,
+    )
+    if len(formatted_texts) != len(original_texts):
+        return
+
+    changed_count = 0
+    for index, next_text, original_text in zip(indices, formatted_texts, original_texts, strict=False):
+        if drafts[index].get("text") != next_text:
+            drafts[index]["text"] = next_text
+        if next_text != original_text:
+            changed_count += 1
+
+    if changed_count:
+        log_event(
+            logger,
+            logging.INFO,
+            "post_format_applied",
+            request_id=request_id,
+            route=route,
+            changed_count=changed_count,
+            total_count=len(original_texts),
+            skill_enabled=formatter.skill_enabled,
+        )
+
+
+def _refresh_formatted_drafts_list(payload: dict[str, Any]) -> None:
+    drafts = payload.get("drafts")
+    if not isinstance(drafts, list):
+        return
+    payload["formatted_drafts"] = [
+        f"{index}. {str(item.get('text', '')).strip()}"
+        for index, item in enumerate(drafts, 1)
+        if isinstance(item, dict)
+    ]
+
+
+def _apply_post_formatting_to_content_output(
+    payload: dict[str, Any],
+    *,
+    formatter: XPostFormatter,
+    request_id: str,
+    route: str,
+) -> None:
+    if not isinstance(payload, dict):
+        return
+
+    _apply_post_formatting_to_draft_items(
+        payload.get("drafts"),
+        formatter=formatter,
+        request_id=request_id,
+        route=route,
+    )
+    _refresh_formatted_drafts_list(payload)
+
+    variants = payload.get("variants")
+    if not isinstance(variants, list):
+        return
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        _apply_post_formatting_to_draft_items(
+            variant.get("drafts"),
+            formatter=formatter,
+            request_id=request_id,
+            route=route,
+        )
+        _refresh_formatted_drafts_list(variant)

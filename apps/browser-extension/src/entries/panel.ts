@@ -1441,7 +1441,7 @@ interface PanelUi {
 								? Number(event.heat_score).toFixed(1)
 								: "0.0";
 							const showingOriginal = isShowingOriginalHotEvent(eventId);
-							const translationToggleTitle = event.is_translated
+							const translationToggleLabel = event.is_translated
 								? escapeHtml(
 										showingOriginal
 											? tr("action.showTranslation")
@@ -1470,11 +1470,7 @@ interface PanelUi {
                     <span class="smc-hot-event-score">${heatScore}</span>
                     ${
 											event.is_translated
-												? `<button class="smc-hot-translate-button ${translationToggleClass}" data-action="toggle-hot-event-original" data-hot-event-id="${escapeHtml(eventId)}" data-tooltip-label="${translationToggleTitle}" type="button" aria-label="${translationToggleTitle}" aria-pressed="${showingOriginal ? "true" : "false"}">
-                        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                          <path d="M3.5 3.5h5m-2.5 0c0 4-1.3 6.5-3.2 8m3.2-8c.8 1.7 2 3.3 3.6 4.8m-5.5 1.2h5.8m2.2 0 1.2 3m-1.2-3-1.2-3-1.2 3m2.4 0h-2.4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2"/>
-                        </svg>
-                      </button>`
+												? `<button class="smc-hot-translate-button ${translationToggleClass}" data-action="toggle-hot-event-original" data-hot-event-id="${escapeHtml(eventId)}" type="button" aria-label="${translationToggleLabel}" aria-pressed="${showingOriginal ? "true" : "false"}">${translationToggleLabel}</button>`
 												: ""
 										}
                   </div>
@@ -1526,29 +1522,9 @@ interface PanelUi {
 		).forEach((button) => {
 			button.addEventListener("pointerdown", (pointerEvent) => {
 				pointerEvent.stopPropagation();
-				hideHotEventTooltip();
-			});
-			button.addEventListener("mouseenter", () => {
-				showHotEventTooltip(
-					button,
-					String(button.getAttribute("data-tooltip-label") || ""),
-				);
-			});
-			button.addEventListener("mouseleave", () => {
-				hideHotEventTooltip();
-			});
-			button.addEventListener("focus", () => {
-				showHotEventTooltip(
-					button,
-					String(button.getAttribute("data-tooltip-label") || ""),
-				);
-			});
-			button.addEventListener("blur", () => {
-				hideHotEventTooltip();
 			});
 			button.addEventListener("click", (clickEvent) => {
 				clickEvent.stopPropagation();
-				hideHotEventTooltip();
 				const eventId = String(button.getAttribute("data-hot-event-id") || "");
 				if (!eventId) {
 					return;
@@ -2503,10 +2479,40 @@ interface PanelUi {
 	}
 
 	function renderComposerState(): void {
+		const rawMessage = String(STATE.composerMessage || "").trim();
+		const displayMessage = getComposerDisplayMessage(rawMessage);
+		const titleMessage = rawMessage || displayMessage;
 		const className = STATE.composerAvailable
-			? "smc-pill badge smc-pill-good"
-			: "smc-pill badge smc-pill-warn";
-		ui.composer.innerHTML = `<span class="${className}">${escapeHtml(STATE.composerMessage)}</span>`;
+			? "smc-pill badge smc-pill-good smc-composer-pill"
+			: "smc-pill badge smc-pill-warn smc-composer-pill";
+		ui.composer.innerHTML = `<span class="${className}" title="${escapeHtml(titleMessage)}">${escapeHtml(displayMessage)}</span>`;
+	}
+
+	function getComposerDisplayMessage(message: string): string {
+		const normalized = String(message || "")
+			.replace(/\s+/g, " ")
+			.trim();
+		const locale = getResolvedLocale();
+		const isChineseLocale = locale === "zh-CN" || locale === "zh-TW";
+		if (!normalized) {
+			return isChineseLocale
+				? "打开 X 发帖框后可插入草稿"
+				: "Open X composer to insert drafts";
+		}
+		if (
+			/reload the x tab so the extension can attach to the page\.?/i.test(
+				normalized,
+			)
+		) {
+			return isChineseLocale ? "请刷新 X 页面后重试" : "Reload X tab";
+		}
+		if (/open the x composer to insert drafts\.?/i.test(normalized)) {
+			return isChineseLocale ? "打开 X 发帖框后可插入草稿" : "Open X composer";
+		}
+		if (/unable to reach the active tab\.?/i.test(normalized)) {
+			return isChineseLocale ? "当前标签页不可达" : "Active tab unavailable";
+		}
+		return normalized;
 	}
 
 	function getDraftText(drafts: PanelDraftLike[], index: number): string {
