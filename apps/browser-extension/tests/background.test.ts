@@ -365,7 +365,10 @@ test("background save_config accepts localhost alias", async () => {
 
 test("background get_config keeps persisted localhost backend url", async () => {
 	const harness = createBackgroundHarness({
-		storage: { backendBaseUrl: "http://127.0.0.1:8000" },
+		storage: {
+			backendBaseUrl: "http://127.0.0.1:8000",
+			debugModeUnlocked: true,
+		},
 	});
 	await flushTasks();
 
@@ -378,6 +381,53 @@ test("background get_config keeps persisted localhost backend url", async () => 
 
 	assert.equal(response.ok, true);
 	assert.equal(response.config.backendBaseUrl, "http://127.0.0.1:8000");
+	assert.equal(response.config.debugModeUnlocked, true);
+});
+
+test("background save_config persists debug mode unlock state", async () => {
+	const harness = createBackgroundHarness();
+	await flushTasks();
+
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		config: StakedMediaExtensionConfig;
+	}>(harness.listeners.onMessage, {
+		type: "save_config",
+		payload: { debugModeUnlocked: true },
+	});
+
+	assert.equal(response.ok, true);
+	assert.equal(response.config.debugModeUnlocked, true);
+	assert.equal(harness.storage.debugModeUnlocked, true);
+});
+
+test("background host mode changes keep saved backend and debug settings", async () => {
+	const harness = createBackgroundHarness();
+	await flushTasks();
+
+	await dispatchRuntimeMessage<{
+		ok: boolean;
+		config: StakedMediaExtensionConfig;
+	}>(harness.listeners.onMessage, {
+		type: "save_config",
+		payload: {
+			backendBaseUrl: "http://127.0.0.1:8000",
+			debugModeUnlocked: true,
+		},
+	});
+
+	const response = await dispatchRuntimeMessage<{
+		ok: boolean;
+		config: StakedMediaExtensionConfig;
+	}>(harness.listeners.onMessage, {
+		type: "save_config",
+		payload: { hostMode: "popup" },
+	});
+
+	assert.equal(response.ok, true);
+	assert.equal(response.config.hostMode, "popup");
+	assert.equal(response.config.backendBaseUrl, "http://127.0.0.1:8000");
+	assert.equal(response.config.debugModeUnlocked, true);
 });
 
 test("background save_config rejects unsupported backend protocols", async () => {

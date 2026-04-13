@@ -15,6 +15,7 @@ interface StakedMediaExtensionConfig {
 	theme: StakedMediaThemeMode;
 	hostMode: StakedMediaHostMode;
 	language: StakedMediaLanguageMode;
+	debugModeUnlocked: boolean;
 }
 
 interface StakedMediaNormalizeOptions {

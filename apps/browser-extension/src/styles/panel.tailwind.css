@@ -705,22 +705,16 @@ html[data-host="popup"] .smc-panel {
 	align-items: center;
 	gap: 4px;
 	padding: 0;
+	margin: 0;
 	border: none;
 	background: transparent;
+	appearance: none;
 	color: var(--smc-muted);
 	font: inherit;
-	cursor: pointer;
-	transition: color 0.15s ease;
-}
-
-.smc-settings-version-button:hover {
-	color: var(--smc-muted-strong);
-}
-
-.smc-settings-version-button:focus-visible {
+	line-height: inherit;
+	text-align: center;
+	cursor: default;
 	outline: none;
-	box-shadow: 0 0 0 2px var(--smc-focus-ring);
-	border-radius: 6px;
 }
 
 .smc-settings-version-label {
