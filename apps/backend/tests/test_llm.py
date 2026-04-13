@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import app.llm as llm_module
@@ -264,17 +265,13 @@ class LlmNormalizationTestCase(unittest.TestCase):
                 {
                     "id": "rep-1",
                     "text": "  concise update  ",
-                    "created_at": "2026-04-02T00:00:00Z",
-                    "is_reply": True,
-                    "is_quote": False,
+                    "created_at": (datetime.now(UTC) - timedelta(days=7)).isoformat().replace("+00:00", "Z"),
                     "engagement_score": 17,
                 },
                 {
                     "id": "rep-2",
                     "text": "   ",
                     "created_at": "2026-04-03T00:00:00Z",
-                    "is_reply": False,
-                    "is_quote": True,
                     "engagement_score": 9,
                 },
             ],
@@ -292,9 +289,18 @@ class LlmNormalizationTestCase(unittest.TestCase):
         )
 
         self.assertIsNot(payload["corpus_stats"], corpus_stats)
+        self.assertEqual(len(payload["corpus_stats"]["representative_tweets"]), 1)
         self.assertEqual(
-            payload["corpus_stats"]["representative_tweets"],
-            [{"text": "concise update", "is_reply": True, "is_quote": False}],
+            payload["corpus_stats"]["representative_tweets"][0]["text"],
+            "concise update",
+        )
+        self.assertEqual(
+            payload["corpus_stats"]["representative_tweets"][0]["engagement_score"],
+            17,
+        )
+        self.assertIsInstance(
+            payload["corpus_stats"]["representative_tweets"][0]["days_ago"],
+            int,
         )
         self.assertNotIn("high_engagement_examples", payload["corpus_stats"])
         self.assertIn("high_engagement_examples", corpus_stats)
@@ -367,9 +373,7 @@ class LlmNormalizationTestCase(unittest.TestCase):
                         {
                             "id": "rep-1",
                             "text": "short note",
-                            "created_at": "2026-04-02T00:00:00Z",
-                            "is_reply": False,
-                            "is_quote": True,
+                            "created_at": (datetime.now(UTC) - timedelta(days=3)).isoformat().replace("+00:00", "Z"),
                             "engagement_score": 17,
                         }
                     ],
@@ -387,17 +391,18 @@ class LlmNormalizationTestCase(unittest.TestCase):
         self.assertEqual(persona["generation_guardrails"]["preferred_openings"], ["open bluntly"])
         self.assertEqual(persona["signature_patterns"][0]["pattern"], "thesis then turn")
         self.assertIn(
-            "Focus on the representative_tweets to infer voice, tone, sentence rhythm, and writing habits.",
+            "The drafts must sound authentically like this user AND be likely to perform well.",
             system_prompt,
         )
-        self.assertIn("voice_signals, signature_patterns", system_prompt)
-        self.assertIn("lexical_markers_detailed", system_prompt)
-        self.assertIn("generation_guardrails_detailed", system_prompt)
         self.assertIn(
-            "Use corpus statistics (writing_stats, language_stats, engagement_patterns) as supporting "
-            "quantitative evidence, not as the primary signal.",
+            "HIGH-PERFORMING PATTERNS from high engagement_score tweets.",
             system_prompt,
         )
+        self.assertIn(
+            "CURRENT STYLE from low days_ago tweets.",
+            system_prompt,
+        )
+        self.assertIn("cadence_stats, media_stats", system_prompt)
         self.assertTrue(any("voice_signals should be 3 to 6 objects" in item for item in instructions))
         self.assertTrue(any("signature_patterns should be 2 to 5 recurring" in item for item in instructions))
         self.assertTrue(any("lexical_markers_detailed should contain up to 8 objects" in item for item in instructions))
@@ -407,9 +412,26 @@ class LlmNormalizationTestCase(unittest.TestCase):
                 for item in instructions
             )
         )
+        self.assertTrue(
+            any("prioritize patterns observed in tweets with high engagement_score" in item for item in instructions)
+        )
+        self.assertTrue(
+            any(
+                "prefer the recent signal for language_profile, emotional_baseline, and voice_traits" in item
+                for item in instructions
+            )
+        )
         self.assertEqual(
-            request_payload["corpus_stats"]["representative_tweets"],
-            [{"text": "short note", "is_reply": False, "is_quote": True}],
+            request_payload["corpus_stats"]["representative_tweets"][0]["text"],
+            "short note",
+        )
+        self.assertEqual(
+            request_payload["corpus_stats"]["representative_tweets"][0]["engagement_score"],
+            17,
+        )
+        self.assertIsInstance(
+            request_payload["corpus_stats"]["representative_tweets"][0]["days_ago"],
+            int,
         )
         self.assertNotIn("high_engagement_examples", request_payload["corpus_stats"])
 

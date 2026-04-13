@@ -34,20 +34,6 @@ class IngestResponse(BaseModel):
     persona: dict[str, Any]
 
 
-class ProfileRebuildPersonaRequest(BaseModel):
-    username: str = Field(..., strip_whitespace=True, min_length=1)
-
-
-class ProfileRebuildPersonaResponse(BaseModel):
-    username: str
-    user_id: str
-    source_tweet_count: int
-    source_original_tweet_count: int
-    persona_snapshot_id: int
-    rebuilt_at: str
-    persona: dict[str, Any]
-
-
 class ProfileResponse(BaseModel):
     profile: ProfileSummary
     stored_tweet_count: int

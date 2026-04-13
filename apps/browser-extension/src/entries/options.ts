@@ -2,7 +2,6 @@ const {
 	DEFAULT_CONFIG: OPTIONS_DEFAULT_CONFIG,
 	listLanguageOptions,
 	resolveLocale,
-	sanitizeUserVisibleErrorMessage,
 	sendRuntimeMessage,
 	t,
 } = window.StakedMediaExtensionShared;
@@ -441,9 +440,7 @@ function applyTheme(theme: StakedMediaThemeMode | null | undefined): void {
 	document.documentElement.setAttribute("data-options-theme", resolvedTheme);
 	document.documentElement.setAttribute(
 		"data-theme",
-		resolvedTheme === "dark"
-			? "foxspark_coinbase_dark"
-			: "foxspark_coinbase",
+		resolvedTheme === "dark" ? "foxspark_coinbase_dark" : "foxspark_coinbase",
 	);
 }
 
@@ -468,9 +465,6 @@ function setStatus(message: unknown, kind: StatusKind): void {
 	fields.status.hidden = !text;
 }
 
-function formatRuntimeError(error: unknown): string {
-	return sanitizeUserVisibleErrorMessage(
-		(error as Error | undefined)?.message || error || "",
-		tr("error.serviceUnavailable"),
-	);
+function formatRuntimeError(_error: unknown): string {
+	return tr("error.serviceUnavailable");
 }

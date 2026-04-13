@@ -152,6 +152,10 @@ interface StakedMediaExtensionSharedHost {
 				"hint.selectHotEventBeforeGenerate": "Pick a hot event to continue.",
 				"hint.sendSelectedEventToDraft":
 					"We'll send the selected event and your take to Draft.",
+				"error.profileNotReady": "Profile is not ready. Please ingest first.",
+				"error.invalidInput": "Invalid input. Please check and try again.",
+				"error.userNotAllowed":
+					"This user is not authorized. Contact the administrator.",
 				"error.serviceUnavailable": DEFAULT_PUBLIC_ERROR_MESSAGE,
 				"profile.usernameRequired": "Username is required.",
 				"profile.loading": "Loading profile...",
@@ -226,6 +230,9 @@ interface StakedMediaExtensionSharedHost {
 				"hint.selectHotEventBeforeGenerate": "请选择一个热点事件后继续。",
 				"hint.sendSelectedEventToDraft":
 					"我们会将已选事件和你的观点发送到 Draft。",
+				"error.profileNotReady": "用户资料未就绪，请先采集。",
+				"error.invalidInput": "输入有误，请检查后重试。",
+				"error.userNotAllowed": "此用户未被授权，请联系管理员。",
 				"error.serviceUnavailable": "服务暂时不可用，请稍后再试。",
 				"profile.usernameRequired": "用户名不能为空。",
 				"profile.loading": "正在加载档案...",
@@ -299,6 +306,9 @@ interface StakedMediaExtensionSharedHost {
 				"hint.selectHotEventBeforeGenerate": "請先選擇一個熱門事件再繼續。",
 				"hint.sendSelectedEventToDraft":
 					"我們會將已選事件和你的觀點發送到 Draft。",
+				"error.profileNotReady": "使用者資料尚未就緒，請先匯入。",
+				"error.invalidInput": "輸入有誤，請檢查後重試。",
+				"error.userNotAllowed": "此使用者未被授權，請聯繫管理員。",
 				"error.serviceUnavailable": "服務暫時不可用，請稍後再試。",
 				"profile.usernameRequired": "使用者名稱不可為空。",
 				"profile.loading": "正在載入檔案...",
@@ -373,6 +383,12 @@ interface StakedMediaExtensionSharedHost {
 					"続けるにはホットイベントを選択してください。",
 				"hint.sendSelectedEventToDraft":
 					"選択したイベントとあなたの視点を Draft に送信します。",
+				"error.profileNotReady":
+					"プロフィールが準備できていません。先に取り込みを行ってください。",
+				"error.invalidInput":
+					"入力に誤りがあります。確認してもう一度お試しください。",
+				"error.userNotAllowed":
+					"このユーザーは許可されていません。管理者にお問い合わせください。",
 				"error.serviceUnavailable":
 					"サービスは一時的に利用できません。しばらくしてからもう一度お試しください。",
 				"profile.usernameRequired": "ユーザー名は必須です。",
@@ -450,6 +466,12 @@ interface StakedMediaExtensionSharedHost {
 					"계속하려면 먼저 핫 이벤트를 선택하세요.",
 				"hint.sendSelectedEventToDraft":
 					"선택한 이벤트와 당신의 관점을 Draft로 보냅니다.",
+				"error.profileNotReady":
+					"프로필이 준비되지 않았습니다. 먼저 수집을 실행하세요.",
+				"error.invalidInput":
+					"입력이 올바르지 않습니다. 확인 후 다시 시도해 주세요.",
+				"error.userNotAllowed":
+					"이 사용자는 허용되지 않았습니다. 관리자에게 문의하세요.",
 				"error.serviceUnavailable":
 					"서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
 				"profile.usernameRequired": "사용자 이름은 필수입니다.",
@@ -527,6 +549,10 @@ interface StakedMediaExtensionSharedHost {
 					"Elige un evento caliente para continuar.",
 				"hint.sendSelectedEventToDraft":
 					"Enviaremos el evento seleccionado y tu opinión a Draft.",
+				"error.profileNotReady": "El perfil no está listo. Ingiere primero.",
+				"error.invalidInput": "Entrada no válida. Revisa e inténtalo de nuevo.",
+				"error.userNotAllowed":
+					"Este usuario no está autorizado. Contacta al administrador.",
 				"error.serviceUnavailable":
 					"El servicio no está disponible temporalmente. Inténtalo de nuevo más tarde.",
 				"profile.usernameRequired": "El nombre de usuario es obligatorio.",
@@ -634,32 +660,6 @@ interface StakedMediaExtensionSharedHost {
 		function t(key: string, locale: Locale): string {
 			const dictionary = CORE_I18N[locale] || CORE_I18N.en;
 			return dictionary[key] || CORE_I18N.en[key] || key;
-		}
-
-		function sanitizeUserVisibleErrorMessage(
-			message: unknown,
-			fallbackMessage = DEFAULT_PUBLIC_ERROR_MESSAGE,
-		): string {
-			const normalized = String(message || "").trim();
-			if (!normalized || normalized === DEFAULT_PUBLIC_ERROR_MESSAGE) {
-				return fallbackMessage;
-			}
-			const lower = normalized.toLowerCase();
-			const looksLikeHtml =
-				lower.includes("<!doctype") ||
-				lower.includes("<html") ||
-				lower.includes("<head") ||
-				lower.includes("<body") ||
-				lower.includes("<title") ||
-				lower.includes("</html") ||
-				lower.includes("</body");
-			const looksLikeGatewayError =
-				lower.includes("cloudflare") || lower.includes("a timeout occurred");
-			const tooLong = normalized.length > 240;
-			if (looksLikeHtml || looksLikeGatewayError || tooLong) {
-				return fallbackMessage;
-			}
-			return normalized;
 		}
 
 		function listLanguageOptions(locale: Locale): LanguageOption[] {
@@ -868,7 +868,6 @@ interface StakedMediaExtensionSharedHost {
 			resolveLocale,
 			routeMessage,
 			sanitizeConfig,
-			sanitizeUserVisibleErrorMessage,
 			sendRuntimeMessage,
 			t,
 			listLanguageOptions,

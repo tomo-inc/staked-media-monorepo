@@ -96,10 +96,6 @@ interface StakedMediaExtensionSharedApi {
 		config: Partial<StakedMediaExtensionConfig> | null | undefined,
 		options?: StakedMediaNormalizeOptions,
 	): StakedMediaExtensionConfig;
-	sanitizeUserVisibleErrorMessage(
-		message: unknown,
-		fallbackMessage?: string,
-	): string;
 	sendRuntimeMessage<TResponse = unknown>(message: unknown): Promise<TResponse>;
 	t(key: string, locale: StakedMediaLocale): string;
 	listLanguageOptions(

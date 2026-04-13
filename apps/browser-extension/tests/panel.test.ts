@@ -80,7 +80,7 @@ test("deriveHotEventsStateNotice composes cached and error messaging", () => {
 
 test("buildPanelShell places the status banner outside both tabs", () => {
 	const markup = buildPanelShell();
-	const tabBarIndex = markup.indexOf('class="smc-tab-bar"');
+	const tabBarIndex = markup.indexOf('class="smc-tab-bar');
 	const statusSectionIndex = markup.indexOf('data-slot="status-section"');
 	const profilePanelIndex = markup.indexOf('data-tab-panel="profile"');
 	const draftPanelIndex = markup.indexOf('data-tab-panel="draft"');
