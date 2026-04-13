@@ -335,10 +335,20 @@ class FakeContentOrchestrator:
     def get_debug(self, request_id: str) -> dict | None:
         return None
 
-    def suggest_ideas(self, *, direction: str, domain: str, topic_hint: str, limit: int) -> dict:
+    def suggest_ideas(
+        self, *, direction: str, domain: str, topic_hint: str, limit: int, request_id: str | None = None
+    ) -> dict:
         return {"ideas": [], "query": "", "suggested_keywords": []}
 
-    def list_hot_events(self, *, hours: int, limit: int, refresh: bool, language: str | None = None) -> dict:
+    def list_hot_events(
+        self,
+        *,
+        hours: int,
+        limit: int,
+        refresh: bool,
+        language: str | None = None,
+        request_id: str | None = None,
+    ) -> dict:
         items = [
             {
                 "id": "web3::event-1",
@@ -384,6 +394,7 @@ class FakeContentOrchestrator:
         hours: int = 24,
         limit: int = 200,
         language: str | None = None,
+        request_id: str | None = None,
     ) -> dict:
         self.hot_events_refresh_calls += 1
         self.refresh_call_event.set()
@@ -450,7 +461,15 @@ class FakeContentOrchestrator:
             "debug_summary": "ok",
         }
 
-    def analyze_exposure(self, *, username: str, text: str, topic: str, domain: str) -> dict:
+    def analyze_exposure(
+        self,
+        *,
+        username: str,
+        text: str,
+        topic: str,
+        domain: str,
+        request_id: str | None = None,
+    ) -> dict:
         return {
             "hashtags": [],
             "best_posting_windows": [],
@@ -676,14 +695,55 @@ class ApiTestCase(unittest.TestCase):
             response = self.client.post(
                 "/api/v1/drafts/generate",
                 json={"username": "demo-user", "prompt": "Talk about focus", "draft_count": 2},
+                headers={"X-Request-ID": "client-req-123"},
             )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["X-Request-ID"], "client-req-123")
         joined = "\n".join(captured.output)
+        self.assertIn('"event":"http_request_started"', joined)
+        self.assertIn('"event":"http_request_completed"', joined)
         self.assertIn('"event":"api_draft_generate_started"', joined)
         self.assertIn('"event":"api_draft_generate_completed"', joined)
-        self.assertIn('"request_id":"', joined)
+        self.assertIn('"request_id":"client-req-123"', joined)
         self.assertIn('"username":"demo-user"', joined)
+        self.assertNotIn("prompt_snippet", joined)
+
+    def test_validation_errors_include_request_id_header(self) -> None:
+        response = self.client.post(
+            "/api/v1/drafts/generate",
+            json={"username": "demo-user"},
+            headers={"X-Request-ID": "validation-req-1"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.headers["X-Request-ID"], "validation-req-1")
+
+    def test_healthcheck_skips_request_logging_but_keeps_request_id_header(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        try:
+            settings = Settings(
+                app_env="test",
+                database_url=f"sqlite:///{temp_dir.name}/mvp.db",
+                openai_api_key="test-key",
+                log_enable_file=False,
+            )
+            with TestClient(
+                create_app(
+                    settings,
+                    upstream_client=FakeUpstreamClient(),
+                    llm_client=self.llm_client,
+                    content_orchestrator=object(),  # type: ignore[arg-type]
+                )
+            ) as client:
+                with patch("app.main.log_event") as mock_log_event:
+                    response = client.get("/healthz", headers={"X-Request-ID": "healthz-req-1"})
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["X-Request-ID"], "healthz-req-1")
+            mock_log_event.assert_not_called()
+        finally:
+            temp_dir.cleanup()
 
     def test_openapi_omits_ingest_max_tweets(self) -> None:
         response = self.client.get("/openapi.json")
@@ -757,6 +817,156 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(debug.status_code, 200)
         self.assertEqual(debug.json()["request_id"], payload["request_id"])
         self.assertIn("variants", debug.json())
+
+    def test_content_ideas_logs_failed_requests(self) -> None:
+        class FailingIdeasOrchestrator(FakeContentOrchestrator):
+            def suggest_ideas(
+                self, *, direction: str, domain: str, topic_hint: str, limit: int, request_id: str | None = None
+            ) -> dict:
+                raise RuntimeError("ideas backend unavailable")
+
+        temp_dir = tempfile.TemporaryDirectory()
+        try:
+            settings = Settings(
+                app_env="test",
+                database_url=f"sqlite:///{temp_dir.name}/mvp.db",
+                openai_api_key="test-key",
+                log_enable_file=False,
+            )
+            with TestClient(
+                create_app(
+                    settings,
+                    upstream_client=FakeUpstreamClient(),
+                    llm_client=self.llm_client,
+                    content_orchestrator=FailingIdeasOrchestrator(),  # type: ignore[arg-type]
+                ),
+                raise_server_exceptions=False,
+            ) as client:
+                with self.assertLogs("app.main", level="ERROR") as captured:
+                    response = client.post(
+                        "/api/v1/content/ideas",
+                        json={"direction": "crypto", "domain": "ai", "topic_hint": "binance", "limit": 3},
+                    )
+
+            self.assertEqual(response.status_code, 500)
+            joined = "\n".join(captured.output)
+            self.assertIn('"event":"api_content_ideas_failed"', joined)
+            self.assertIn('"failure_class":"RuntimeError"', joined)
+            self.assertIn('"duration_ms"', joined)
+        finally:
+            temp_dir.cleanup()
+
+    def test_exposure_analyze_logs_failed_requests(self) -> None:
+        class FailingExposureOrchestrator(FakeContentOrchestrator):
+            def analyze_exposure(
+                self,
+                *,
+                username: str,
+                text: str,
+                topic: str,
+                domain: str,
+                request_id: str | None = None,
+            ) -> dict:
+                raise RuntimeError("exposure backend unavailable")
+
+        temp_dir = tempfile.TemporaryDirectory()
+        try:
+            settings = Settings(
+                app_env="test",
+                database_url=f"sqlite:///{temp_dir.name}/mvp.db",
+                openai_api_key="test-key",
+                log_enable_file=False,
+            )
+            db = Database(settings.database_path)
+            db.init()
+            db.add_allowed_username("demo-user")
+            with TestClient(
+                create_app(
+                    settings,
+                    upstream_client=FakeUpstreamClient(),
+                    llm_client=self.llm_client,
+                    content_orchestrator=FailingExposureOrchestrator(),  # type: ignore[arg-type]
+                ),
+                raise_server_exceptions=False,
+            ) as client:
+                with self.assertLogs("app.main", level="ERROR") as captured:
+                    response = client.post(
+                        "/api/v1/exposure/analyze",
+                        json={
+                            "username": "demo-user",
+                            "text": "binance winners",
+                            "topic": "Binance",
+                            "domain": "crypto",
+                        },
+                    )
+
+            self.assertEqual(response.status_code, 500)
+            joined = "\n".join(captured.output)
+            self.assertIn('"event":"api_exposure_analyze_failed"', joined)
+            self.assertIn('"failure_class":"RuntimeError"', joined)
+            self.assertIn('"duration_ms"', joined)
+        finally:
+            temp_dir.cleanup()
+
+    def test_content_generate_logs_unhandled_persistence_errors(self) -> None:
+        ingest = self.client.post("/api/v1/profiles/ingest", json={"username": "demo-user"})
+        self.assertEqual(ingest.status_code, 200)
+
+        with patch.object(Database, "save_draft_request", side_effect=RuntimeError("draft save failed")):
+            with self.assertLogs("app.main", level="ERROR") as captured:
+                with self.assertRaises(RuntimeError):
+                    self.client.post(
+                        "/api/v1/content/generate",
+                        json={
+                            "username": "demo-user",
+                            "mode": "A",
+                            "idea": "Share thoughts about Binance winners list",
+                            "topic": "Binance winners",
+                            "keywords": ["Binance", "winners"],
+                            "draft_count": 2,
+                        },
+                    )
+
+        joined = "\n".join(captured.output)
+        self.assertIn('"event":"api_content_generate_unhandled_error"', joined)
+        self.assertIn('"failure_class":"RuntimeError"', joined)
+        self.assertIn('"duration_ms"', joined)
+
+    def test_trending_generate_logs_unhandled_persistence_errors(self) -> None:
+        ingest = self.client.post("/api/v1/profiles/ingest", json={"username": "demo-user"})
+        self.assertEqual(ingest.status_code, 200)
+
+        with patch.object(Database, "save_draft_request", side_effect=RuntimeError("draft save failed")):
+            with self.assertLogs("app.main", level="ERROR") as captured:
+                with self.assertRaises(RuntimeError):
+                    self.client.post(
+                        "/api/v1/trending/generate",
+                        json={
+                            "username": "demo-user",
+                            "event_payload": {
+                                "id": "web3::event-1",
+                                "title": "ETF flow spikes",
+                                "summary": "Large inflow observed.",
+                                "url": "https://example.com/etf",
+                                "source": "Example",
+                                "source_domain": "example.com",
+                                "published_at": "2026-03-31T00:00:00+00:00",
+                                "relative_age_hint": "2h ago",
+                                "heat_score": 96.0,
+                                "category": "web3",
+                                "subcategory": "",
+                                "content_type": "news",
+                                "author_handle": "",
+                            },
+                            "comment": "This could trigger rotation into large caps.",
+                            "draft_count": 2,
+                        },
+                    )
+
+        joined = "\n".join(captured.output)
+        self.assertIn('"event":"api_trending_generate_unhandled_error"', joined)
+        self.assertIn('"failure_class":"RuntimeError"', joined)
+        self.assertIn('"duration_ms"', joined)
 
     def test_content_hot_events_endpoint_returns_sorted_items(self) -> None:
         client = TestClient(

@@ -80,8 +80,20 @@ class ContentOrchestrator:
         self._hot_events_last_source_status: dict[str, Any] = {}
         self._debug_runs: dict[str, dict[str, Any]] = {}
 
-    def suggest_ideas(self, *, direction: str, domain: str, topic_hint: str, limit: int) -> dict[str, Any]:
+    def suggest_ideas(
+        self, *, direction: str, domain: str, topic_hint: str, limit: int, request_id: str | None = None
+    ) -> dict[str, Any]:
         query = " ".join(part for part in [direction, domain, topic_hint] if part).strip() or "crypto ai"
+        log_event(
+            logger,
+            logging.INFO,
+            "content_ideas_started",
+            request_id=request_id,
+            direction=direction,
+            domain=domain,
+            topic_hint_len=len(topic_hint or ""),
+            limit=limit,
+        )
         enrichment = self.web_enricher.search_recent_topic_signals(query, [])
         ideas = []
         for item in enrichment.get("items", [])[:limit]:
@@ -95,21 +107,50 @@ class ContentOrchestrator:
                     "url": item.get("url", ""),
                 }
             )
-        return {
+        result = {
             "ideas": ideas,
             "query": query,
             "suggested_keywords": enrichment.get("keywords", [])[:20],
         }
+        log_event(
+            logger,
+            logging.INFO,
+            "content_ideas_completed",
+            request_id=request_id,
+            query=query,
+            idea_count=len(result["ideas"]),
+            suggested_keyword_count=len(result["suggested_keywords"]),
+        )
+        return result
 
-    def list_hot_events(self, *, hours: int, limit: int, refresh: bool, language: str | None = None) -> dict[str, Any]:
+    def list_hot_events(
+        self,
+        *,
+        hours: int,
+        limit: int,
+        refresh: bool,
+        language: str | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
         bounded_hours = self._bound_hot_events_hours(hours)
         bounded_limit = self._bound_hot_events_limit(limit)
+        log_event(
+            logger,
+            logging.INFO,
+            "hot_events_request_started",
+            request_id=request_id,
+            hours=bounded_hours,
+            limit=bounded_limit,
+            refresh=refresh,
+            language=language or "en",
+        )
         if refresh:
             try:
                 return self.refresh_hot_events_snapshot(
                     hours=bounded_hours,
                     limit=bounded_limit,
                     language=language,
+                    request_id=request_id,
                 )
             except RuntimeError as exc:
                 self._hot_events_last_refresh_error = str(exc)
@@ -121,11 +162,46 @@ class ContentOrchestrator:
                     last_refresh_error=str(exc),
                     force_stale=True,
                     language=language,
+                    request_id=request_id,
                 )
                 if not fallback["items"]:
                     raise
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "hot_events_request_completed",
+                    request_id=request_id,
+                    hours=bounded_hours,
+                    limit=bounded_limit,
+                    refresh=refresh,
+                    language=language or "en",
+                    count=fallback["count"],
+                    warnings_count=len(fallback["warnings"]),
+                    is_stale=bool(fallback["is_stale"]),
+                    outcome="fallback",
+                )
                 return fallback
-        return self._get_hot_events_response(hours=bounded_hours, limit=bounded_limit, language=language)
+        response = self._get_hot_events_response(
+            hours=bounded_hours,
+            limit=bounded_limit,
+            language=language,
+            request_id=request_id,
+        )
+        log_event(
+            logger,
+            logging.INFO,
+            "hot_events_request_completed",
+            request_id=request_id,
+            hours=bounded_hours,
+            limit=bounded_limit,
+            refresh=refresh,
+            language=language or "en",
+            count=response["count"],
+            warnings_count=len(response["warnings"]),
+            is_stale=bool(response["is_stale"]),
+            outcome="completed",
+        )
+        return response
 
     def refresh_hot_events_snapshot(
         self,
@@ -133,13 +209,33 @@ class ContentOrchestrator:
         hours: int = 24,
         limit: int = 200,
         language: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         bounded_hours = self._bound_hot_events_hours(hours)
         bounded_limit = self._bound_hot_events_limit(limit)
+        log_event(
+            logger,
+            logging.INFO,
+            "hot_events_refresh_started",
+            request_id=request_id,
+            hours=bounded_hours,
+            limit=bounded_limit,
+            language=language or "en",
+        )
         if not self._hot_events_refresh_lock.acquire(blocking=False):
             currently_refreshing = self._hot_events_refreshing.is_set()
             attempted_at = self._utc_now_iso()
             self._hot_events_last_attempted_at = attempted_at
+            log_event(
+                logger,
+                logging.INFO,
+                "hot_events_refresh_skipped",
+                request_id=request_id,
+                hours=bounded_hours,
+                limit=bounded_limit,
+                refreshing=currently_refreshing,
+                outcome="skipped",
+            )
             return self._get_hot_events_response(
                 hours=bounded_hours,
                 limit=bounded_limit,
@@ -148,6 +244,7 @@ class ContentOrchestrator:
                 refreshing=currently_refreshing,
                 allow_live_translation=not currently_refreshing,
                 language=language,
+                request_id=request_id,
             )
 
         try:
@@ -155,6 +252,16 @@ class ContentOrchestrator:
             self._hot_events_last_attempted_at = attempted_at
             throttled, next_refresh_available_in_seconds = self._get_hot_events_refresh_throttle()
             if throttled:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "hot_events_refresh_throttled",
+                    request_id=request_id,
+                    hours=bounded_hours,
+                    limit=bounded_limit,
+                    next_refresh_available_in_seconds=next_refresh_available_in_seconds,
+                    outcome="throttled",
+                )
                 return self._get_hot_events_response(
                     hours=bounded_hours,
                     limit=bounded_limit,
@@ -164,6 +271,7 @@ class ContentOrchestrator:
                     next_refresh_available_in_seconds=next_refresh_available_in_seconds,
                     refreshing=False,
                     language=language,
+                    request_id=request_id,
                 )
 
             self._hot_events_refreshing.set()
@@ -171,12 +279,21 @@ class ContentOrchestrator:
             payload = self.hot_events_service.list_hot_events(hours=bounded_hours, limit=200, refresh=True)
             items_value = payload.get("items")
             items = [item for item in items_value if isinstance(item, dict)] if isinstance(items_value, list) else []
+            log_event(
+                logger,
+                logging.INFO,
+                "hot_events_refresh_source_completed",
+                request_id=request_id,
+                hours=bounded_hours,
+                fetched_count=len(items),
+                warning_count=len(self._coerce_string_list(payload.get("warnings"))),
+            )
             stored_count = self.database.upsert_hot_events(items, refreshed_at)
             self._hot_events_last_refresh_monotonic = time.monotonic()
             self._hot_events_last_refresh_error = ""
             warnings = self._coerce_string_list(payload.get("warnings"))
             source_status = self._coerce_dict(payload.get("source_status"))
-            translation_warnings = self._pre_translate_hot_events(items)
+            translation_warnings = self._pre_translate_hot_events(items, request_id=request_id)
             self._hot_events_last_warnings = warnings + translation_warnings
             self._hot_events_last_source_status = source_status
             log_level = logging.WARNING if payload.get("warnings") else logging.INFO
@@ -184,10 +301,13 @@ class ContentOrchestrator:
                 logger,
                 log_level,
                 "hot_events_refresh_persisted",
+                request_id=request_id,
                 hours=bounded_hours,
                 stored_count=stored_count,
                 warnings=self._hot_events_last_warnings,
                 source_status=source_status,
+                translation_warning_count=len(translation_warnings),
+                outcome="completed",
             )
             return self._get_hot_events_response(
                 hours=bounded_hours,
@@ -201,12 +321,37 @@ class ContentOrchestrator:
                 next_refresh_available_in_seconds=0,
                 refreshing=False,
                 language=language,
+                request_id=request_id,
             )
+        except RuntimeError as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "hot_events_refresh_failed",
+                request_id=request_id,
+                hours=bounded_hours,
+                limit=bounded_limit,
+                language=language or "en",
+                error=str(exc),
+                failure_class=type(exc).__name__,
+            )
+            raise
         finally:
             self._hot_events_refreshing.clear()
             self._hot_events_refresh_lock.release()
 
     def generate_trending_content(self, payload: TrendingGenerateRequest, request_id: str) -> dict[str, Any]:
+        log_event(
+            logger,
+            logging.INFO,
+            "trending_generation_started",
+            request_id=request_id,
+            username=payload.username,
+            event_id_present=bool(payload.event_id.strip()),
+            event_payload_present=isinstance(payload.event_payload, dict),
+            comment_len=len(payload.comment or ""),
+            draft_count=payload.draft_count,
+        )
         selected_event = self._resolve_trending_event(payload)
         topic = str(selected_event.get("title") or "").strip()
         summary = str(selected_event.get("summary") or "").strip()
@@ -244,9 +389,35 @@ class ContentOrchestrator:
             keywords=keywords,
             draft_count=payload.draft_count,
         )
-        return self.generate_content(generate_payload, request_id=request_id)
+        result = self.generate_content(generate_payload, request_id=request_id)
+        log_event(
+            logger,
+            logging.INFO,
+            "trending_generation_completed",
+            request_id=request_id,
+            username=payload.username,
+            topic=topic,
+            selected_event_id=str(selected_event.get("id") or ""),
+            final_score=(
+                (result.get("score") or {}).get("final_score") if isinstance(result.get("score"), dict) else None
+            ),
+            target_score_met=bool(result.get("target_score_met", False)),
+        )
+        return result
 
-    def analyze_exposure(self, *, username: str, text: str, topic: str, domain: str) -> dict[str, Any]:
+    def analyze_exposure(
+        self, *, username: str, text: str, topic: str, domain: str, request_id: str | None = None
+    ) -> dict[str, Any]:
+        log_event(
+            logger,
+            logging.INFO,
+            "exposure_analysis_started",
+            request_id=request_id,
+            username=username,
+            text_len=len(text or ""),
+            topic_len=len(topic or ""),
+            domain_len=len(domain or ""),
+        )
         keywords = extract_theme_keywords(f"{topic} {domain} {text}")
         hashtags = [f"#{token.strip('$')}" for token in keywords[:8] if token and len(token.strip("$")) >= 2]
         windows = self._best_posting_windows(username)
@@ -257,19 +428,42 @@ class ContentOrchestrator:
             heat_label = "medium"
         else:
             heat_label = "low"
-        return {
+        result = {
             "hashtags": hashtags,
             "best_posting_windows": windows,
             "heat_score": heat_score,
             "heat_label": heat_label,
             "reasons": reasons,
         }
+        log_event(
+            logger,
+            logging.INFO,
+            "exposure_analysis_completed",
+            request_id=request_id,
+            username=username,
+            hashtag_count=len(hashtags),
+            heat_score=heat_score,
+            heat_label=heat_label,
+        )
+        return result
 
     def get_debug(self, request_id: str) -> dict[str, Any] | None:
         return self._debug_runs.get(request_id)
 
     def generate_content(self, payload: ContentGenerateRequest, request_id: str) -> dict[str, Any]:
         topic = self._resolve_topic(payload)
+        log_event(
+            logger,
+            logging.INFO,
+            "content_generation_started",
+            request_id=request_id,
+            username=payload.username,
+            mode=payload.mode,
+            topic=topic,
+            idea_len=len(payload.idea or ""),
+            keyword_count=len(payload.keywords or []),
+            draft_count=payload.draft_count,
+        )
         if payload.mode == "B" and not topic:
             raise ValueError("Mode B requires a topic after idea selection. Call /api/v1/content/ideas first.")
         if not topic:
@@ -288,15 +482,62 @@ class ContentOrchestrator:
         base_keywords = self._build_base_keywords(payload, topic)
         matched = select_theme_tweets(tweet_rows, base_keywords) if base_keywords else []
         personal_phrases = extract_personal_phrases_unbounded(matched)
+        log_event(
+            logger,
+            logging.INFO,
+            "content_generation_context_ready",
+            request_id=request_id,
+            username=payload.username,
+            topic=topic,
+            source_text_count=len(source_texts),
+            tweet_row_count=len(tweet_rows),
+            base_keyword_count=len(base_keywords),
+            history_match_count=len(matched),
+            personal_phrase_count=len(personal_phrases),
+        )
 
         web_enrichment_used = False
         web_keywords: list[str] = []
         source_facts: list[dict[str, Any]] = []
         if len(matched) < 3 and self.settings.web_enrichment.enabled:
-            web = self.web_enricher.search_recent_topic_signals(topic, base_keywords)
+            log_event(
+                logger,
+                logging.INFO,
+                "content_generation_web_enrichment_started",
+                request_id=request_id,
+                username=payload.username,
+                topic=topic,
+                base_keyword_count=len(base_keywords),
+                history_match_count=len(matched),
+            )
+            try:
+                web = self.web_enricher.search_recent_topic_signals(topic, base_keywords)
+            except Exception as exc:  # noqa: BLE001
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "content_generation_web_enrichment_failed",
+                    request_id=request_id,
+                    username=payload.username,
+                    topic=topic,
+                    error=str(exc),
+                    failure_class=type(exc).__name__,
+                )
+                raise
             web_keywords = web.get("keywords", [])
             source_facts = web.get("facts", [])
             web_enrichment_used = bool(web_keywords or source_facts)
+            log_event(
+                logger,
+                logging.INFO,
+                "content_generation_web_enrichment_completed",
+                request_id=request_id,
+                username=payload.username,
+                topic=topic,
+                web_keyword_count=len(web_keywords),
+                source_fact_count=len(source_facts),
+                web_enrichment_used=web_enrichment_used,
+            )
 
         used_keywords = expand_related_keywords(base_keywords, web_keywords, personal_phrases, limit=30)
         themed_tweets = select_theme_tweets(tweet_rows, used_keywords) if used_keywords else matched
@@ -337,24 +578,46 @@ class ContentOrchestrator:
                 variant = future_to_variant[future]
                 try:
                     variant_result = future.result()
-                except RuntimeError as exc:
+                except Exception as exc:  # noqa: BLE001
                     error_text = str(exc)
                     variant_failures.append({"variant": variant, "error": error_text})
                     log_event(
                         logger,
-                        logging.WARNING,
+                        logging.ERROR,
                         "content_variant_generation_failed",
                         request_id=request_id,
                         topic=topic,
                         variant=variant,
+                        failure_class=type(exc).__name__,
                         error=error_text,
                     )
                     continue
                 variants.append(variant_result["output"])
                 variant_debug.append(variant_result["debug"])
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "content_variant_completed",
+                    request_id=request_id,
+                    topic=topic,
+                    variant=variant_result["output"]["variant"],
+                    retry_count=variant_result["output"]["retry_count"],
+                    target_score_met=variant_result["output"]["target_score_met"],
+                    final_score=variant_result["output"]["score"]["final_score"],
+                )
 
         if not variants:
             detail = variant_failures[0]["error"] if variant_failures else "No variants produced content"
+            log_event(
+                logger,
+                logging.ERROR,
+                "content_generation_failed",
+                request_id=request_id,
+                username=payload.username,
+                topic=topic,
+                failure_class="no_variants",
+                error=detail,
+            )
             raise LLMError(detail)
 
         recommended = max(variants, key=lambda item: float(item["score"]["final_score"]))
@@ -414,11 +677,15 @@ class ContentOrchestrator:
             logging.INFO,
             "content_orchestrator_completed",
             request_id=request_id,
+            username=payload.username,
+            mode=payload.mode,
             topic=topic,
             history_match_count=len(matched),
             web_enrichment_used=response["web_enrichment_used"],
             final_score=recommended["score"]["final_score"],
             recommended_variant=recommended["variant"],
+            variant_count=len(variants),
+            quality_gate_met=quality_gate_met,
         )
         return response
 
@@ -451,6 +718,17 @@ class ContentOrchestrator:
         for round_index in range(1, self.settings.content.rewrite_max_rounds + 1):
             if quality_gate_event is not None and quality_gate_event.is_set() and best_result is not None:
                 break
+            log_event(
+                logger,
+                logging.INFO,
+                "content_variant_started",
+                request_id=request_id,
+                topic=topic,
+                variant=variant,
+                round_index=round_index,
+                used_keyword_count=len(local_used_keywords),
+                source_fact_count=len(local_source_facts),
+            )
             prompt = self._build_generation_prompt(
                 payload=payload,
                 topic=topic,
@@ -499,6 +777,18 @@ class ContentOrchestrator:
                     "note": "ok" if score["final_score"] >= 9.0 else "needs_revision",
                 }
             )
+            log_event(
+                logger,
+                logging.INFO,
+                "content_variant_round_completed",
+                request_id=request_id,
+                topic=topic,
+                variant=variant,
+                round_index=round_index,
+                final_score=score["final_score"],
+                target_score_met=score["final_score"] >= 9.0 and bool(draft_result.get("target_score_met", False)),
+                web_enrichment_used=local_web_used,
+            )
 
             if best_result is None or score["final_score"] > (best_score or {}).get("final_score", 0.0):
                 best_result = draft_result
@@ -511,7 +801,21 @@ class ContentOrchestrator:
                 break
 
             if self.settings.web_enrichment.enabled:
-                web = self.web_enricher.search_recent_topic_signals(topic, local_used_keywords)
+                try:
+                    web = self.web_enricher.search_recent_topic_signals(topic, local_used_keywords)
+                except Exception as exc:  # noqa: BLE001
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "content_generation_web_enrichment_failed",
+                        request_id=request_id,
+                        topic=topic,
+                        variant=variant,
+                        round_index=round_index,
+                        error=str(exc),
+                        failure_class=type(exc).__name__,
+                    )
+                    raise
                 extra_keywords = web.get("keywords", [])
                 extra_facts = web.get("facts", [])
                 if extra_keywords or extra_facts:
@@ -520,6 +824,18 @@ class ContentOrchestrator:
                     local_source_facts = local_source_facts + extra_facts
                     local_used_keywords = expand_related_keywords(
                         local_used_keywords, local_web_keywords, personal_phrases, limit=30
+                    )
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "content_generation_web_enrichment_completed",
+                        request_id=request_id,
+                        topic=topic,
+                        variant=variant,
+                        round_index=round_index,
+                        web_keyword_count=len(local_web_keywords),
+                        source_fact_count=len(local_source_facts),
+                        web_enrichment_used=local_web_used,
                     )
 
         if best_result is None or best_score is None:
@@ -612,6 +928,7 @@ class ContentOrchestrator:
         refreshing: bool | None = None,
         allow_live_translation: bool | None = None,
         language: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         resolved_refreshing = self._hot_events_refreshing.is_set() if refreshing is None else bool(refreshing)
         resolved_allow_live_translation = (
@@ -626,6 +943,7 @@ class ContentOrchestrator:
             items,
             language=language,
             allow_live_translation=resolved_allow_live_translation,
+            request_id=request_id,
         )
         refresh_interval_seconds = max(1, int(self.settings.hot_events.auto_refresh_interval_seconds))
         is_stale = (
@@ -711,16 +1029,26 @@ class ContentOrchestrator:
             return False, 0
         return True, int(remaining_seconds + 0.999)
 
-    def _pre_translate_hot_events(self, items: list[dict[str, Any]]) -> list[str]:
+    def _pre_translate_hot_events(self, items: list[dict[str, Any]], *, request_id: str | None = None) -> list[str]:
         warnings: list[str] = []
         for language in self.settings.hot_events.pre_translate_languages:
             try:
                 self._ensure_hot_event_translations(
                     items,
                     target_language=language,
-                    request_id=f"hot-events-pretranslate-{language}",
+                    request_id=request_id,
                 )
             except LLMError as exc:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "hot_events_translation_failed",
+                    request_id=request_id,
+                    target_language=language,
+                    item_count=len(items),
+                    error=str(exc),
+                    failure_class=type(exc).__name__,
+                )
                 warnings.append(f"hot events pre-translation failed for {language}: {exc}")
         return warnings
 
@@ -730,6 +1058,7 @@ class ContentOrchestrator:
         *,
         language: str | None,
         allow_live_translation: bool = True,
+        request_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], list[str]]:
         target_language = self._normalize_hot_events_language(language)
         warnings: list[str] = []
@@ -740,9 +1069,19 @@ class ContentOrchestrator:
                 translations = self._ensure_hot_event_translations(
                     items,
                     target_language=target_language,
-                    request_id=f"hot-events-request-{target_language}",
+                    request_id=request_id,
                 )
             except LLMError as exc:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "hot_events_translation_failed",
+                    request_id=request_id,
+                    target_language=target_language,
+                    item_count=len(items),
+                    error=str(exc),
+                    failure_class=type(exc).__name__,
+                )
                 warnings.append(f"hot events translation failed for {target_language}: {exc}")
 
         response_items: list[dict[str, Any]] = []
@@ -778,6 +1117,16 @@ class ContentOrchestrator:
         ]
         if not missing_items:
             return translations
+
+        log_event(
+            logger,
+            logging.INFO,
+            "hot_events_translation_started",
+            request_id=request_id,
+            target_language=normalized_target_language,
+            item_count=len(items),
+            missing_translation_count=len(missing_items),
+        )
 
         translated_items = self.llm.translate_hot_events_batch(
             items={
@@ -818,6 +1167,15 @@ class ContentOrchestrator:
         if rows:
             self.database.save_hot_event_translations(rows)
             translations.update(self.database.get_hot_event_translations(event_ids, normalized_target_language))
+        log_event(
+            logger,
+            logging.INFO,
+            "hot_events_translation_completed",
+            request_id=request_id,
+            target_language=normalized_target_language,
+            missing_translation_count=len(missing_items),
+            translated_count=len(rows),
+        )
         return translations
 
     def _normalize_hot_events_language(self, language: str | None) -> str:

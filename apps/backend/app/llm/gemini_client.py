@@ -66,6 +66,7 @@ class GeminiClient(LLMClient):
                 request_id=request_id,
                 provider=self.provider_name,
                 model=self.settings.llm.gemini.model,
+                outcome="failed",
             )
             raise LLMError("Gemini response did not include any candidates")
 
@@ -79,6 +80,7 @@ class GeminiClient(LLMClient):
                 request_id=request_id,
                 provider=self.provider_name,
                 model=self.settings.llm.gemini.model,
+                outcome="failed",
             )
             raise LLMError("Gemini response content was empty")
 
