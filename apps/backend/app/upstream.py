@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import requests
@@ -31,8 +32,10 @@ class UpstreamClient:
             "upstream_fetch_user_started",
             request_id=request_id,
             username=username,
+            provider="twitter_upstream",
+            outcome="started",
         )
-        payload = self._get_json(f"/api/v1/users/username/{username}")
+        payload = self._get_json(f"/api/v1/users/username/{username}", request_id=request_id)
         user = (payload.get("data") or {}).get("data")
         if not user:
             log_event(
@@ -41,6 +44,8 @@ class UpstreamClient:
                 "upstream_fetch_user_missing",
                 request_id=request_id,
                 username=username,
+                provider="twitter_upstream",
+                outcome="failed",
             )
             raise UpstreamError(f"User {username} was not found in upstream response")
         log_event(
@@ -50,6 +55,8 @@ class UpstreamClient:
             request_id=request_id,
             username=username,
             user_id=user.get("id"),
+            provider="twitter_upstream",
+            outcome="completed",
         )
         return user
 
@@ -68,6 +75,8 @@ class UpstreamClient:
             request_id=request_id,
             user_id=user_id,
             max_tweets=max_tweets,
+            provider="twitter_upstream",
+            outcome="started",
         )
         items: list[dict[str, Any]] = []
         cursor: str | None = None
@@ -91,6 +100,8 @@ class UpstreamClient:
                 cursor_present=bool(cursor),
                 page_size=len(page_items),
                 accumulated_count=len(items),
+                provider="twitter_upstream",
+                outcome="completed",
             )
             for item in page_items:
                 tweet = item.get("data") or {}
@@ -128,6 +139,8 @@ class UpstreamClient:
             page_count=page_count,
             total_count=len(items[:max_tweets]),
             stop_reason=stop_reason,
+            provider="twitter_upstream",
+            outcome="completed",
         )
         return items[:max_tweets]
 
@@ -141,6 +154,7 @@ class UpstreamClient:
         last_error: Exception | None = None
         response = None
         for attempt in range(3):
+            started_at = time.perf_counter()
             if hasattr(self.session, "cookies"):
                 self.session.cookies.clear()
 
@@ -153,6 +167,8 @@ class UpstreamClient:
                 attempt=attempt + 1,
                 params=params or {},
                 proxy_enabled=bool(self.settings.twitter.data_proxies),
+                provider="twitter_upstream",
+                outcome="started",
             )
             try:
                 response = self.session.get(
@@ -163,6 +179,7 @@ class UpstreamClient:
                 )
             except requests.RequestException as exc:
                 last_error = exc
+                duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
                 if attempt < 2:
                     log_event(
                         logger,
@@ -172,6 +189,9 @@ class UpstreamClient:
                         path=path,
                         attempt=attempt + 1,
                         error=str(exc),
+                        duration_ms=duration_ms,
+                        provider="twitter_upstream",
+                        outcome="retried",
                     )
                     continue
                 log_event(
@@ -182,12 +202,16 @@ class UpstreamClient:
                     path=path,
                     attempt=attempt + 1,
                     error=str(exc),
+                    duration_ms=duration_ms,
+                    provider="twitter_upstream",
+                    outcome="failed",
                 )
                 raise UpstreamError(f"Upstream request failed before response: {exc}") from exc
             try:
                 response.raise_for_status()
             except requests.HTTPError as exc:
                 last_error = exc
+                duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
                 if attempt < 2 and response.status_code >= 500:
                     log_event(
                         logger,
@@ -197,6 +221,9 @@ class UpstreamClient:
                         path=path,
                         attempt=attempt + 1,
                         status_code=response.status_code,
+                        duration_ms=duration_ms,
+                        provider="twitter_upstream",
+                        outcome="retried",
                     )
                     continue
                 detail = response.text[:1000]
@@ -209,6 +236,9 @@ class UpstreamClient:
                     attempt=attempt + 1,
                     status_code=response.status_code,
                     body_snippet=redact_for_log(detail, self.settings.log.max_body_chars),
+                    duration_ms=duration_ms,
+                    provider="twitter_upstream",
+                    outcome="failed",
                 )
                 raise UpstreamError(f"Upstream request failed: {detail}") from exc
 
@@ -216,6 +246,7 @@ class UpstreamClient:
                 payload = response.json()
             except ValueError as exc:
                 last_error = exc
+                duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
                 if attempt < 2:
                     log_event(
                         logger,
@@ -224,6 +255,9 @@ class UpstreamClient:
                         request_id=request_id,
                         path=path,
                         attempt=attempt + 1,
+                        duration_ms=duration_ms,
+                        provider="twitter_upstream",
+                        outcome="retried",
                     )
                     continue
                 snippet = response.text[:1000]
@@ -235,10 +269,14 @@ class UpstreamClient:
                     path=path,
                     attempt=attempt + 1,
                     body_snippet=redact_for_log(snippet, self.settings.log.max_body_chars),
+                    duration_ms=duration_ms,
+                    provider="twitter_upstream",
+                    outcome="failed",
                 )
                 raise UpstreamError("Upstream response is not valid JSON") from exc
             if payload.get("code") not in (None, 200):
                 last_error = UpstreamError(f"Upstream returned application error: {payload}")
+                duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
                 if attempt < 2:
                     log_event(
                         logger,
@@ -248,6 +286,9 @@ class UpstreamClient:
                         path=path,
                         attempt=attempt + 1,
                         payload_code=payload.get("code"),
+                        duration_ms=duration_ms,
+                        provider="twitter_upstream",
+                        outcome="retried",
                     )
                     continue
                 log_event(
@@ -258,6 +299,9 @@ class UpstreamClient:
                     path=path,
                     payload_code=payload.get("code"),
                     body_snippet=redact_for_log(payload, self.settings.log.max_body_chars),
+                    duration_ms=duration_ms,
+                    provider="twitter_upstream",
+                    outcome="failed",
                 )
                 raise last_error
             log_event(
@@ -268,6 +312,9 @@ class UpstreamClient:
                 path=path,
                 attempt=attempt + 1,
                 status_code=response.status_code,
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+                provider="twitter_upstream",
+                outcome="completed",
             )
             return payload
 
@@ -279,6 +326,8 @@ class UpstreamClient:
                 request_id=request_id,
                 path=path,
                 body_snippet=redact_for_log(response.text[:1000], self.settings.log.max_body_chars),
+                provider="twitter_upstream",
+                outcome="failed",
             )
             raise UpstreamError(f"Upstream request failed: {response.text[:1000]}") from last_error
         log_event(
@@ -287,5 +336,7 @@ class UpstreamClient:
             "upstream_request_no_response",
             request_id=request_id,
             path=path,
+            provider="twitter_upstream",
+            outcome="failed",
         )
         raise UpstreamError("Upstream request failed before a response was received") from last_error

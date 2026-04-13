@@ -78,6 +78,7 @@ class OpenAIClient(LLMClient):
                         provider=self.provider_name,
                         model=self.settings.llm.openai.model,
                         reason="response_format_unsupported",
+                        outcome="fallback",
                     )
                     continue
                 raise
@@ -91,6 +92,7 @@ class OpenAIClient(LLMClient):
                     request_id=request_id,
                     provider=self.provider_name,
                     model=self.settings.llm.openai.model,
+                    outcome="failed",
                 )
                 raise LLMError("OpenAI response did not include any choices")
 
@@ -107,6 +109,7 @@ class OpenAIClient(LLMClient):
                     provider=self.provider_name,
                     model=self.settings.llm.openai.model,
                     reason="empty_content",
+                    outcome="fallback",
                 )
 
         if not content_text:
@@ -117,6 +120,7 @@ class OpenAIClient(LLMClient):
                 request_id=request_id,
                 provider=self.provider_name,
                 model=self.settings.llm.openai.model,
+                outcome="failed",
             )
             raise LLMError("OpenAI response content was empty")
 
@@ -140,6 +144,7 @@ class OpenAIClient(LLMClient):
                 request_id=request_id,
                 provider=self.provider_name,
                 recovered_count=len(recovered_payload.get("drafts", [])),
+                outcome="fallback",
             )
             return recovered_payload
 

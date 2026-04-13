@@ -129,6 +129,7 @@ class LLMClient:
                 max_attempts=max_attempts,
                 purpose=purpose,
                 timeout_seconds=resolved_timeout,
+                outcome="started",
             )
             try:
                 response = requests.post(
@@ -160,6 +161,7 @@ class LLMClient:
                         duration_ms=duration_ms,
                         backoff_seconds=backoff_seconds,
                         retry_reason="http_5xx",
+                        outcome="retried",
                     )
                     time.sleep(backoff_seconds)
                     continue
@@ -176,6 +178,8 @@ class LLMClient:
                     status_code=status_code,
                     duration_ms=duration_ms,
                     response_snippet=redact_for_log(detail, self.settings.log.max_body_chars),
+                    outcome="failed",
+                    failure_class="http_error",
                 )
                 provider_label = "OpenAI" if self.provider_name == "openai" else "Gemini"
                 raise LLMTransportError(
@@ -200,6 +204,7 @@ class LLMClient:
                         duration_ms=duration_ms,
                         backoff_seconds=backoff_seconds,
                         retry_reason=retry_reason,
+                        outcome="retried",
                     )
                     time.sleep(backoff_seconds)
                     continue
@@ -217,6 +222,8 @@ class LLMClient:
                     duration_ms=duration_ms,
                     error_type=retry_reason,
                     error=str(exc),
+                    outcome="failed",
+                    failure_class="transport_error",
                 )
                 raise LLMTransportError(
                     f"{provider_label} request failed: {retry_reason}: {exc}",
@@ -238,6 +245,8 @@ class LLMClient:
                     duration_ms=duration_ms,
                     error_type=type(exc).__name__,
                     error=str(exc),
+                    outcome="failed",
+                    failure_class="request_error",
                 )
                 raise LLMTransportError(
                     f"{provider_label} request failed: {type(exc).__name__}: {exc}",
@@ -259,6 +268,7 @@ class LLMClient:
                 attempt=attempt,
                 max_attempts=max_attempts,
                 purpose=purpose,
+                outcome="completed",
             )
             return body
 
@@ -381,7 +391,6 @@ class LLMClient:
             provider=self.provider_name,
             draft_count=draft_count,
             prompt_len=len(prompt),
-            prompt_snippet=redact_for_log(prompt, self.settings.log.max_body_chars),
             source_text_count=len(source_texts),
             tweet_row_count=len(tweet_rows),
         )
@@ -491,7 +500,6 @@ class LLMClient:
                     provider=self.provider_name,
                     round_index=round_index,
                     error=str(exc),
-                    payload_snippet=redact_for_log(normalized_payload, self.settings.log.max_body_chars),
                 )
                 raise LLMError(f"Draft schema validation failed: {exc}") from exc
 
@@ -618,7 +626,6 @@ class LLMClient:
                     llm_score=evaluation["llm_score"],
                     passed=evaluation["passed"],
                     failure_reasons=evaluation["failure_reasons"][:3],
-                    text_snippet=redact_for_log(text, 160),
                 )
 
             round_candidate_results = [self._candidate_result(**c) for c in round_candidates]
@@ -1040,7 +1047,6 @@ class LLMClient:
                     provider=self.provider_name,
                     fallback_score=llm_evaluation["score"],
                     error_category=error_category,
-                    text_snippet=redact_for_log(candidate_text, 160),
                 )
         final_score = self._compute_final_score(rule_evaluation["score"], llm_evaluation["score"])
         failure_reasons = []

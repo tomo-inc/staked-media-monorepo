@@ -9,11 +9,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, Response
 
 from app.config import Settings, get_settings
 from app.database import Database, normalize_username
 from app.llm import LLMClient, LLMError, create_llm_client
-from app.logging_utils import configure_logging, format_log_event, get_logger, log_event, redact_for_log
+from app.logging_utils import configure_logging, format_log_event, get_logger, log_event
 from app.orchestrator import ContentOrchestrator
 from app.persona import build_corpus_stats
 from app.schemas import (
@@ -40,23 +41,95 @@ from app.upstream import UpstreamClient, UpstreamError
 logger = get_logger(__name__)
 WHITELIST_FORBIDDEN_DETAIL = "Target username is not in the trial whitelist"
 _STARTUP_HOT_EVENTS_REFRESH_DELAY_SECONDS = 0.05
+_REQUEST_ID_HEADER = "X-Request-ID"
+_REQUEST_LOG_EXCLUDED_ROUTES = frozenset({"/healthz", "/metrics", "/readyz", "/livez"})
 
 
 def utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+def _coerce_request_id(value: Any) -> str | None:
+    request_id = str(value or "").strip()
+    if not request_id:
+        return None
+    return request_id[:128]
+
+
+def _ensure_request_id(request: Request) -> str:
+    request_id = _coerce_request_id(getattr(request.state, "request_id", None))
+    if request_id:
+        return request_id
+    request_id = _coerce_request_id(request.headers.get(_REQUEST_ID_HEADER)) or uuid.uuid4().hex[:12]
+    request.state.request_id = request_id
+    return request_id
+
+
+def _resolve_route_label(request: Request) -> str:
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", "")
+    return str(route_path or request.url.path)
+
+
+def _request_log_fields(request: Request, *, request_id: str | None = None) -> dict[str, Any]:
+    return {
+        "request_id": request_id or _ensure_request_id(request),
+        "method": request.method,
+        "path": request.url.path,
+        "route": _resolve_route_label(request),
+        "query_keys": sorted(set(request.query_params.keys())),
+        "client_ip_present": bool(getattr(request.client, "host", "")),
+        "user_agent_present": bool(request.headers.get("user-agent")),
+    }
+
+
+def _attach_request_id_header(response: Response, request_id: str) -> Response:
+    response.headers[_REQUEST_ID_HEADER] = request_id
+    return response
+
+
+def _should_skip_request_logging(request: Request) -> bool:
+    route_label = _resolve_route_label(request)
+    return route_label in _REQUEST_LOG_EXCLUDED_ROUTES or request.url.path in _REQUEST_LOG_EXCLUDED_ROUTES
+
+
+def _http_request_log_level(status_code: int) -> int:
+    if status_code >= 500:
+        return logging.ERROR
+    if status_code >= 400:
+        return logging.WARNING
+    return logging.INFO
+
+
+def _http_failure_class_from_status(status_code: int) -> str:
+    if status_code == 400:
+        return "bad_request"
+    if status_code == 403:
+        return "forbidden"
+    if status_code == 404:
+        return "not_found"
+    if status_code == 409:
+        return "conflict"
+    if status_code == 422:
+        return "validation_error"
+    if status_code >= 500:
+        return "server_error"
+    return "request_error"
+
+
 def _run_hot_events_refresh_once(app: FastAPI, *, trigger: str) -> None:
     refresh_hot_events_snapshot = getattr(app.state.content_orchestrator, "refresh_hot_events_snapshot", None)
     if not callable(refresh_hot_events_snapshot):
         return
+    request_id = f"hot-events-{trigger}-{uuid.uuid4().hex[:8]}"
 
     try:
-        result = refresh_hot_events_snapshot(hours=24)
+        result = refresh_hot_events_snapshot(hours=24, request_id=request_id)
     except Exception as exc:  # noqa: BLE001
         logger.exception(
             format_log_event(
                 "hot_events_refresh_failed",
+                request_id=request_id,
                 trigger=trigger,
                 hours=24,
                 error=str(exc),
@@ -69,6 +142,7 @@ def _run_hot_events_refresh_once(app: FastAPI, *, trigger: str) -> None:
         logger,
         logging.INFO,
         "hot_events_refresh_completed",
+        request_id=request_id,
         trigger=trigger,
         hours=24,
         count=int(result_payload.get("count", 0)),
@@ -147,13 +221,60 @@ def create_app(
         llm=app.state.llm,
     )
 
+    @app.middleware("http")
+    async def request_logging_middleware(request: Request, call_next):
+        request_id = _ensure_request_id(request)
+        if _should_skip_request_logging(request):
+            response = await call_next(request)
+            response.headers[_REQUEST_ID_HEADER] = request_id
+            return response
+        started_at = time.perf_counter()
+        log_event(
+            logger,
+            logging.INFO,
+            "http_request_started",
+            **_request_log_fields(request, request_id=request_id),
+        )
+        response = await call_next(request)
+        response.headers[_REQUEST_ID_HEADER] = request_id
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        log_event(
+            logger,
+            _http_request_log_level(response.status_code),
+            "http_request_completed",
+            **_request_log_fields(request, request_id=request_id),
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            failure_class=_http_failure_class_from_status(response.status_code)
+            if response.status_code >= 400
+            else None,
+        )
+        return response
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        request_id = _ensure_request_id(request)
+        if not _should_skip_request_logging(request):
+            log_event(
+                logger,
+                logging.ERROR,
+                "http_request_failed",
+                **_request_log_fields(request, request_id=request_id),
+                failure_class=type(exc).__name__,
+                error=str(exc),
+            )
+        return _attach_request_id_header(
+            JSONResponse(status_code=500, content={"detail": "Internal Server Error"}),
+            request_id,
+        )
+
     @app.get("/healthz")
     def healthcheck() -> dict[str, str]:
         return {"status": "ok"}
 
     @app.post("/api/v1/profiles/ingest", response_model=IngestResponse)
     def ingest_profile(payload: ProfileIngestRequest, request: Request) -> IngestResponse:
-        request_id = uuid.uuid4().hex[:12]
+        request_id = _ensure_request_id(request)
         started_at = time.perf_counter()
         settings = request.app.state.settings
         database: Database = request.app.state.database
@@ -268,14 +389,38 @@ def create_app(
 
     @app.get("/api/v1/profiles/{username}", response_model=ProfileResponse)
     def get_profile(username: str, request: Request) -> ProfileResponse:
+        request_id = _ensure_request_id(request)
         database: Database = request.app.state.database
-        normalized_username = _require_allowed_username(database, username, route="profiles_get")
+        normalized_username = _require_allowed_username(database, username, request_id=request_id, route="profiles_get")
+        log_event(
+            logger,
+            logging.INFO,
+            "api_profile_get_started",
+            request_id=request_id,
+            username=normalized_username,
+        )
         stored_user = database.get_user_by_username(normalized_username)
         if stored_user is None:
+            log_event(
+                logger,
+                logging.WARNING,
+                "api_profile_get_profile_missing",
+                request_id=request_id,
+                username=normalized_username,
+            )
             raise HTTPException(status_code=404, detail="Profile not found")
 
         tweets = database.get_user_tweets(stored_user["id"])
         latest_persona = database.get_latest_persona_snapshot(normalized_username)
+        log_event(
+            logger,
+            logging.INFO,
+            "api_profile_get_completed",
+            request_id=request_id,
+            username=normalized_username,
+            stored_tweet_count=len(tweets),
+            persona_ready=bool(latest_persona),
+        )
         return ProfileResponse(
             profile=_profile_summary_from_row(stored_user),
             stored_tweet_count=len(tweets),
@@ -284,7 +429,7 @@ def create_app(
 
     @app.post("/api/v1/drafts/generate", response_model=DraftGenerateResponse)
     def generate_drafts(payload: DraftGenerateRequest, request: Request) -> DraftGenerateResponse:
-        request_id = uuid.uuid4().hex[:12]
+        request_id = _ensure_request_id(request)
         started_at = time.perf_counter()
         database: Database = request.app.state.database
         llm: LLMClient = request.app.state.llm
@@ -298,7 +443,6 @@ def create_app(
             username=username,
             draft_count=payload.draft_count,
             prompt_len=len(payload.prompt),
-            prompt_snippet=redact_for_log(payload.prompt, request.app.state.settings.log.max_body_chars),
         )
 
         stored_user = database.get_user_by_username(username)
@@ -409,12 +553,50 @@ def create_app(
 
     @app.post("/api/v1/content/ideas", response_model=ContentIdeasResponse)
     def content_ideas(payload: ContentIdeasRequest, request: Request) -> ContentIdeasResponse:
+        request_id = _ensure_request_id(request)
+        started_at = time.perf_counter()
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
-        result = orchestrator.suggest_ideas(
+        log_event(
+            logger,
+            logging.INFO,
+            "api_content_ideas_started",
+            request_id=request_id,
             direction=payload.direction,
             domain=payload.domain,
-            topic_hint=payload.topic_hint,
+            topic_hint_len=len(payload.topic_hint or ""),
             limit=payload.limit,
+        )
+        try:
+            result = orchestrator.suggest_ideas(
+                direction=payload.direction,
+                domain=payload.domain,
+                topic_hint=payload.topic_hint,
+                limit=payload.limit,
+                request_id=request_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                logger,
+                logging.ERROR,
+                "api_content_ideas_failed",
+                request_id=request_id,
+                direction=payload.direction,
+                domain=payload.domain,
+                topic_hint_len=len(payload.topic_hint or ""),
+                limit=payload.limit,
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+                failure_class=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
+        log_event(
+            logger,
+            logging.INFO,
+            "api_content_ideas_completed",
+            request_id=request_id,
+            idea_count=len(result.get("ideas", [])),
+            suggested_keyword_count=len(result.get("suggested_keywords", [])),
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
         )
         return ContentIdeasResponse(**result)
 
@@ -426,20 +608,78 @@ def create_app(
         refresh: bool = Query(False),
         lang: str = Query("en"),
     ) -> HotEventsResponse:
+        request_id = _ensure_request_id(request)
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
+        started_at = time.perf_counter()
+        log_event(
+            logger,
+            logging.INFO,
+            "api_hot_events_started",
+            request_id=request_id,
+            hours=hours,
+            limit=limit,
+            refresh=refresh,
+            language=lang,
+        )
         try:
-            result = orchestrator.list_hot_events(hours=hours, limit=limit, refresh=refresh, language=lang)
+            result = orchestrator.list_hot_events(
+                hours=hours,
+                limit=limit,
+                refresh=refresh,
+                language=lang,
+                request_id=request_id,
+            )
         except ValueError as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "api_hot_events_invalid_input",
+                request_id=request_id,
+                hours=hours,
+                limit=limit,
+                refresh=refresh,
+                language=lang,
+                error=str(exc),
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except LookupError as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "api_hot_events_lookup_failed",
+                request_id=request_id,
+                error=str(exc),
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            )
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except RuntimeError as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "api_hot_events_runtime_failed",
+                request_id=request_id,
+                error=str(exc),
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            )
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        log_event(
+            logger,
+            logging.INFO,
+            "api_hot_events_completed",
+            request_id=request_id,
+            count=int(result.get("count", 0)),
+            warnings_count=len(result.get("warnings", [])),
+            is_stale=bool(result.get("is_stale", False)),
+            refreshing=bool(result.get("refreshing", False)),
+            throttled=bool(result.get("throttled", False)),
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+        )
         return HotEventsResponse(**result)
 
     @app.post("/api/v1/content/generate", response_model=ContentGenerateResponse)
     def content_generate(payload: ContentGenerateRequest, request: Request) -> ContentGenerateResponse:
-        request_id = uuid.uuid4().hex[:12]
+        request_id = _ensure_request_id(request)
         started_at = time.perf_counter()
         database: Database = request.app.state.database
         username = _require_allowed_username(
@@ -447,28 +687,95 @@ def create_app(
         )
         payload = payload.copy(update={"username": username})
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
+        log_event(
+            logger,
+            logging.INFO,
+            "api_content_generate_started",
+            request_id=request_id,
+            username=username,
+            mode=payload.mode,
+            topic_len=len(payload.topic or ""),
+            idea_len=len(payload.idea or ""),
+            keyword_count=len(payload.keywords or []),
+            draft_count=payload.draft_count,
+        )
         try:
             result = orchestrator.generate_content(payload, request_id=request_id)
         except ValueError as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "api_content_generate_invalid_input",
+                request_id=request_id,
+                username=username,
+                mode=payload.mode,
+                error=str(exc),
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except LookupError as exc:
             message = str(exc)
             status_code = 404 if "Profile not found" in message else 409
+            log_event(
+                logger,
+                logging.WARNING,
+                "api_content_generate_lookup_failed",
+                request_id=request_id,
+                username=username,
+                mode=payload.mode,
+                failure_class="profile_missing" if status_code == 404 else "persona_missing",
+                error=message,
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            )
             raise HTTPException(status_code=status_code, detail=message) from exc
         except LLMError as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "api_content_generate_llm_failed",
+                request_id=request_id,
+                username=username,
+                mode=payload.mode,
+                error=str(exc),
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            )
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-        latest_persona_snapshot = database.get_latest_persona_snapshot(username)
-        if latest_persona_snapshot is None:
-            raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
-        database.save_draft_request(
-            username=username,
-            persona_snapshot_id=latest_persona_snapshot["id"],
-            prompt=payload.idea or payload.topic or "content_generate",
-            draft_count=payload.draft_count,
-            output=result,
-            created_at=utc_now_iso(),
-        )
+        try:
+            latest_persona_snapshot = database.get_latest_persona_snapshot(username)
+            if latest_persona_snapshot is None:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "api_content_generate_persona_missing_after_generation",
+                    request_id=request_id,
+                    username=username,
+                )
+                raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
+            database.save_draft_request(
+                username=username,
+                persona_snapshot_id=latest_persona_snapshot["id"],
+                prompt=payload.idea or payload.topic or "content_generate",
+                draft_count=payload.draft_count,
+                output=result,
+                created_at=utc_now_iso(),
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                logger,
+                logging.ERROR,
+                "api_content_generate_unhandled_error",
+                request_id=request_id,
+                username=username,
+                mode=payload.mode,
+                topic=result.get("topic", ""),
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+                failure_class=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
         log_event(
             logger,
             logging.INFO,
@@ -485,7 +792,7 @@ def create_app(
 
     @app.post("/api/v1/trending/generate", response_model=ContentGenerateResponse)
     def trending_generate(payload: TrendingGenerateRequest, request: Request) -> ContentGenerateResponse:
-        request_id = uuid.uuid4().hex[:12]
+        request_id = _ensure_request_id(request)
         started_at = time.perf_counter()
         database: Database = request.app.state.database
         username = _require_allowed_username(
@@ -493,28 +800,90 @@ def create_app(
         )
         payload = payload.copy(update={"username": username})
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
+        log_event(
+            logger,
+            logging.INFO,
+            "api_trending_generate_started",
+            request_id=request_id,
+            username=username,
+            draft_count=payload.draft_count,
+            event_id_present=bool(str(payload.event_id or "").strip()),
+            event_payload_present=isinstance(payload.event_payload, dict),
+            comment_len=len(payload.comment or ""),
+        )
         try:
             result = orchestrator.generate_trending_content(payload, request_id=request_id)
         except ValueError as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "api_trending_generate_invalid_input",
+                request_id=request_id,
+                username=username,
+                error=str(exc),
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except LookupError as exc:
             message = str(exc)
             status_code = 404 if "Profile not found" in message else 409
+            log_event(
+                logger,
+                logging.WARNING,
+                "api_trending_generate_lookup_failed",
+                request_id=request_id,
+                username=username,
+                failure_class="profile_missing" if status_code == 404 else "trending_lookup_failed",
+                error=message,
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            )
             raise HTTPException(status_code=status_code, detail=message) from exc
         except LLMError as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "api_trending_generate_llm_failed",
+                request_id=request_id,
+                username=username,
+                error=str(exc),
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            )
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-        latest_persona_snapshot = database.get_latest_persona_snapshot(username)
-        if latest_persona_snapshot is None:
-            raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
-        database.save_draft_request(
-            username=username,
-            persona_snapshot_id=latest_persona_snapshot["id"],
-            prompt=payload.comment.strip() or result.get("topic", "") or "trending_generate",
-            draft_count=payload.draft_count,
-            output=result,
-            created_at=utc_now_iso(),
-        )
+        try:
+            latest_persona_snapshot = database.get_latest_persona_snapshot(username)
+            if latest_persona_snapshot is None:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "api_trending_generate_persona_missing_after_generation",
+                    request_id=request_id,
+                    username=username,
+                )
+                raise HTTPException(status_code=409, detail="Persona not found. Run /api/v1/profiles/ingest first")
+            database.save_draft_request(
+                username=username,
+                persona_snapshot_id=latest_persona_snapshot["id"],
+                prompt=payload.comment.strip() or result.get("topic", "") or "trending_generate",
+                draft_count=payload.draft_count,
+                output=result,
+                created_at=utc_now_iso(),
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                logger,
+                logging.ERROR,
+                "api_trending_generate_unhandled_error",
+                request_id=request_id,
+                username=username,
+                topic=result.get("topic", ""),
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+                failure_class=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
         log_event(
             logger,
             logging.INFO,
@@ -530,31 +899,84 @@ def create_app(
 
     @app.post("/api/v1/exposure/analyze", response_model=ExposureAnalyzeResponse)
     def exposure_analyze(payload: ExposureAnalyzeRequest, request: Request) -> ExposureAnalyzeResponse:
+        request_id = _ensure_request_id(request)
+        started_at = time.perf_counter()
         database: Database = request.app.state.database
-        username = _require_allowed_username(database, payload.username, route="exposure_analyze")
+        username = _require_allowed_username(
+            database, payload.username, request_id=request_id, route="exposure_analyze"
+        )
         payload = payload.copy(update={"username": username})
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
-        result = orchestrator.analyze_exposure(
-            username=payload.username,
-            text=payload.text,
-            topic=payload.topic,
-            domain=payload.domain,
+        log_event(
+            logger,
+            logging.INFO,
+            "api_exposure_analyze_started",
+            request_id=request_id,
+            username=username,
+            text_len=len(payload.text or ""),
+            topic_len=len(payload.topic or ""),
+            domain_len=len(payload.domain or ""),
+        )
+        try:
+            result = orchestrator.analyze_exposure(
+                username=payload.username,
+                text=payload.text,
+                topic=payload.topic,
+                domain=payload.domain,
+                request_id=request_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                logger,
+                logging.ERROR,
+                "api_exposure_analyze_failed",
+                request_id=request_id,
+                username=username,
+                text_len=len(payload.text or ""),
+                topic_len=len(payload.topic or ""),
+                domain_len=len(payload.domain or ""),
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+                failure_class=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
+        log_event(
+            logger,
+            logging.INFO,
+            "api_exposure_analyze_completed",
+            request_id=request_id,
+            username=username,
+            heat_score=result.get("heat_score"),
+            hashtag_count=len(result.get("hashtags", [])),
+            posting_window_count=len(result.get("best_posting_windows", [])),
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
         )
         return ExposureAnalyzeResponse(**result)
 
     @app.get("/admin/api/v1/whitelist/usernames", response_model=WhitelistUsernamesResponse)
     def whitelist_list(request: Request) -> WhitelistUsernamesResponse:
         database: Database = request.app.state.database
-        return WhitelistUsernamesResponse(usernames=database.list_allowed_usernames())
+        request_id = _ensure_request_id(request)
+        usernames = database.list_allowed_usernames()
+        log_event(
+            logger,
+            logging.INFO,
+            "admin_whitelist_list_completed",
+            request_id=request_id,
+            username_count=len(usernames),
+        )
+        return WhitelistUsernamesResponse(usernames=usernames)
 
     @app.post("/admin/api/v1/whitelist/usernames", response_model=WhitelistUsernamesResponse)
     def whitelist_add(payload: WhitelistUsernameRequest, request: Request) -> WhitelistUsernamesResponse:
         database: Database = request.app.state.database
+        request_id = _ensure_request_id(request)
         username = database.add_allowed_username(payload.username)
         log_event(
             logger,
             logging.INFO,
             "admin_whitelist_username_added",
+            request_id=request_id,
             username=username,
         )
         return WhitelistUsernamesResponse(usernames=database.list_allowed_usernames())
@@ -562,21 +984,38 @@ def create_app(
     @app.delete("/admin/api/v1/whitelist/usernames/{username}", response_model=WhitelistUsernamesResponse)
     def whitelist_remove(username: str, request: Request) -> WhitelistUsernamesResponse:
         database: Database = request.app.state.database
+        request_id = _ensure_request_id(request)
         normalized_username = database.remove_allowed_username(username)
         log_event(
             logger,
             logging.INFO,
             "admin_whitelist_username_removed",
+            request_id=request_id,
             username=normalized_username,
         )
         return WhitelistUsernamesResponse(usernames=database.list_allowed_usernames())
 
     @app.get("/api/v1/content/debug/{request_id}", response_model=ContentDebugResponse)
     def content_debug(request_id: str, request: Request) -> ContentDebugResponse:
+        caller_request_id = _ensure_request_id(request)
         orchestrator: ContentOrchestrator = request.app.state.content_orchestrator
         debug_payload = orchestrator.get_debug(request_id)
         if debug_payload is None:
+            log_event(
+                logger,
+                logging.WARNING,
+                "api_content_debug_missing",
+                request_id=caller_request_id,
+                debug_request_id=request_id,
+            )
             raise HTTPException(status_code=404, detail="Debug record not found")
+        log_event(
+            logger,
+            logging.INFO,
+            "api_content_debug_completed",
+            request_id=caller_request_id,
+            debug_request_id=request_id,
+        )
         return ContentDebugResponse(**debug_payload)
 
     return app

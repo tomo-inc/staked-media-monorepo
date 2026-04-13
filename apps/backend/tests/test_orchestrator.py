@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from app.config import Settings
 from app.database import Database
+from app.llm import LLMError
 from app.orchestrator import ContentOrchestrator
 from app.schemas import ContentGenerateRequest, TrendingGenerateRequest
 
@@ -85,6 +86,67 @@ class FakeWebEnricher:
             ],
             "items": [],
         }
+
+
+class FailingFollowupWebEnricher(FakeWebEnricher):
+    def search_recent_topic_signals(self, topic: str, keywords: list[str]) -> dict:
+        with self._lock:
+            self.calls += 1
+            call_number = self.calls
+        if call_number >= 2:
+            raise ValueError("follow-up enrichment failed")
+        return {
+            "keywords": [topic, "related", "breaking"],
+            "facts": [
+                {
+                    "title": f"{topic} update",
+                    "summary": "new development",
+                    "source": "test",
+                    "url": "https://example.com",
+                    "published_at": "2026-03-31T00:00:00+00:00",
+                }
+            ],
+            "items": [],
+        }
+
+
+class AlwaysRetryLLM(FakeLLM):
+    def generate_drafts(
+        self,
+        *,
+        persona: dict,
+        prompt: str,
+        representative_tweets: list[dict],
+        source_texts: list[dict],
+        tweet_rows: list[dict],
+        draft_count: int,
+        request_id: str | None = None,
+    ) -> dict:
+        with self._lock:
+            self.calls += 1
+        return {
+            "drafts": [
+                {
+                    "text": f"draft {index} about topic",
+                    "tone_tags": ["direct"],
+                    "rationale": "fit",
+                }
+                for index in range(draft_count)
+            ],
+            "best_score": 8.1,
+            "target_score_met": False,
+        }
+
+
+class FailingTranslationLLM(FakeLLM):
+    def translate_hot_events_batch(
+        self,
+        *,
+        items: dict[str, dict[str, str]],
+        target_language: str,
+        request_id: str | None = None,
+    ) -> dict[str, dict[str, str]]:
+        raise LLMError("translation backend unavailable")
 
 
 class FakeHotEventsService:
@@ -327,6 +389,55 @@ class OrchestratorTestCase(unittest.TestCase):
             self.assertIn("used_keywords", variant)
             self.assertIn("source_facts", variant)
 
+    def test_generate_content_logs_phase_events(self) -> None:
+        payload = ContentGenerateRequest(
+            username="demo",
+            mode="A",
+            topic="OpenClaw winners",
+            idea="Share a short take",
+            keywords=["OpenClaw"],
+            draft_count=2,
+        )
+
+        with self.assertLogs("app.orchestrator", level="INFO") as captured:
+            self.orchestrator.generate_content(payload, request_id="req-log-1")
+
+        joined = "\n".join(captured.output)
+        self.assertIn('"event":"content_generation_started"', joined)
+        self.assertIn('"event":"content_generation_context_ready"', joined)
+        self.assertIn('"event":"content_variant_started"', joined)
+        self.assertIn('"event":"content_variant_round_completed"', joined)
+        self.assertIn('"event":"content_orchestrator_completed"', joined)
+        self.assertIn('"request_id":"req-log-1"', joined)
+
+    def test_generate_content_logs_variant_failures_for_followup_enrichment_exceptions(self) -> None:
+        orchestrator = ContentOrchestrator(
+            settings=self.settings,
+            database=self.database,
+            llm=AlwaysRetryLLM(),  # type: ignore[arg-type]
+            web_enricher=FailingFollowupWebEnricher(),  # type: ignore[arg-type]
+            hot_events_service=self.hot,  # type: ignore[arg-type]
+        )
+
+        payload = ContentGenerateRequest(
+            username="demo",
+            mode="A",
+            topic="OpenClaw winners",
+            idea="Share a short take",
+            keywords=["OpenClaw"],
+            draft_count=2,
+        )
+
+        with self.assertLogs("app.orchestrator", level="ERROR") as captured:
+            with self.assertRaises(LLMError):
+                orchestrator.generate_content(payload, request_id="req-variant-fail-1")
+
+        joined = "\n".join(captured.output)
+        self.assertIn('"event":"content_generation_web_enrichment_failed"', joined)
+        self.assertIn('"event":"content_variant_generation_failed"', joined)
+        self.assertIn('"event":"content_generation_failed"', joined)
+        self.assertIn('"failure_class":"ValueError"', joined)
+
     def test_generate_content_raises_lookup_error_when_no_rounds_can_run(self) -> None:
         orchestrator = ContentOrchestrator(
             settings=Settings(
@@ -350,7 +461,7 @@ class OrchestratorTestCase(unittest.TestCase):
             draft_count=2,
         )
 
-        with self.assertRaisesRegex(LookupError, "could not produce any draft candidates"):
+        with self.assertRaisesRegex(LLMError, "could not produce any draft candidates"):
             orchestrator.generate_content(payload, request_id="req-empty")
 
     def test_suggest_ideas_and_exposure_outputs_structured_payload(self) -> None:
@@ -461,6 +572,39 @@ class OrchestratorTestCase(unittest.TestCase):
         )
         self.assertEqual(payload["items"][0]["title_translated"], "比特币 ETF 资金流激增")
         self.assertTrue(payload["items"][0]["is_translated"])
+
+    def test_refresh_hot_events_logs_refresh_lifecycle(self) -> None:
+        with self.assertLogs("app.orchestrator", level="INFO") as captured:
+            self.orchestrator.refresh_hot_events_snapshot(
+                hours=24,
+                limit=20,
+                language="zh-CN",
+                request_id="req-hot-1",
+            )
+
+        joined = "\n".join(captured.output)
+        self.assertIn('"event":"hot_events_refresh_started"', joined)
+        self.assertIn('"event":"hot_events_refresh_source_completed"', joined)
+        self.assertIn('"event":"hot_events_translation_started"', joined)
+        self.assertIn('"event":"hot_events_translation_completed"', joined)
+        self.assertIn('"event":"hot_events_refresh_persisted"', joined)
+        self.assertIn('"request_id":"req-hot-1"', joined)
+
+    def test_list_hot_events_logs_live_translation_failures(self) -> None:
+        self.orchestrator.refresh_hot_events_snapshot(hours=24, limit=20, request_id="req-hot-seed")
+        self.orchestrator.llm = FailingTranslationLLM()  # type: ignore[assignment]
+
+        with self.assertLogs("app.orchestrator", level="WARNING") as captured:
+            payload = self.orchestrator.list_hot_events(
+                hours=24, limit=20, refresh=False, language="zh-CN", request_id="req-hot-live-fail"
+            )
+
+        self.assertEqual(payload["count"], 1)
+        self.assertTrue(any("translation failed for zh-CN" in warning for warning in payload["warnings"]))
+        joined = "\n".join(captured.output)
+        self.assertIn('"event":"hot_events_translation_failed"', joined)
+        self.assertIn('"request_id":"req-hot-live-fail"', joined)
+        self.assertIn('"failure_class":"LLMError"', joined)
 
     def test_generate_trending_content_uses_mode_b_and_selected_event(self) -> None:
         self.orchestrator.list_hot_events(hours=24, limit=20, refresh=True)
